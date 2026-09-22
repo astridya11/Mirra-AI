@@ -1,0 +1,1324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirra.ai/schemas/dispute-resolution.schema.json",
+  "title": "Ryde Multi-Agent Autonomous Dispute Resolution System — Master Schema",
+  "description": "Complete data contracts, state context objects, and structured outputs for the Ryde dispute resolution pipeline. Designed for JSON Schema draft 2020-12 with strict type validation, explicit required properties, and seamless conversion to Python Pydantic models and TypeScript interfaces.",
+  "type": "object",
+  "required": [
+    "case_metadata",
+    "data_sources",
+    "round_1_statements",
+    "round_2_cross_exam",
+    "round_3_rebuttal",
+    "bonus_modules",
+    "prosecutor_findings",
+    "judge_verdict"
+  ],
+  "properties": {
+    "case_metadata": {
+      "$ref": "#/$defs/CaseMetadata"
+    },
+    "data_sources": {
+      "$ref": "#/$defs/DataSources"
+    },
+    "round_1_statements": {
+      "type": "object",
+      "title": "Round1Statements",
+      "description": "Initial pleading objects submitted by Rider Advocate and Driver Advocate agents during ROUND_1_PLEADINGS.",
+      "required": ["rider_statement", "driver_statement"],
+      "properties": {
+        "rider_statement": {
+          "$ref": "#/$defs/AgentStatement"
+        },
+        "driver_statement": {
+          "$ref": "#/$defs/AgentStatement"
+        }
+      },
+      "additionalProperties": false
+    },
+    "round_2_cross_exam": {
+      "$ref": "#/$defs/Round2CrossExam"
+    },
+    "round_3_rebuttal": {
+      "$ref": "#/$defs/Round3Rebuttal"
+    },
+    "bonus_modules": {
+      "$ref": "#/$defs/BonusModules"
+    },
+    "prosecutor_findings": {
+      "$ref": "#/$defs/ProsecutorReport"
+    },
+    "judge_verdict": {
+      "$ref": "#/$defs/JudgeVerdict"
+    }
+  },
+  "additionalProperties": false,
+
+  "$defs": {
+
+    "CaseMetadata": {
+      "title": "CaseMetadata",
+      "description": "Top-level case identification and workflow state-control object.",
+      "type": "object",
+      "required": [
+        "case_id",
+        "dispute_type",
+        "current_state",
+        "current_round",
+        "is_round3_triggered",
+        "resolution_channel",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "description": "Unique identifier for the dispute case (e.g., RYDE-DSP-20260322001).",
+          "pattern": "^RYDE-DSP-\\d{11}$"
+        },
+        "dispute_type": {
+          "type": "string",
+          "description": "Category of the dispute, determining the evidence-collection and policy-evaluation path.",
+          "enum": ["ROUTE_DEVIATION", "CLEANING_FEE", "SAFETY_ALERT"]
+        },
+        "current_state": {
+          "type": "string",
+          "description": "Current state in the dispute resolution state machine.",
+          "enum": [
+            "INIT_CLAIM",
+            "ROUND_1_PLEADINGS",
+            "ROUND_2_PROSECUTOR_AUDIT",
+            "ROUND_3_CONDITIONAL_REBUTTAL",
+            "JUDGE_DELIBERATION",
+            "EXECUTION_ROUTER"
+          ]
+        },
+        "current_round": {
+          "type": "integer",
+          "description": "The active round number in the multi-round conversation protocol.",
+          "enum": [1, 2, 3]
+        },
+        "is_round3_triggered": {
+          "type": "boolean",
+          "description": "Whether the Dynamic Stopping Engine determined that Round 3 conditional rebuttal is warranted. False if no new substantial evidence was introduced in Round 2 responses."
+        },
+        "resolution_channel": {
+          "type": "string",
+          "description": "The execution path determined by the EXECUTION_ROUTER gate. FULLY_AUTOMATED for confidence >= 0.75 with no safety/fraud flags; ESCALATED_HUMAN_REVIEW otherwise.",
+          "enum": ["FULLY_AUTOMATED", "ESCALATED_HUMAN_REVIEW"]
+        },
+        "trip_id": {
+          "type": "string",
+          "description": "Reference to the original Ryde trip that generated this dispute."
+        },
+        "rider_id": {
+          "type": "string",
+          "description": "Unique identifier for the passenger involved in the dispute."
+        },
+        "driver_id": {
+          "type": "string",
+          "description": "Unique identifier for the driver involved in the dispute."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of case creation."
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last state transition."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AgentStatement": {
+      "title": "AgentStatement",
+      "description": "Structured statement submitted by an Advocate Agent (Rider or Driver) in any round of the multi-round protocol.",
+      "type": "object",
+      "required": [
+        "party",
+        "agent_role",
+        "argument_summary",
+        "requested_outcome",
+        "requested_amount",
+        "evidence_references",
+        "submitted_at"
+      ],
+      "properties": {
+        "party": {
+          "type": "string",
+          "description": "The party this statement represents.",
+          "enum": ["RIDER", "DRIVER"]
+        },
+        "agent_role": {
+          "type": "string",
+          "description": "The agent role that produced this statement.",
+          "enum": ["RIDER_ADVOCATE", "DRIVER_ADVOCATE", "PROSECUTOR", "JUDGE"]
+        },
+        "argument_summary": {
+          "type": "string",
+          "description": "Concise natural-language summary of the party's argument or claim.",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "detailed_argument": {
+          "type": "string",
+          "description": "Extended argument text with full reasoning, citations, and narrative."
+        },
+        "requested_outcome": {
+          "type": "string",
+          "description": "The outcome the party is requesting (e.g., 'full_refund', 'cleaning_fee_charge', 'case_dismissed').",
+          "enum": [
+            "FULL_REFUND",
+            "PARTIAL_REFUND",
+            "CLEANING_FEE_CHARGE",
+            "NO_PENALTY",
+            "CASE_DISMISSED",
+            "OTHER"
+          ]
+        },
+        "requested_amount": {
+          "type": "number",
+          "description": "Monetary amount requested by this party, in the trip's currency.",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code for the requested amount.",
+          "default": "SGD"
+        },
+        "evidence_references": {
+          "type": "array",
+          "description": "List of evidence source identifiers cited in support of the argument.",
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "minItems": 0
+        },
+        "submitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of statement submission."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "EvidenceReference": {
+      "title": "EvidenceReference",
+      "description": "A reference to a specific piece of evidence within the collected data sources.",
+      "type": "object",
+      "required": ["evidence_id", "source_type", "description"],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "description": "Unique identifier for the evidence item (e.g., 'GPS-001', 'CHAT-003', 'IMG-002')."
+        },
+        "source_type": {
+          "type": "string",
+          "description": "The category of evidence source.",
+          "enum": [
+            "GPS_TELEMETRY",
+            "CHAT_LOG",
+            "RECEIPT",
+            "ROUTE_TRAJECTORY",
+            "PAYMENT_RECORD",
+            "IMAGE",
+            "EXIF_METADATA",
+            "HISTORICAL_PROFILE",
+            "OTHER"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable summary of what this evidence demonstrates."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TargetedQuestion": {
+      "title": "TargetedQuestion",
+      "description": "A question generated by the Prosecutor Agent and directed to a specific party during ROUND_2_PROSECUTOR_AUDIT cross-examination.",
+      "type": "object",
+      "required": [
+        "question_id",
+        "directed_to",
+        "question_text",
+        "evidence_context",
+        "category",
+        "asked_at"
+      ],
+      "properties": {
+        "question_id": {
+          "type": "string",
+          "description": "Unique identifier for the targeted question (e.g., 'Q-001')."
+        },
+        "directed_to": {
+          "type": "string",
+          "description": "The party to whom the question is directed.",
+          "enum": ["RIDER", "DRIVER", "BOTH"]
+        },
+        "question_text": {
+          "type": "string",
+          "description": "The full text of the targeted question (e.g., 'Driver, please explain the 4-minute stationary stop at GPS point X').",
+          "minLength": 5,
+          "maxLength": 1000
+        },
+        "evidence_context": {
+          "type": "string",
+          "description": "Reference to the evidence that prompted this question (e.g., 'GPS-001: unexpected stop at 14:32')."
+        },
+        "category": {
+          "type": "string",
+          "description": "The evidentiary category the question probes.",
+          "enum": [
+            "GPS_DEVIATION",
+            "TIME_WINDOW",
+            "CHAT_CONTENT",
+            "RECEIPT_VALIDITY",
+            "ROUTE_TRAJECTORY",
+            "IMAGE_AUTHENTICITY",
+            "HISTORICAL_PATTERN",
+            "MISSING_EVIDENCE",
+            "OTHER"
+          ]
+        },
+        "asked_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the question was issued."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TargetedResponse": {
+      "title": "TargetedResponse",
+      "description": "An Advocate Agent's response to a specific targeted question from the Prosecutor.",
+      "type": "object",
+      "required": [
+        "response_id",
+        "question_id",
+        "responding_party",
+        "response_text",
+        "introduced_new_evidence",
+        "new_evidence_references",
+        "responded_at"
+      ],
+      "properties": {
+        "response_id": {
+          "type": "string",
+          "description": "Unique identifier for the response (e.g., 'R-001')."
+        },
+        "question_id": {
+          "type": "string",
+          "description": "The ID of the targeted question this response addresses."
+        },
+        "responding_party": {
+          "type": "string",
+          "description": "The party providing the response.",
+          "enum": ["RIDER", "DRIVER"]
+        },
+        "response_text": {
+          "type": "string",
+          "description": "The full text of the party's response to the targeted question.",
+          "minLength": 5,
+          "maxLength": 3000
+        },
+        "introduced_new_evidence": {
+          "type": "boolean",
+          "description": "Whether this response introduces new evidence not previously submitted. This flag feeds the Dynamic Stopping Engine for Round 3 triggering."
+        },
+        "new_evidence_references": {
+          "type": "array",
+          "description": "Evidence references introduced in this response, if any.",
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "default": []
+        },
+        "responded_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the response."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "Round2CrossExam": {
+      "title": "Round2CrossExam",
+      "description": "Container for the Prosecutor's targeted questions and the Advocates' responses during ROUND_2_PROSECUTOR_AUDIT.",
+      "type": "object",
+      "required": ["targeted_questions", "targeted_responses", "round2_completed"],
+      "properties": {
+        "targeted_questions": {
+          "type": "array",
+          "description": "Questions generated by the Prosecutor Agent, directed to specific parties.",
+          "items": {
+            "$ref": "#/$defs/TargetedQuestion"
+          },
+          "minItems": 0
+        },
+        "targeted_responses": {
+          "type": "array",
+          "description": "Advocate responses addressing each targeted question.",
+          "items": {
+            "$ref": "#/$defs/TargetedResponse"
+          },
+          "minItems": 0
+        },
+        "round2_completed": {
+          "type": "boolean",
+          "description": "Whether Round 2 cross-examination has been completed.",
+          "default": false
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of Round 2 completion."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "Round3Rebuttal": {
+      "title": "Round3Rebuttal",
+      "description": "Conditional rebuttal objects for ROUND_3_CONDITIONAL_REBUTTAL. Triggered ONLY if Round 2 responses introduced new evidence that substantially alters the claims.",
+      "type": "object",
+      "required": [
+        "is_triggered",
+        "new_evidence_provided",
+        "substantive_claim_change",
+        "rebuttals"
+      ],
+      "properties": {
+        "is_triggered": {
+          "type": "boolean",
+          "description": "Whether Round 3 was triggered by the Dynamic Stopping Engine. If false, cross-examination stopped to prevent truth-evasion by debate skills."
+        },
+        "new_evidence_provided": {
+          "type": "boolean",
+          "description": "Whether new evidence was provided during Round 2 responses that warranted a Round 3 rebuttal."
+        },
+        "substantive_claim_change": {
+          "type": "boolean",
+          "description": "Whether the new evidence caused a substantive change in the claims that requires rebuttal."
+        },
+        "stopping_engine_reason": {
+          "type": "string",
+          "description": "If Round 3 was NOT triggered, explanation of why the Dynamic Stopping Engine halted (e.g., 'No new substantial evidence introduced; further debate risks truth-evasion')."
+        },
+        "rebuttals": {
+          "type": "array",
+          "description": "Rebuttal statements from each party, if Round 3 was triggered.",
+          "items": {
+            "$ref": "#/$defs/AgentStatement"
+          },
+          "minItems": 0
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of Round 3 completion."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "GPSCoordinate": {
+      "title": "GPSCoordinate",
+      "description": "A single GPS coordinate point with timestamp.",
+      "type": "object",
+      "required": ["latitude", "longitude", "timestamp"],
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "description": "Latitude in decimal degrees.",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Longitude in decimal degrees.",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of this GPS ping."
+        },
+        "speed_kmh": {
+          "type": "number",
+          "description": "Vehicle speed at this point in km/h.",
+          "minimum": 0
+        },
+        "heading_degrees": {
+          "type": "number",
+          "description": "Heading direction in degrees (0-360).",
+          "minimum": 0,
+          "maximum": 360
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "UnexpectedStop": {
+      "title": "UnexpectedStop",
+      "description": "A detected unexpected stationary stop during the trip.",
+      "type": "object",
+      "required": ["location", "start_time", "duration_seconds", "deviation_flagged"],
+      "properties": {
+        "location": {
+          "$ref": "#/$defs/GPSCoordinate"
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the stop began."
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "description": "Duration of the stationary stop in seconds.",
+          "minimum": 0
+        },
+        "deviation_flagged": {
+          "type": "boolean",
+          "description": "Whether this stop is flagged as a route deviation or suspicious activity."
+        },
+        "explanation_provided": {
+          "type": "string",
+          "description": "Driver's or system's explanation for the stop, if available."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "GPSAndTelemetry": {
+      "title": "GPSAndTelemetry",
+      "description": "GPS and telemetry data comparing actual vs. optimal route, deviations, and stops.",
+      "type": "object",
+      "required": [
+        "actual_route",
+        "optimal_route",
+        "deviation_distance_km",
+        "unexpected_stops",
+        "trip_duration_seconds"
+      ],
+      "properties": {
+        "actual_route": {
+          "type": "array",
+          "description": "Ordered GPS coordinates representing the actual driven route.",
+          "items": {
+            "$ref": "#/$defs/GPSCoordinate"
+          },
+          "minItems": 2
+        },
+        "optimal_route": {
+          "type": "array",
+          "description": "Ordered GPS coordinates representing the optimal/planned route.",
+          "items": {
+            "$ref": "#/$defs/GPSCoordinate"
+          },
+          "minItems": 2
+        },
+        "deviation_distance_km": {
+          "type": "number",
+          "description": "Total off-route deviation distance in kilometers.",
+          "minimum": 0
+        },
+        "unexpected_stops": {
+          "type": "array",
+          "description": "Array of detected unexpected stationary stops.",
+          "items": {
+            "$ref": "#/$defs/UnexpectedStop"
+          },
+          "minItems": 0
+        },
+        "trip_duration_seconds": {
+          "type": "integer",
+          "description": "Total actual trip duration in seconds.",
+          "minimum": 0
+        },
+        "optimal_duration_seconds": {
+          "type": "integer",
+          "description": "Estimated optimal trip duration in seconds for comparison.",
+          "minimum": 0
+        },
+        "max_speed_kmh": {
+          "type": "number",
+          "description": "Maximum recorded speed during the trip.",
+          "minimum": 0
+        },
+        "average_speed_kmh": {
+          "type": "number",
+          "description": "Average speed during the trip.",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "A single message in the in-app chat transcript between rider and driver.",
+      "type": "object",
+      "required": ["message_id", "sender", "content", "timestamp"],
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "description": "Unique identifier for the chat message."
+        },
+        "sender": {
+          "type": "string",
+          "description": "Who sent the message.",
+          "enum": ["RIDER", "DRIVER", "SYSTEM"]
+        },
+        "content": {
+          "type": "string",
+          "description": "Full text content of the chat message."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the message."
+        },
+        "sentiment_score": {
+          "type": "number",
+          "description": "Sentiment analysis score from -1.0 (negative) to 1.0 (positive).",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "safety_threat_keywords": {
+          "type": "array",
+          "description": "Safety-threatening keywords detected in this message (e.g., 'weapon', 'assault', 'police').",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ChatAndCommunication": {
+      "title": "ChatAndCommunication",
+      "description": "In-app chat transcript, sentiment analysis, and safety threat detection.",
+      "type": "object",
+      "required": ["transcript", "overall_sentiment_score", "safety_threat_keywords_detected"],
+      "properties": {
+        "transcript": {
+          "type": "array",
+          "description": "Ordered chat message transcript.",
+          "items": {
+            "$ref": "#/$defs/ChatMessage"
+          },
+          "minItems": 0
+        },
+        "overall_sentiment_score": {
+          "type": "number",
+          "description": "Aggregate sentiment score for the entire conversation, -1.0 to 1.0.",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "safety_threat_keywords_detected": {
+          "type": "boolean",
+          "description": "Whether any safety-threatening keywords were detected across the transcript."
+        },
+        "flagged_messages": {
+          "type": "array",
+          "description": "IDs of messages flagged for safety concerns.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "FareBreakdown": {
+      "title": "FareBreakdown",
+      "description": "Itemized fare breakdown for the trip.",
+      "type": "object",
+      "required": ["base_fare", "distance_fare", "time_fare", "total_fare", "currency"],
+      "properties": {
+        "base_fare": {
+          "type": "number",
+          "description": "Base fare amount.",
+          "minimum": 0
+        },
+        "distance_fare": {
+          "type": "number",
+          "description": "Distance-based fare component.",
+          "minimum": 0
+        },
+        "time_fare": {
+          "type": "number",
+          "description": "Time-based fare component.",
+          "minimum": 0
+        },
+        "surge_multiplier": {
+          "type": "number",
+          "description": "Surge pricing multiplier applied (e.g., 1.5 for 1.5x).",
+          "minimum": 1,
+          "default": 1
+        },
+        "promo_code": {
+          "type": "string",
+          "description": "Promo or discount code applied, if any.",
+          "default": null
+        },
+        "promo_discount": {
+          "type": "number",
+          "description": "Discount amount from promo code.",
+          "minimum": 0,
+          "default": 0
+        },
+        "total_fare": {
+          "type": "number",
+          "description": "Final total fare charged.",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code.",
+          "default": "SGD"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PaymentAndFareData": {
+      "title": "PaymentAndFareData",
+      "description": "Payment and fare data including original breakdown, disputed amount, and promo details.",
+      "type": "object",
+      "required": ["original_fare", "disputed_amount", "disputed_amount_currency"],
+      "properties": {
+        "original_fare": {
+          "$ref": "#/$defs/FareBreakdown"
+        },
+        "disputed_amount": {
+          "type": "number",
+          "description": "The monetary amount in dispute.",
+          "minimum": 0
+        },
+        "disputed_amount_currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code for the disputed amount.",
+          "default": "SGD"
+        },
+        "amount_already_refunded": {
+          "type": "number",
+          "description": "Any amount already refunded to the rider before dispute resolution.",
+          "minimum": 0,
+          "default": 0
+        },
+        "payment_method": {
+          "type": "string",
+          "description": "Payment method used (e.g., 'credit_card', 'grabpay', 'cash')."
+        },
+        "transaction_reference": {
+          "type": "string",
+          "description": "Reference to the original payment transaction."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "HistoricalProfile": {
+      "title": "HistoricalProfile",
+      "description": "Historical risk and behavioral profile for a single party (rider or driver).",
+      "type": "object",
+      "required": ["party", "risk_score", "dispute_history_30d", "dispute_history_90d", "bad_faith_flag"],
+      "properties": {
+        "party": {
+          "type": "string",
+          "description": "The party this profile belongs to.",
+          "enum": ["RIDER", "DRIVER"]
+        },
+        "risk_score": {
+          "type": "number",
+          "description": "Historical risk score from 0.0 (low risk) to 1.0 (high risk).",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dispute_history_30d": {
+          "type": "integer",
+          "description": "Number of disputes filed by or against this party in the last 30 days.",
+          "minimum": 0
+        },
+        "dispute_history_90d": {
+          "type": "integer",
+          "description": "Number of disputes filed by or against this party in the last 90 days.",
+          "minimum": 0
+        },
+        "rating_average": {
+          "type": "number",
+          "description": "Average user rating (1-5 scale).",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "rating_pattern_anomaly": {
+          "type": "boolean",
+          "description": "Whether the rating pattern shows anomalies (e.g., sudden drop, suspicious clustering).",
+          "default": false
+        },
+        "bad_faith_flag": {
+          "type": "boolean",
+          "description": "Whether this party has been flagged for bad-faith behavior in prior cases.",
+          "default": false
+        },
+        "bad_faith_reason": {
+          "type": "string",
+          "description": "Reason for bad-faith flag, if applicable."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DataSources": {
+      "title": "DataSources",
+      "description": "Container for all collected telemetry, communication, payment, and historical data sources.",
+      "type": "object",
+      "required": ["gps_telemetry", "chat_communication", "payment_fare_data", "historical_profiles"],
+      "properties": {
+        "gps_telemetry": {
+          "$ref": "#/$defs/GPSAndTelemetry"
+        },
+        "chat_communication": {
+          "$ref": "#/$defs/ChatAndCommunication"
+        },
+        "payment_fare_data": {
+          "$ref": "#/$defs/PaymentAndFareData"
+        },
+        "historical_profiles": {
+          "type": "array",
+          "description": "Historical profiles for all parties involved.",
+          "items": {
+            "$ref": "#/$defs/HistoricalProfile"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ExifAnalysis": {
+      "title": "ExifAnalysis",
+      "description": "EXIF metadata and AI-generated image detection analysis for multimodal evidence (primarily Cleaning Fee disputes).",
+      "type": "object",
+      "required": [
+        "image_id",
+        "image_url",
+        "exif_timestamp",
+        "exif_gps_location",
+        "is_ai_generated",
+        "ai_generated_confidence",
+        "stain_damage_classification"
+      ],
+      "properties": {
+        "image_id": {
+          "type": "string",
+          "description": "Unique identifier for the submitted image (e.g., 'IMG-001')."
+        },
+        "image_url": {
+          "type": "string",
+          "description": "URL or path to the submitted image.",
+          "format": "uri"
+        },
+        "exif_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "EXIF-embedded timestamp of when the photo was taken."
+        },
+        "exif_gps_location": {
+          "$ref": "#/$defs/GPSCoordinate"
+        },
+        "is_ai_generated": {
+          "type": "boolean",
+          "description": "Whether the image is detected as AI-generated (synthetic/fabricated)."
+        },
+        "ai_generated_confidence": {
+          "type": "number",
+          "description": "Confidence score (0.0-1.0) for the AI-generated detection result.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "stain_damage_classification": {
+          "type": "string",
+          "description": "Classification of the stain or damage type detected in the image.",
+          "enum": [
+            "LIQUID_SPILL",
+            "VOMIT",
+            "FOOD_RESIDUE",
+            "PHYSICAL_DAMAGE",
+            "DIRT_MUD",
+            "NO_DAMAGE_DETECTED",
+            "OTHER"
+          ]
+        },
+        "damage_severity": {
+          "type": "string",
+          "description": "Estimated severity of the detected damage.",
+          "enum": ["MINOR", "MODERATE", "SEVERE"],
+          "default": "MINOR"
+        },
+        "exif_consistent_with_trip": {
+          "type": "boolean",
+          "description": "Whether the EXIF timestamp and GPS location are consistent with the trip's time and route."
+        },
+        "recycled_image_detected": {
+          "type": "boolean",
+          "description": "Whether this image has been detected as a recycled/reused image from a prior case (fraud indicator).",
+          "default": false
+        },
+        "recycled_image_match_case_id": {
+          "type": "string",
+          "description": "If recycled image detected, the case_id of the prior case where this image was used."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "FraudAssessment": {
+      "title": "FraudAssessment",
+      "description": "Fraud and bad-faith detection agent output, including risk score, risk factors, and collusion flags.",
+      "type": "object",
+      "required": [
+        "fraud_risk_score",
+        "risk_factors",
+        "collusion_warning_flag",
+        "abuse_pattern_detected"
+      ],
+      "properties": {
+        "fraud_risk_score": {
+          "type": "number",
+          "description": "Overall fraud risk score from 0.0 (no risk) to 1.0 (high risk).",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "risk_factors": {
+          "type": "array",
+          "description": "List of identified fraud risk factors (e.g., 'Recycled photo detected', 'EXIF timestamp mismatch', 'Collusion pattern with driver').",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "collusion_warning_flag": {
+          "type": "boolean",
+          "description": "Whether collusion between rider and driver is suspected.",
+          "default": false
+        },
+        "collusion_evidence": {
+          "type": "string",
+          "description": "Description of collusion evidence, if the flag is set."
+        },
+        "abuse_pattern_detected": {
+          "type": "boolean",
+          "description": "Whether an abuse pattern (e.g., repeated fake claims) is detected.",
+          "default": false
+        },
+        "abuse_pattern_description": {
+          "type": "string",
+          "description": "Description of the detected abuse pattern."
+        },
+        "recommended_fraud_action": {
+          "type": "string",
+          "description": "Recommended action based on fraud assessment.",
+          "enum": ["NO_ACTION", "FLAG_FOR_REVIEW", "BLOCK_ACCOUNT", "REFER_TO_FRAUD_TEAM"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "EscalationProtocol": {
+      "title": "EscalationProtocol",
+      "description": "Escalation protocol and safety net configuration for routing cases to human review.",
+      "type": "object",
+      "required": [
+        "safety_threat_detected",
+        "fraud_risk_level",
+        "escalation_reasons",
+        "is_escalated",
+        "priority_level"
+      ],
+      "properties": {
+        "safety_threat_detected": {
+          "type": "boolean",
+          "description": "Whether a safety threat was detected (violence keywords, physical dispute indicators)."
+        },
+        "fraud_risk_level": {
+          "type": "string",
+          "description": "Categorical fraud risk level.",
+          "enum": ["LOW", "MEDIUM", "HIGH"]
+        },
+        "escalation_reasons": {
+          "type": "array",
+          "description": "Array of human-readable reasons for escalation (e.g., 'Low confidence 0.62', 'Possible physical dispute mentioned in chat', 'Recycled photo detected').",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "is_escalated": {
+          "type": "boolean",
+          "description": "Whether this case is escalated to human review."
+        },
+        "priority_level": {
+          "type": "string",
+          "description": "Priority level assigned for human review queue routing.",
+          "enum": ["STANDARD", "HIGH_PRIORITY", "URGENT"]
+        },
+        "escalation_threshold_confidence": {
+          "type": "number",
+          "description": "The confidence score threshold below which escalation is triggered.",
+          "default": 0.75,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "missing_crucial_evidence": {
+          "type": "boolean",
+          "description": "Whether crucial evidence is missing, triggering escalation.",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "BonusModules": {
+      "title": "BonusModules",
+      "description": "Container for bonus and verification modules: multimodal image/EXIF analysis, fraud assessment, and escalation protocol.",
+      "type": "object",
+      "required": ["image_exif_analyses", "fraud_assessment", "escalation_protocol"],
+      "properties": {
+        "image_exif_analyses": {
+          "type": "array",
+          "description": "Array of image and EXIF analysis results for submitted evidence images.",
+          "items": {
+            "$ref": "#/$defs/ExifAnalysis"
+          },
+          "minItems": 0
+        },
+        "fraud_assessment": {
+          "$ref": "#/$defs/FraudAssessment"
+        },
+        "escalation_protocol": {
+          "$ref": "#/$defs/EscalationProtocol"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "Fact": {
+      "title": "Fact",
+      "description": "A single fact item within the Prosecutor's audit report — verified, disputed, or missing.",
+      "type": "object",
+      "required": ["fact_id", "description", "supporting_evidence"],
+      "properties": {
+        "fact_id": {
+          "type": "string",
+          "description": "Unique identifier for the fact (e.g., 'F-VER-001', 'F-DIS-001', 'F-MIS-001')."
+        },
+        "description": {
+          "type": "string",
+          "description": "Natural-language description of the fact."
+        },
+        "supporting_evidence": {
+          "type": "array",
+          "description": "Evidence references that support or relate to this fact.",
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "minItems": 0
+        },
+        "party_relevance": {
+          "type": "string",
+          "description": "Which party this fact is most relevant to.",
+          "enum": ["RIDER", "DRIVER", "BOTH", "NEUTRAL"]
+        },
+        "policy_clause_reference": {
+          "type": "string",
+          "description": "Reference to the relevant Ryde policy clause, if applicable (e.g., 'Ryde-Policy-4.2.1: Route Deviation')."
+        },
+        "confidence_level": {
+          "type": "number",
+          "description": "Confidence level for this specific fact (0.0-1.0). Applicable to verified and disputed facts.",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ProsecutorReport": {
+      "title": "ProsecutorReport",
+      "description": "Prosecutor Agent's final audit report submitted to the Judge Agent, containing verified facts, disputed facts, and missing facts.",
+      "type": "object",
+      "required": [
+        "verified_facts",
+        "disputed_facts",
+        "missing_facts",
+        "report_submitted_at"
+      ],
+      "properties": {
+        "verified_facts": {
+          "type": "array",
+          "description": "Array of immutable, evidence-backed verified facts established during cross-examination.",
+          "items": {
+            "$ref": "#/$defs/Fact"
+          },
+          "minItems": 0
+        },
+        "disputed_facts": {
+          "type": "array",
+          "description": "Array of unverified claims that remain contested between parties.",
+          "items": {
+            "$ref": "#/$defs/Fact"
+          },
+          "minItems": 0
+        },
+        "missing_facts": {
+          "type": "array",
+          "description": "Array of critical evidence that is missing and could not be established during cross-examination.",
+          "items": {
+            "$ref": "#/$defs/Fact"
+          },
+          "minItems": 0
+        },
+        "prosecutor_summary": {
+          "type": "string",
+          "description": "Prosecutor's overall summary of the audit findings and case posture."
+        },
+        "report_submitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of report submission to the Judge Agent."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RecommendedAction": {
+      "title": "RecommendedAction",
+      "description": "Exact financial action recommended by the Judge Agent.",
+      "type": "object",
+      "required": ["action_type", "refund_amount", "currency"],
+      "properties": {
+        "action_type": {
+          "type": "string",
+          "description": "The type of financial action to execute.",
+          "enum": [
+            "FULL_REFUND",
+            "PARTIAL_REFUND",
+            "CLEANING_FEE_CHARGE",
+            "NO_REFUND",
+            "PENALTY_ONLY",
+            "ESCALATED_NO_ACTION"
+          ]
+        },
+        "refund_amount": {
+          "type": "number",
+          "description": "Exact refund amount to be issued to the rider, if applicable. 0 if no refund.",
+          "minimum": 0,
+          "default": 0
+        },
+        "cleaning_fee_amount": {
+          "type": "number",
+          "description": "Cleaning fee to be charged to the rider, if applicable. 0 if not applicable.",
+          "minimum": 0,
+          "default": 0
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code.",
+          "default": "SGD"
+        },
+        "penalty_points": {
+          "type": "integer",
+          "description": "Penalty points assigned to the at-fault party's account (driver or rider).",
+          "minimum": 0,
+          "default": 0
+        },
+        "penalty_target": {
+          "type": "string",
+          "description": "Which party receives the penalty points.",
+          "enum": ["RIDER", "DRIVER", "NONE"],
+          "default": "NONE"
+        },
+        "account_action": {
+          "type": "string",
+          "description": "Additional account-level action recommendation.",
+          "enum": ["NONE", "WARNING_ISSUED", "TEMPORARY_SUSPENSION", "ACCOUNT_BAN"],
+          "default": "NONE"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "JudgeVerdict": {
+      "title": "JudgeVerdict",
+      "description": "Judge Agent's final verdict including ruling, confidence, reasoning, recommended action, dual explanations, and execution payload.",
+      "type": "object",
+      "required": [
+        "ruling_type",
+        "confidence_score",
+        "reasoning_summary",
+        "recommended_action",
+        "explanations",
+        "execution_payload",
+        "deliberated_at"
+      ],
+      "properties": {
+        "ruling_type": {
+          "type": "string",
+          "description": "The ruling outcome determined by the Judge Agent.",
+          "enum": ["APPROVED", "PARTIAL_REFUND", "REJECTED", "ESCALATED"]
+        },
+        "confidence_score": {
+          "type": "number",
+          "description": "Confidence score (0.0 to 1.0) for the ruling. Scores >= 0.75 qualify for FULLY_AUTOMATED execution if no safety/fraud flags are raised.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasoning_summary": {
+          "type": "string",
+          "description": "Natural language explanation of the ruling, mapped to verified facts and policy clauses."
+        },
+        "verified_fact_references": {
+          "type": "array",
+          "description": "IDs of verified facts from the Prosecutor report that the ruling is based on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "policy_clauses_applied": {
+          "type": "array",
+          "description": "Policy clause references applied in reaching the ruling.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "precedent_references": {
+          "type": "array",
+          "description": "References to prior similar cases used as precedent.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "recommended_action": {
+          "$ref": "#/$defs/RecommendedAction"
+        },
+        "explanations": {
+          "type": "object",
+          "description": "Dual natural language summaries tailored to each party.",
+          "required": ["explanation_for_rider", "explanation_for_driver"],
+          "properties": {
+            "explanation_for_rider": {
+              "type": "string",
+              "description": "Plain-language explanation of the ruling addressed to the rider."
+            },
+            "explanation_for_driver": {
+              "type": "string",
+              "description": "Plain-language explanation of the ruling addressed to the driver."
+            }
+          },
+          "additionalProperties": false
+        },
+        "execution_payload": {
+          "$ref": "#/$defs/ExecutionPayload"
+        },
+        "deliberated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the Judge's deliberation."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ExecutionPayload": {
+      "title": "ExecutionPayload",
+      "description": "Execution output containing the autonomous or human-in-the-loop execution status and details.",
+      "type": "object",
+      "required": ["execution_status", "resolved_at"],
+      "properties": {
+        "execution_status": {
+          "type": "string",
+          "description": "The execution outcome status. AUTO_EXECUTED for fully automated resolution; PENDING_HUMAN_APPROVAL for escalated cases.",
+          "enum": ["AUTO_EXECUTED", "PENDING_HUMAN_APPROVAL", "HUMAN_CONFIRMED", "HUMAN_OVERRIDDEN"]
+        },
+        "transaction_id": {
+          "type": "string",
+          "description": "Mock API reference / transaction ID generated upon auto-execution. Populated only when execution_status is AUTO_EXECUTED."
+        },
+        "auto_executed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of automated execution. Populated only when execution_status is AUTO_EXECUTED."
+        },
+        "case_final_status": {
+          "type": "string",
+          "description": "Final archival status of the case.",
+          "enum": ["AUTO_RESOLVED", "HUMAN_RESOLVED", "HUMAN_OVERRIDDEN", "PENDING"]
+        },
+        "human_confirmation_details": {
+          "$ref": "#/$defs/HumanConfirmationDetails"
+        },
+        "resolved_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of case resolution or escalation."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "HumanConfirmationDetails": {
+      "title": "HumanConfirmationDetails",
+      "description": "Details of human operator review and confirmation. Populated ONLY when the case is escalated to human review.",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "reviewer_id": {
+          "type": "string",
+          "description": "Unique identifier of the human operator who reviewed the case."
+        },
+        "reviewer_name": {
+          "type": "string",
+          "description": "Display name of the human reviewer."
+        },
+        "approval_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of human approval/override."
+        },
+        "approval_decision": {
+          "type": "string",
+          "description": "The human operator's decision.",
+          "enum": ["CONFIRMED_AUTO", "MODIFIED", "OVERRIDDEN", "REJECTED_AUTO"]
+        },
+        "override_reason": {
+          "type": "string",
+          "description": "Reason provided by the human operator if they modified or overrode the auto-recommendation."
+        },
+        "modified_action": {
+          "$ref": "#/$defs/RecommendedAction"
+        },
+        "human_summary_card": {
+          "type": "string",
+          "description": "Rich summary card content presented to the human operator for 1-click confirmation."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
