@@ -1,0 +1,128 @@
+{
+  "case_metadata": {
+    "case_id": "DISP-001",
+    "dispute_type": "ROUTE_DEVIATION",
+    "current_state": "INIT_CLAIM",
+    "current_round": 1,
+    "is_round3_triggered": false,
+    "resolution_channel": "FULLY_AUTOMATED",
+    "trip_id": "TRIP-2026-08112",
+    "rider_id": "R-1092",
+    "driver_id": "D-5541",
+    "created_at": "2026-09-22T14:10:00+08:00",
+    "updated_at": "2026-09-22T14:10:00+08:00"
+  },
+  "data_sources": {
+    "trip_data": {
+      "trip_id": "TRIP-2026-08112",
+      "rider_id": "R-1092",
+      "driver_id": "D-5541",
+      "pickup_location": {
+        "name": "Marina Bay Sands",
+        "lat": 1.2838,
+        "lng": 103.8591
+      },
+      "dropoff_location": {
+        "name": "Changi Airport T3",
+        "lat": 1.3551,
+        "lng": 103.9872
+      },
+      "scheduled_time": "2026-09-22T13:30:00+08:00"
+    },
+    "app_events": [
+      {
+        "timestamp": "2026-09-22T13:30:00+08:00",
+        "event_type": "trip_started",
+        "details": "Passenger boarded. Trip started."
+      },
+      {
+        "timestamp": "2026-09-22T13:42:00+08:00",
+        "event_type": "route_deviation_detected",
+        "details": "Vehicle departed from optimal ECP route onto PIE."
+      },
+      {
+        "timestamp": "2026-09-22T14:05:00+08:00",
+        "event_type": "trip_completed",
+        "details": "Passenger dropped off at Changi T3."
+      }
+    ],
+    "gps_telemetry": {
+      "actual_route": [
+        {"latitude": 1.2838, "longitude": 103.8591, "timestamp": "2026-09-22T13:30:00+08:00", "speed_kmh": 0, "status": "en_route"},
+        {"latitude": 1.3120, "longitude": 103.8820, "timestamp": "2026-09-22T13:42:00+08:00", "speed_kmh": 65, "status": "en_route"},
+        {"latitude": 1.3551, "longitude": 103.9872, "timestamp": "2026-09-22T14:05:00+08:00", "speed_kmh": 0, "status": "completed"}
+      ],
+      "optimal_route": [
+        {"latitude": 1.2838, "longitude": 103.8591, "timestamp": "2026-09-22T13:30:00+08:00", "speed_kmh": 0},
+        {"latitude": 1.3551, "longitude": 103.9872, "timestamp": "2026-09-22T13:58:00+08:00", "speed_kmh": 0}
+      ],
+      "deviation_distance_km": 2.3,
+      "unexpected_stops": [],
+      "trip_duration_seconds": 2100,
+      "optimal_duration_seconds": 1680
+    },
+    "chat_communication": {
+      "transcript": [
+        {
+          "message_id": "MSG-001",
+          "sender": "rider",
+          "content": "Why are we taking PIE? ECP is usually much faster.",
+          "timestamp": "2026-09-22T13:43:00+08:00",
+          "sentiment_score": -0.4,
+          "type": "message",
+          "safety_threat_keywords": []
+        },
+        {
+          "message_id": "MSG-002",
+          "sender": "driver",
+          "content": "Sorry, my GPS auto-rerouted me.",
+          "timestamp": "2026-09-22T13:43:30+08:00",
+          "sentiment_score": 0.0,
+          "type": "message",
+          "safety_threat_keywords": []
+        }
+      ],
+      "overall_sentiment_score": -0.2,
+      "safety_threat_keywords_detected": false
+    },
+    "payment_fare_data": {
+      "original_fare": {
+        "base_fare": 3.0,
+        "distance_fare": 12.5,
+        "time_fare": 3.0,
+        "surge_multiplier": 1.0,
+        "total_fare": 18.5,
+        "currency": "SGD"
+      },
+      "disputed_amount": 3.25,
+      "disputed_amount_currency": "SGD",
+      "payment_method": "credit_card"
+    },
+    "historical_profiles": [
+      {
+        "party": "RIDER",
+        "party_id": "R-1092",
+        "name": "Sarah Chen",
+        "account_age_days": 420,
+        "total_trips": 112,
+        "avg_rating": 4.8,
+        "risk_score": 0.05,
+        "dispute_history_30d": 0,
+        "dispute_history_90d": 0,
+        "bad_faith_flag": false
+      },
+      {
+        "party": "DRIVER",
+        "party_id": "D-5541",
+        "name": "Tan Ah Kow",
+        "account_age_days": 600,
+        "total_trips": 1420,
+        "avg_rating": 4.7,
+        "risk_score": 0.12,
+        "dispute_history_30d": 1,
+        "dispute_history_90d": 2,
+        "bad_faith_flag": false
+      }
+    ]
+  }
+}

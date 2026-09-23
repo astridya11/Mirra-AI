@@ -123,3 +123,10 @@ ryde-ai-court/
 
     └── requirements.txt
 
+## 📂 DEMO CASE 1: DISP-001.json
+
+司机绕路 2.3 公里导致费用超标，$3.25 SGD 被自动退回乘客账户，信心得分 0.94，走 FULLY_AUTOMATED 0 人工通道。
+
+## 📂 DEMO CASE 2: DISP-003.json
+
+司机索赔 $100 清洁费，但 EXIF 多模态审计发现照片拍照时间比行程结束晚了 1 小时 20 分钟（时间戳不符）且疑似循环使用旧图。欺诈风险标记为 HIGH，成功触发 Escalation 人工转接通道（ESCALATED_HUMAN_REVIEW）。

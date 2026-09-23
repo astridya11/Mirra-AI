@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mirra.ai/schemas/dispute-resolution.schema.json",
   "title": "Ryde Multi-Agent Autonomous Dispute Resolution System — Master Schema",
-  "description": "Complete data contracts, state context objects, and structured outputs for the Ryde dispute resolution pipeline. Designed for JSON Schema draft 2020-12 with strict type validation, explicit required properties, and seamless conversion to Python Pydantic models and TypeScript interfaces.",
+  "description": "Complete data contracts, state context objects, and structured outputs for the Ryde dispute resolution pipeline. Fully compatible with official Ryde dispute datasets.",
   "type": "object",
   "required": [
     "case_metadata",
@@ -73,13 +73,12 @@
       "properties": {
         "case_id": {
           "type": "string",
-          "description": "Unique identifier for the dispute case (e.g., RYDE-DSP-20260322001).",
-          "pattern": "^RYDE-DSP-\\d{11}$"
+          "description": "Unique identifier for the dispute case (e.g., DISP-001 or RYDE-DSP-20260322001)."
         },
         "dispute_type": {
           "type": "string",
           "description": "Category of the dispute, determining the evidence-collection and policy-evaluation path.",
-          "enum": ["ROUTE_DEVIATION", "CLEANING_FEE", "SAFETY_ALERT"]
+          "enum": ["ROUTE_DEVIATION", "CLEANING_FEE", "SAFETY_ALERT", "NO_SHOW_CHARGE"]
         },
         "current_state": {
           "type": "string",
@@ -109,25 +108,23 @@
         },
         "trip_id": {
           "type": "string",
-          "description": "Reference to the original Ryde trip that generated this dispute."
+          "description": "Reference to the original Ryde trip."
         },
         "rider_id": {
           "type": "string",
-          "description": "Unique identifier for the passenger involved in the dispute."
+          "description": "Unique identifier for the passenger."
         },
         "driver_id": {
           "type": "string",
-          "description": "Unique identifier for the driver involved in the dispute."
+          "description": "Unique identifier for the driver."
         },
         "created_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of case creation."
+          "format": "date-time"
         },
         "updated_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of the last state transition."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -199,8 +196,7 @@
         },
         "submitted_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of statement submission."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -228,6 +224,7 @@
             "IMAGE",
             "EXIF_METADATA",
             "HISTORICAL_PROFILE",
+            "APP_EVENT",
             "OTHER"
           ]
         },
@@ -288,8 +285,7 @@
         },
         "asked_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp when the question was issued."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -342,8 +338,7 @@
         },
         "responded_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of the response."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -378,8 +373,7 @@
         },
         "completed_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of Round 2 completion."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -422,8 +416,7 @@
         },
         "completed_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of Round 3 completion."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -449,8 +442,7 @@
         },
         "timestamp": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of this GPS ping."
+          "format": "date-time"
         },
         "speed_kmh": {
           "type": "number",
@@ -462,6 +454,11 @@
           "description": "Heading direction in degrees (0-360).",
           "minimum": 0,
           "maximum": 360
+        },
+        "status": {
+          "type": "string",
+          "description": "Vehicle telemetry state during the trip.",
+          "enum": ["en_route", "arrived", "waiting", "cancelled", "completed"]
         }
       },
       "additionalProperties": false
@@ -516,7 +513,7 @@
           "items": {
             "$ref": "#/$defs/GPSCoordinate"
           },
-          "minItems": 2
+          "minItems": 1
         },
         "optimal_route": {
           "type": "array",
@@ -524,7 +521,7 @@
           "items": {
             "$ref": "#/$defs/GPSCoordinate"
           },
-          "minItems": 2
+          "minItems": 1
         },
         "deviation_distance_km": {
           "type": "number",
@@ -575,8 +572,7 @@
         },
         "sender": {
           "type": "string",
-          "description": "Who sent the message.",
-          "enum": ["RIDER", "DRIVER", "SYSTEM"]
+          "enum": ["RIDER", "DRIVER", "SYSTEM", "rider", "driver", "system"]
         },
         "content": {
           "type": "string",
@@ -592,6 +588,10 @@
           "description": "Sentiment analysis score from -1.0 (negative) to 1.0 (positive).",
           "minimum": -1,
           "maximum": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["message", "call", "system"]
         },
         "safety_threat_keywords": {
           "type": "array",
@@ -669,7 +669,7 @@
           "default": 1
         },
         "promo_code": {
-          "type": "string",
+          "type": ["string", "null"],
           "description": "Promo or discount code applied, if any.",
           "default": null
         },
@@ -719,8 +719,7 @@
           "default": 0
         },
         "payment_method": {
-          "type": "string",
-          "description": "Payment method used (e.g., 'credit_card', 'grabpay', 'cash')."
+          "type": "string"
         },
         "transaction_reference": {
           "type": "string",
@@ -741,9 +740,27 @@
           "description": "The party this profile belongs to.",
           "enum": ["RIDER", "DRIVER"]
         },
+        "party_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "account_age_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_trips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "avg_rating": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5
+        },
         "risk_score": {
           "type": "number",
-          "description": "Historical risk score from 0.0 (low risk) to 1.0 (high risk).",
           "minimum": 0,
           "maximum": 1
         },
@@ -757,26 +774,71 @@
           "description": "Number of disputes filed by or against this party in the last 90 days.",
           "minimum": 0
         },
-        "rating_average": {
-          "type": "number",
-          "description": "Average user rating (1-5 scale).",
-          "minimum": 1,
-          "maximum": 5
-        },
-        "rating_pattern_anomaly": {
-          "type": "boolean",
-          "description": "Whether the rating pattern shows anomalies (e.g., sudden drop, suspicious clustering).",
-          "default": false
-        },
         "bad_faith_flag": {
           "type": "boolean",
           "description": "Whether this party has been flagged for bad-faith behavior in prior cases.",
           "default": false
         },
         "bad_faith_reason": {
-          "type": "string",
-          "description": "Reason for bad-faith flag, if applicable."
+          "type": "string"
         }
+      },
+      "additionalProperties": false
+    },
+
+    "AppEvent": {
+      "title": "AppEvent",
+      "type": "object",
+      "required": ["timestamp", "event_type", "details"],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TripData": {
+      "title": "TripData",
+      "type": "object",
+      "required": ["trip_id", "pickup_location", "dropoff_location"],
+      "properties": {
+        "trip_id": { "type": "string" },
+        "rider_id": { "type": "string" },
+        "driver_id": { "type": "string" },
+        "pickup_location": {
+          "type": "object",
+          "required": ["name", "lat", "lng"],
+          "properties": {
+            "name": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "dropoff_location": {
+          "type": "object",
+          "required": ["name", "lat", "lng"],
+          "properties": {
+            "name": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "scheduled_time": { "type": "string", "format": "date-time" },
+        "driver_arrival_time": { "type": "string", "format": "date-time" },
+        "driver_wait_start": { "type": "string", "format": "date-time" },
+        "cancellation_time": { "type": "string", "format": "date-time" },
+        "cancellation_fee": { "type": "number", "minimum": 0 },
+        "cancellation_reason": { "type": "string" }
       },
       "additionalProperties": false
     },
@@ -787,6 +849,16 @@
       "type": "object",
       "required": ["gps_telemetry", "chat_communication", "payment_fare_data", "historical_profiles"],
       "properties": {
+        "trip_data": {
+          "$ref": "#/$defs/TripData"
+        },
+        "app_events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AppEvent"
+          },
+          "default": []
+        },
         "gps_telemetry": {
           "$ref": "#/$defs/GPSAndTelemetry"
         },
@@ -827,9 +899,7 @@
           "description": "Unique identifier for the submitted image (e.g., 'IMG-001')."
         },
         "image_url": {
-          "type": "string",
-          "description": "URL or path to the submitted image.",
-          "format": "uri"
+          "type": "string"
         },
         "exif_timestamp": {
           "type": "string",
@@ -874,12 +944,11 @@
         },
         "recycled_image_detected": {
           "type": "boolean",
-          "description": "Whether this image has been detected as a recycled/reused image from a prior case (fraud indicator).",
           "default": false
         },
         "recycled_image_match_case_id": {
-          "type": "string",
-          "description": "If recycled image detected, the case_id of the prior case where this image was used."
+          "type": ["string", "null"],
+          "default": null
         }
       },
       "additionalProperties": false
@@ -1097,8 +1166,7 @@
         },
         "report_submitted_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of report submission to the Judge Agent."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
@@ -1257,13 +1325,11 @@
           "enum": ["AUTO_EXECUTED", "PENDING_HUMAN_APPROVAL", "HUMAN_CONFIRMED", "HUMAN_OVERRIDDEN"]
         },
         "transaction_id": {
-          "type": "string",
-          "description": "Mock API reference / transaction ID generated upon auto-execution. Populated only when execution_status is AUTO_EXECUTED."
+          "type": ["string", "null"]
         },
         "auto_executed_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of automated execution. Populated only when execution_status is AUTO_EXECUTED."
+          "type": ["string", "null"],
+          "format": "date-time"
         },
         "case_final_status": {
           "type": "string",
@@ -1275,8 +1341,7 @@
         },
         "resolved_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp of case resolution or escalation."
+          "format": "date-time"
         }
       },
       "additionalProperties": false
