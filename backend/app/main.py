@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import cases, evidence
+from app.api.routes import cases, evidence, verification
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -17,6 +17,7 @@ app = FastAPI(
 
 app.include_router(cases.router, prefix=settings.api_v1_prefix)
 app.include_router(evidence.router, prefix=settings.api_v1_prefix)
+app.include_router(verification.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health", tags=["health"])
