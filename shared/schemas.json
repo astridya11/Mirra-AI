@@ -9,7 +9,6 @@
     "data_sources",
     "round_1_statements",
     "round_2_cross_exam",
-    "round_3_rebuttal",
     "bonus_modules",
     "prosecutor_findings",
     "judge_verdict"
@@ -25,7 +24,10 @@
       "type": "object",
       "title": "Round1Statements",
       "description": "Initial pleading objects submitted by Rider Advocate and Driver Advocate agents during ROUND_1_PLEADINGS.",
-      "required": ["rider_statement", "driver_statement"],
+      "required": [
+        "rider_statement",
+        "driver_statement"
+      ],
       "properties": {
         "rider_statement": {
           "$ref": "#/$defs/AgentStatement"
@@ -39,9 +41,6 @@
     "round_2_cross_exam": {
       "$ref": "#/$defs/Round2CrossExam"
     },
-    "round_3_rebuttal": {
-      "$ref": "#/$defs/Round3Rebuttal"
-    },
     "bonus_modules": {
       "$ref": "#/$defs/BonusModules"
     },
@@ -53,19 +52,16 @@
     }
   },
   "additionalProperties": false,
-
   "$defs": {
-
     "CaseMetadata": {
       "title": "CaseMetadata",
-      "description": "Top-level case identification and workflow state-control object.",
+      "description": "Top-level case identification and workflow state-control object. The protocol is fixed at 2 advocate rounds (ROUND_1_PLEADINGS, ROUND_2_PROSECUTOR_AUDIT) followed by JUDGE_DELIBERATION and EXECUTION_ROUTER.",
       "type": "object",
       "required": [
         "case_id",
         "dispute_type",
         "current_state",
         "current_round",
-        "is_round3_triggered",
         "resolution_channel",
         "created_at",
         "updated_at"
@@ -78,7 +74,12 @@
         "dispute_type": {
           "type": "string",
           "description": "Category of the dispute, determining the evidence-collection and policy-evaluation path.",
-          "enum": ["ROUTE_DEVIATION", "CLEANING_FEE", "SAFETY_ALERT", "NO_SHOW_CHARGE"]
+          "enum": [
+            "ROUTE_DEVIATION",
+            "CLEANING_FEE",
+            "SAFETY_ALERT",
+            "NO_SHOW_CHARGE"
+          ]
         },
         "current_state": {
           "type": "string",
@@ -87,24 +88,25 @@
             "INIT_CLAIM",
             "ROUND_1_PLEADINGS",
             "ROUND_2_PROSECUTOR_AUDIT",
-            "ROUND_3_CONDITIONAL_REBUTTAL",
             "JUDGE_DELIBERATION",
             "EXECUTION_ROUTER"
           ]
         },
         "current_round": {
           "type": "integer",
-          "description": "The active round number in the multi-round conversation protocol.",
-          "enum": [1, 2, 3]
-        },
-        "is_round3_triggered": {
-          "type": "boolean",
-          "description": "Whether the Dynamic Stopping Engine determined that Round 3 conditional rebuttal is warranted. False if no new substantial evidence was introduced in Round 2 responses."
+          "description": "The active advocate round number. 1 = ROUND_1_PLEADINGS, 2 = ROUND_2_PROSECUTOR_AUDIT. Remains 2 during JUDGE_DELIBERATION and EXECUTION_ROUTER, since the protocol has a hard limit of 2 rounds.",
+          "enum": [
+            1,
+            2
+          ]
         },
         "resolution_channel": {
           "type": "string",
           "description": "The execution path determined by the EXECUTION_ROUTER gate. FULLY_AUTOMATED for confidence >= 0.75 with no safety/fraud flags; ESCALATED_HUMAN_REVIEW otherwise.",
-          "enum": ["FULLY_AUTOMATED", "ESCALATED_HUMAN_REVIEW"]
+          "enum": [
+            "FULLY_AUTOMATED",
+            "ESCALATED_HUMAN_REVIEW"
+          ]
         },
         "trip_id": {
           "type": "string",
@@ -129,10 +131,9 @@
       },
       "additionalProperties": false
     },
-
     "AgentStatement": {
       "title": "AgentStatement",
-      "description": "Structured statement submitted by an Advocate Agent (Rider or Driver) in any round of the multi-round protocol.",
+      "description": "Structured statement submitted by an Advocate Agent (Rider or Driver) during ROUND_1_PLEADINGS.",
       "type": "object",
       "required": [
         "party",
@@ -147,12 +148,20 @@
         "party": {
           "type": "string",
           "description": "The party this statement represents.",
-          "enum": ["RIDER", "DRIVER"]
+          "enum": [
+            "RIDER",
+            "DRIVER"
+          ]
         },
         "agent_role": {
           "type": "string",
           "description": "The agent role that produced this statement.",
-          "enum": ["RIDER_ADVOCATE", "DRIVER_ADVOCATE", "PROSECUTOR", "JUDGE"]
+          "enum": [
+            "RIDER_ADVOCATE",
+            "DRIVER_ADVOCATE",
+            "PROSECUTOR",
+            "JUDGE"
+          ]
         },
         "argument_summary": {
           "type": "string",
@@ -188,7 +197,7 @@
         },
         "evidence_references": {
           "type": "array",
-          "description": "List of evidence source identifiers cited in support of the argument.",
+          "description": "List of identifiers of evidence already present in the case record (data_sources) that are cited in support of the argument.",
           "items": {
             "$ref": "#/$defs/EvidenceReference"
           },
@@ -201,12 +210,15 @@
       },
       "additionalProperties": false
     },
-
     "EvidenceReference": {
       "title": "EvidenceReference",
       "description": "A reference to a specific piece of evidence within the collected data sources.",
       "type": "object",
-      "required": ["evidence_id", "source_type", "description"],
+      "required": [
+        "evidence_id",
+        "source_type",
+        "description"
+      ],
       "properties": {
         "evidence_id": {
           "type": "string",
@@ -235,10 +247,9 @@
       },
       "additionalProperties": false
     },
-
     "TargetedQuestion": {
       "title": "TargetedQuestion",
-      "description": "A question generated by the Prosecutor Agent and directed to a specific party during ROUND_2_PROSECUTOR_AUDIT cross-examination.",
+      "description": "A question generated by the Prosecutor Agent and directed to a specific party during ROUND_2_PROSECUTOR_AUDIT cross-examination. Each question is asked once; there is no follow-up question round.",
       "type": "object",
       "required": [
         "question_id",
@@ -256,7 +267,11 @@
         "directed_to": {
           "type": "string",
           "description": "The party to whom the question is directed.",
-          "enum": ["RIDER", "DRIVER", "BOTH"]
+          "enum": [
+            "RIDER",
+            "DRIVER",
+            "BOTH"
+          ]
         },
         "question_text": {
           "type": "string",
@@ -290,18 +305,15 @@
       },
       "additionalProperties": false
     },
-
     "TargetedResponse": {
       "title": "TargetedResponse",
-      "description": "An Advocate Agent's response to a specific targeted question from the Prosecutor.",
+      "description": "An Advocate Agent's single response to a specific targeted question from the Prosecutor. Responses are grounded solely in evidence already in the case record; no new evidence is introduced.",
       "type": "object",
       "required": [
         "response_id",
         "question_id",
         "responding_party",
         "response_text",
-        "introduced_new_evidence",
-        "new_evidence_references",
         "responded_at"
       ],
       "properties": {
@@ -316,25 +328,16 @@
         "responding_party": {
           "type": "string",
           "description": "The party providing the response.",
-          "enum": ["RIDER", "DRIVER"]
+          "enum": [
+            "RIDER",
+            "DRIVER"
+          ]
         },
         "response_text": {
           "type": "string",
           "description": "The full text of the party's response to the targeted question.",
           "minLength": 5,
           "maxLength": 3000
-        },
-        "introduced_new_evidence": {
-          "type": "boolean",
-          "description": "Whether this response introduces new evidence not previously submitted. This flag feeds the Dynamic Stopping Engine for Round 3 triggering."
-        },
-        "new_evidence_references": {
-          "type": "array",
-          "description": "Evidence references introduced in this response, if any.",
-          "items": {
-            "$ref": "#/$defs/EvidenceReference"
-          },
-          "default": []
         },
         "responded_at": {
           "type": "string",
@@ -343,12 +346,15 @@
       },
       "additionalProperties": false
     },
-
     "Round2CrossExam": {
       "title": "Round2CrossExam",
-      "description": "Container for the Prosecutor's targeted questions and the Advocates' responses during ROUND_2_PROSECUTOR_AUDIT.",
+      "description": "Container for the Prosecutor's targeted questions and the Advocates' responses during ROUND_2_PROSECUTOR_AUDIT. Cross-examination is a single question-and-answer pass; once completed, the Prosecutor locks the fact record and emits the ProsecutorReport directly to the Judge.",
       "type": "object",
-      "required": ["targeted_questions", "targeted_responses", "round2_completed"],
+      "required": [
+        "targeted_questions",
+        "targeted_responses",
+        "round2_completed"
+      ],
       "properties": {
         "targeted_questions": {
           "type": "array",
@@ -368,7 +374,7 @@
         },
         "round2_completed": {
           "type": "boolean",
-          "description": "Whether Round 2 cross-examination has been completed.",
+          "description": "Whether Round 2 cross-examination has been completed (all targeted questions have been answered). Completion triggers ProsecutorReport emission and the transition to JUDGE_DELIBERATION.",
           "default": false
         },
         "completed_at": {
@@ -378,55 +384,15 @@
       },
       "additionalProperties": false
     },
-
-    "Round3Rebuttal": {
-      "title": "Round3Rebuttal",
-      "description": "Conditional rebuttal objects for ROUND_3_CONDITIONAL_REBUTTAL. Triggered ONLY if Round 2 responses introduced new evidence that substantially alters the claims.",
-      "type": "object",
-      "required": [
-        "is_triggered",
-        "new_evidence_provided",
-        "substantive_claim_change",
-        "rebuttals"
-      ],
-      "properties": {
-        "is_triggered": {
-          "type": "boolean",
-          "description": "Whether Round 3 was triggered by the Dynamic Stopping Engine. If false, cross-examination stopped to prevent truth-evasion by debate skills."
-        },
-        "new_evidence_provided": {
-          "type": "boolean",
-          "description": "Whether new evidence was provided during Round 2 responses that warranted a Round 3 rebuttal."
-        },
-        "substantive_claim_change": {
-          "type": "boolean",
-          "description": "Whether the new evidence caused a substantive change in the claims that requires rebuttal."
-        },
-        "stopping_engine_reason": {
-          "type": "string",
-          "description": "If Round 3 was NOT triggered, explanation of why the Dynamic Stopping Engine halted (e.g., 'No new substantial evidence introduced; further debate risks truth-evasion')."
-        },
-        "rebuttals": {
-          "type": "array",
-          "description": "Rebuttal statements from each party, if Round 3 was triggered.",
-          "items": {
-            "$ref": "#/$defs/AgentStatement"
-          },
-          "minItems": 0
-        },
-        "completed_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "additionalProperties": false
-    },
-
     "GPSCoordinate": {
       "title": "GPSCoordinate",
       "description": "A single GPS coordinate point with timestamp.",
       "type": "object",
-      "required": ["latitude", "longitude", "timestamp"],
+      "required": [
+        "latitude",
+        "longitude",
+        "timestamp"
+      ],
       "properties": {
         "latitude": {
           "type": "number",
@@ -458,17 +424,27 @@
         "status": {
           "type": "string",
           "description": "Vehicle telemetry state during the trip.",
-          "enum": ["en_route", "arrived", "waiting", "cancelled", "completed"]
+          "enum": [
+            "en_route",
+            "arrived",
+            "waiting",
+            "cancelled",
+            "completed"
+          ]
         }
       },
       "additionalProperties": false
     },
-
     "UnexpectedStop": {
       "title": "UnexpectedStop",
       "description": "A detected unexpected stationary stop during the trip.",
       "type": "object",
-      "required": ["location", "start_time", "duration_seconds", "deviation_flagged"],
+      "required": [
+        "location",
+        "start_time",
+        "duration_seconds",
+        "deviation_flagged"
+      ],
       "properties": {
         "location": {
           "$ref": "#/$defs/GPSCoordinate"
@@ -494,7 +470,6 @@
       },
       "additionalProperties": false
     },
-
     "GPSAndTelemetry": {
       "title": "GPSAndTelemetry",
       "description": "GPS and telemetry data comparing actual vs. optimal route, deviations, and stops.",
@@ -559,12 +534,16 @@
       },
       "additionalProperties": false
     },
-
     "ChatMessage": {
       "title": "ChatMessage",
       "description": "A single message in the in-app chat transcript between rider and driver.",
       "type": "object",
-      "required": ["message_id", "sender", "content", "timestamp"],
+      "required": [
+        "message_id",
+        "sender",
+        "content",
+        "timestamp"
+      ],
       "properties": {
         "message_id": {
           "type": "string",
@@ -572,7 +551,14 @@
         },
         "sender": {
           "type": "string",
-          "enum": ["RIDER", "DRIVER", "SYSTEM", "rider", "driver", "system"]
+          "enum": [
+            "RIDER",
+            "DRIVER",
+            "SYSTEM",
+            "rider",
+            "driver",
+            "system"
+          ]
         },
         "content": {
           "type": "string",
@@ -591,7 +577,11 @@
         },
         "type": {
           "type": "string",
-          "enum": ["message", "call", "system"]
+          "enum": [
+            "message",
+            "call",
+            "system"
+          ]
         },
         "safety_threat_keywords": {
           "type": "array",
@@ -604,12 +594,15 @@
       },
       "additionalProperties": false
     },
-
     "ChatAndCommunication": {
       "title": "ChatAndCommunication",
       "description": "In-app chat transcript, sentiment analysis, and safety threat detection.",
       "type": "object",
-      "required": ["transcript", "overall_sentiment_score", "safety_threat_keywords_detected"],
+      "required": [
+        "transcript",
+        "overall_sentiment_score",
+        "safety_threat_keywords_detected"
+      ],
       "properties": {
         "transcript": {
           "type": "array",
@@ -640,12 +633,17 @@
       },
       "additionalProperties": false
     },
-
     "FareBreakdown": {
       "title": "FareBreakdown",
       "description": "Itemized fare breakdown for the trip.",
       "type": "object",
-      "required": ["base_fare", "distance_fare", "time_fare", "total_fare", "currency"],
+      "required": [
+        "base_fare",
+        "distance_fare",
+        "time_fare",
+        "total_fare",
+        "currency"
+      ],
       "properties": {
         "base_fare": {
           "type": "number",
@@ -669,7 +667,10 @@
           "default": 1
         },
         "promo_code": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Promo or discount code applied, if any.",
           "default": null
         },
@@ -692,12 +693,15 @@
       },
       "additionalProperties": false
     },
-
     "PaymentAndFareData": {
       "title": "PaymentAndFareData",
       "description": "Payment and fare data including original breakdown, disputed amount, and promo details.",
       "type": "object",
-      "required": ["original_fare", "disputed_amount", "disputed_amount_currency"],
+      "required": [
+        "original_fare",
+        "disputed_amount",
+        "disputed_amount_currency"
+      ],
       "properties": {
         "original_fare": {
           "$ref": "#/$defs/FareBreakdown"
@@ -728,17 +732,25 @@
       },
       "additionalProperties": false
     },
-
     "HistoricalProfile": {
       "title": "HistoricalProfile",
       "description": "Historical risk and behavioral profile for a single party (rider or driver).",
       "type": "object",
-      "required": ["party", "risk_score", "dispute_history_30d", "dispute_history_90d", "bad_faith_flag"],
+      "required": [
+        "party",
+        "risk_score",
+        "dispute_history_30d",
+        "dispute_history_90d",
+        "bad_faith_flag"
+      ],
       "properties": {
         "party": {
           "type": "string",
           "description": "The party this profile belongs to.",
-          "enum": ["RIDER", "DRIVER"]
+          "enum": [
+            "RIDER",
+            "DRIVER"
+          ]
         },
         "party_id": {
           "type": "string"
@@ -785,11 +797,14 @@
       },
       "additionalProperties": false
     },
-
     "AppEvent": {
       "title": "AppEvent",
       "type": "object",
-      "required": ["timestamp", "event_type", "details"],
+      "required": [
+        "timestamp",
+        "event_type",
+        "details"
+      ],
       "properties": {
         "timestamp": {
           "type": "string",
@@ -804,50 +819,100 @@
       },
       "additionalProperties": false
     },
-
     "TripData": {
       "title": "TripData",
       "type": "object",
-      "required": ["trip_id", "pickup_location", "dropoff_location"],
+      "required": [
+        "trip_id",
+        "pickup_location",
+        "dropoff_location"
+      ],
       "properties": {
-        "trip_id": { "type": "string" },
-        "rider_id": { "type": "string" },
-        "driver_id": { "type": "string" },
+        "trip_id": {
+          "type": "string"
+        },
+        "rider_id": {
+          "type": "string"
+        },
+        "driver_id": {
+          "type": "string"
+        },
         "pickup_location": {
           "type": "object",
-          "required": ["name", "lat", "lng"],
+          "required": [
+            "name",
+            "lat",
+            "lng"
+          ],
           "properties": {
-            "name": { "type": "string" },
-            "lat": { "type": "number" },
-            "lng": { "type": "number" }
+            "name": {
+              "type": "string"
+            },
+            "lat": {
+              "type": "number"
+            },
+            "lng": {
+              "type": "number"
+            }
           },
           "additionalProperties": false
         },
         "dropoff_location": {
           "type": "object",
-          "required": ["name", "lat", "lng"],
+          "required": [
+            "name",
+            "lat",
+            "lng"
+          ],
           "properties": {
-            "name": { "type": "string" },
-            "lat": { "type": "number" },
-            "lng": { "type": "number" }
+            "name": {
+              "type": "string"
+            },
+            "lat": {
+              "type": "number"
+            },
+            "lng": {
+              "type": "number"
+            }
           },
           "additionalProperties": false
         },
-        "scheduled_time": { "type": "string", "format": "date-time" },
-        "driver_arrival_time": { "type": "string", "format": "date-time" },
-        "driver_wait_start": { "type": "string", "format": "date-time" },
-        "cancellation_time": { "type": "string", "format": "date-time" },
-        "cancellation_fee": { "type": "number", "minimum": 0 },
-        "cancellation_reason": { "type": "string" }
+        "scheduled_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "driver_arrival_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "driver_wait_start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cancellation_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cancellation_fee": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cancellation_reason": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
-
     "DataSources": {
       "title": "DataSources",
-      "description": "Container for all collected telemetry, communication, payment, and historical data sources.",
+      "description": "Container for all collected telemetry, communication, payment, and historical data sources. All data is collected and frozen at INIT_CLAIM; no new evidence is requested or introduced during the agent debate.",
       "type": "object",
-      "required": ["gps_telemetry", "chat_communication", "payment_fare_data", "historical_profiles"],
+      "required": [
+        "gps_telemetry",
+        "chat_communication",
+        "payment_fare_data",
+        "historical_profiles"
+      ],
       "properties": {
         "trip_data": {
           "$ref": "#/$defs/TripData"
@@ -879,7 +944,6 @@
       },
       "additionalProperties": false
     },
-
     "ExifAnalysis": {
       "title": "ExifAnalysis",
       "description": "EXIF metadata and AI-generated image detection analysis for multimodal evidence (primarily Cleaning Fee disputes).",
@@ -935,7 +999,11 @@
         "damage_severity": {
           "type": "string",
           "description": "Estimated severity of the detected damage.",
-          "enum": ["MINOR", "MODERATE", "SEVERE"],
+          "enum": [
+            "MINOR",
+            "MODERATE",
+            "SEVERE"
+          ],
           "default": "MINOR"
         },
         "exif_consistent_with_trip": {
@@ -947,13 +1015,15 @@
           "default": false
         },
         "recycled_image_match_case_id": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "default": null
         }
       },
       "additionalProperties": false
     },
-
     "FraudAssessment": {
       "title": "FraudAssessment",
       "description": "Fraud and bad-faith detection agent output, including risk score, risk factors, and collusion flags.",
@@ -1000,12 +1070,16 @@
         "recommended_fraud_action": {
           "type": "string",
           "description": "Recommended action based on fraud assessment.",
-          "enum": ["NO_ACTION", "FLAG_FOR_REVIEW", "BLOCK_ACCOUNT", "REFER_TO_FRAUD_TEAM"]
+          "enum": [
+            "NO_ACTION",
+            "FLAG_FOR_REVIEW",
+            "BLOCK_ACCOUNT",
+            "REFER_TO_FRAUD_TEAM"
+          ]
         }
       },
       "additionalProperties": false
     },
-
     "EscalationProtocol": {
       "title": "EscalationProtocol",
       "description": "Escalation protocol and safety net configuration for routing cases to human review.",
@@ -1025,7 +1099,11 @@
         "fraud_risk_level": {
           "type": "string",
           "description": "Categorical fraud risk level.",
-          "enum": ["LOW", "MEDIUM", "HIGH"]
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
         },
         "escalation_reasons": {
           "type": "array",
@@ -1042,7 +1120,11 @@
         "priority_level": {
           "type": "string",
           "description": "Priority level assigned for human review queue routing.",
-          "enum": ["STANDARD", "HIGH_PRIORITY", "URGENT"]
+          "enum": [
+            "STANDARD",
+            "HIGH_PRIORITY",
+            "URGENT"
+          ]
         },
         "escalation_threshold_confidence": {
           "type": "number",
@@ -1053,18 +1135,21 @@
         },
         "missing_crucial_evidence": {
           "type": "boolean",
-          "description": "Whether crucial evidence is missing, triggering escalation.",
+          "description": "Informational flag indicating that crucial evidence is missing (mirrors ProsecutorReport.missing_facts). Not an independent escalation trigger: missing crucial evidence lowers confidence_score, which escalates the case through the confidence threshold.",
           "default": false
         }
       },
       "additionalProperties": false
     },
-
     "BonusModules": {
       "title": "BonusModules",
       "description": "Container for bonus and verification modules: multimodal image/EXIF analysis, fraud assessment, and escalation protocol.",
       "type": "object",
-      "required": ["image_exif_analyses", "fraud_assessment", "escalation_protocol"],
+      "required": [
+        "image_exif_analyses",
+        "fraud_assessment",
+        "escalation_protocol"
+      ],
       "properties": {
         "image_exif_analyses": {
           "type": "array",
@@ -1083,12 +1168,15 @@
       },
       "additionalProperties": false
     },
-
     "Fact": {
       "title": "Fact",
       "description": "A single fact item within the Prosecutor's audit report — verified, disputed, or missing.",
       "type": "object",
-      "required": ["fact_id", "description", "supporting_evidence"],
+      "required": [
+        "fact_id",
+        "description",
+        "supporting_evidence"
+      ],
       "properties": {
         "fact_id": {
           "type": "string",
@@ -1109,7 +1197,12 @@
         "party_relevance": {
           "type": "string",
           "description": "Which party this fact is most relevant to.",
-          "enum": ["RIDER", "DRIVER", "BOTH", "NEUTRAL"]
+          "enum": [
+            "RIDER",
+            "DRIVER",
+            "BOTH",
+            "NEUTRAL"
+          ]
         },
         "policy_clause_reference": {
           "type": "string",
@@ -1124,10 +1217,9 @@
       },
       "additionalProperties": false
     },
-
     "ProsecutorReport": {
       "title": "ProsecutorReport",
-      "description": "Prosecutor Agent's final audit report submitted to the Judge Agent, containing verified facts, disputed facts, and missing facts.",
+      "description": "Prosecutor Agent's final audit report, emitted at the end of ROUND_2_PROSECUTOR_AUDIT after tool-based verification and cross-examination. Submitted to the Judge Agent as the immutable fact record, containing verified facts, disputed facts, and missing facts.",
       "type": "object",
       "required": [
         "verified_facts",
@@ -1171,12 +1263,15 @@
       },
       "additionalProperties": false
     },
-
     "RecommendedAction": {
       "title": "RecommendedAction",
       "description": "Exact financial action recommended by the Judge Agent.",
       "type": "object",
-      "required": ["action_type", "refund_amount", "currency"],
+      "required": [
+        "action_type",
+        "refund_amount",
+        "currency"
+      ],
       "properties": {
         "action_type": {
           "type": "string",
@@ -1216,19 +1311,27 @@
         "penalty_target": {
           "type": "string",
           "description": "Which party receives the penalty points.",
-          "enum": ["RIDER", "DRIVER", "NONE"],
+          "enum": [
+            "RIDER",
+            "DRIVER",
+            "NONE"
+          ],
           "default": "NONE"
         },
         "account_action": {
           "type": "string",
           "description": "Additional account-level action recommendation.",
-          "enum": ["NONE", "WARNING_ISSUED", "TEMPORARY_SUSPENSION", "ACCOUNT_BAN"],
+          "enum": [
+            "NONE",
+            "WARNING_ISSUED",
+            "TEMPORARY_SUSPENSION",
+            "ACCOUNT_BAN"
+          ],
           "default": "NONE"
         }
       },
       "additionalProperties": false
     },
-
     "JudgeVerdict": {
       "title": "JudgeVerdict",
       "description": "Judge Agent's final verdict including ruling, confidence, reasoning, recommended action, dual explanations, and execution payload.",
@@ -1246,7 +1349,12 @@
         "ruling_type": {
           "type": "string",
           "description": "The ruling outcome determined by the Judge Agent.",
-          "enum": ["APPROVED", "PARTIAL_REFUND", "REJECTED", "ESCALATED"]
+          "enum": [
+            "APPROVED",
+            "PARTIAL_REFUND",
+            "REJECTED",
+            "ESCALATED"
+          ]
         },
         "confidence_score": {
           "type": "number",
@@ -1288,7 +1396,10 @@
         "explanations": {
           "type": "object",
           "description": "Dual natural language summaries tailored to each party.",
-          "required": ["explanation_for_rider", "explanation_for_driver"],
+          "required": [
+            "explanation_for_rider",
+            "explanation_for_driver"
+          ],
           "properties": {
             "explanation_for_rider": {
               "type": "string",
@@ -1312,29 +1423,47 @@
       },
       "additionalProperties": false
     },
-
     "ExecutionPayload": {
       "title": "ExecutionPayload",
       "description": "Execution output containing the autonomous or human-in-the-loop execution status and details.",
       "type": "object",
-      "required": ["execution_status", "resolved_at"],
+      "required": [
+        "execution_status",
+        "resolved_at"
+      ],
       "properties": {
         "execution_status": {
           "type": "string",
           "description": "The execution outcome status. AUTO_EXECUTED for fully automated resolution; PENDING_HUMAN_APPROVAL for escalated cases.",
-          "enum": ["AUTO_EXECUTED", "PENDING_HUMAN_APPROVAL", "HUMAN_CONFIRMED", "HUMAN_OVERRIDDEN"]
+          "enum": [
+            "AUTO_EXECUTED",
+            "PENDING_HUMAN_APPROVAL",
+            "HUMAN_CONFIRMED",
+            "HUMAN_OVERRIDDEN"
+          ]
         },
         "transaction_id": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "auto_executed_at": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "date-time"
         },
         "case_final_status": {
           "type": "string",
           "description": "Final archival status of the case.",
-          "enum": ["AUTO_RESOLVED", "HUMAN_RESOLVED", "HUMAN_OVERRIDDEN", "PENDING"]
+          "enum": [
+            "AUTO_RESOLVED",
+            "HUMAN_RESOLVED",
+            "HUMAN_OVERRIDDEN",
+            "PENDING"
+          ]
         },
         "human_confirmation_details": {
           "$ref": "#/$defs/HumanConfirmationDetails"
@@ -1346,7 +1475,6 @@
       },
       "additionalProperties": false
     },
-
     "HumanConfirmationDetails": {
       "title": "HumanConfirmationDetails",
       "description": "Details of human operator review and confirmation. Populated ONLY when the case is escalated to human review.",
@@ -1369,7 +1497,12 @@
         "approval_decision": {
           "type": "string",
           "description": "The human operator's decision.",
-          "enum": ["CONFIRMED_AUTO", "MODIFIED", "OVERRIDDEN", "REJECTED_AUTO"]
+          "enum": [
+            "CONFIRMED_AUTO",
+            "MODIFIED",
+            "OVERRIDDEN",
+            "REJECTED_AUTO"
+          ]
         },
         "override_reason": {
           "type": "string",
