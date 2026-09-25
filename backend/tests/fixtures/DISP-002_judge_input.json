@@ -1,0 +1,181 @@
+{
+  "round_1_statements": {
+    "rider_statement": {
+      "party": "RIDER",
+      "agent_role": "RIDER_ADVOCATE",
+      "argument_summary": "I was at the lobby waiting for the driver, but the driver never showed up. I should receive a full refund of the $5.00 cancellation fee that was unfairly charged to me.",
+      "detailed_argument": "The rider states they were present at the Tiong Bahru Plaza lobby at the scheduled pickup time of 08:45 and that the driver never arrived. They dispute the no-show cancellation fee of $5.00 charged to their e-wallet and request a full refund.",
+      "requested_outcome": "FULL_REFUND",
+      "requested_amount": 5.0,
+      "currency": "SGD",
+      "evidence_references": [
+        {
+          "evidence_id": "APP-004",
+          "source_type": "APP_EVENT",
+          "description": "Driver arrived at pickup at 08:43."
+        }
+      ],
+      "submitted_at": "2026-09-13T09:15:00+08:00"
+    },
+    "driver_statement": {
+      "party": "DRIVER",
+      "agent_role": "DRIVER_ADVOCATE",
+      "argument_summary": "I arrived early at 08:43, waited 8 minutes, messaged and called the rider multiple times with no response. The no-show cancellation fee is justified. No penalty should apply to me.",
+      "detailed_argument": "The driver arrived at the pickup point at 08:43 (2 minutes early), remained stationary, sent 4 messages and made 1 call. The rider did not reply or board. After the 8-minute no-show threshold was reached, the trip was cancelled per policy. The driver requests no penalty.",
+      "requested_outcome": "NO_PENALTY",
+      "requested_amount": 0,
+      "currency": "SGD",
+      "evidence_references": [
+        {
+          "evidence_id": "GPS-005",
+          "source_type": "GPS_TELEMETRY",
+          "description": "Driver GPS at pickup, speed 0, arrived."
+        },
+        {
+          "evidence_id": "CHAT-001",
+          "source_type": "CHAT_LOG",
+          "description": "Driver message: arrived at lobby."
+        },
+        {
+          "evidence_id": "CHAT-003",
+          "source_type": "CHAT_LOG",
+          "description": "Driver call to rider, no answer."
+        }
+      ],
+      "submitted_at": "2026-09-13T09:16:00+08:00"
+    }
+  },
+  "prosecutor_findings": {
+    "verified_facts": [
+      {
+        "fact_id": "F-VER-001",
+        "description": "Driver arrived at 08:43 within 10 meters of the pickup point (GPS confirmed arrival).",
+        "supporting_evidence": [
+          {
+            "evidence_id": "APP-004",
+            "source_type": "APP_EVENT",
+            "description": "driver_arrived event at 08:43, GPS within 10m."
+          },
+          {
+            "evidence_id": "GPS-005",
+            "source_type": "GPS_TELEMETRY",
+            "description": "GPS coordinate at pickup, speed 0, status arrived."
+          }
+        ],
+        "party_relevance": "DRIVER",
+        "policy_clause_reference": "POL-3",
+        "confidence_level": 0.98
+      },
+      {
+        "fact_id": "F-VER-002",
+        "description": "Driver remained stationary at the pickup point from 08:43 until cancellation at 08:51 (8 minutes).",
+        "supporting_evidence": [
+          {
+            "evidence_id": "GPS-005",
+            "source_type": "GPS_TELEMETRY",
+            "description": "08:43 — arrived, speed 0."
+          },
+          {
+            "evidence_id": "GPS-006",
+            "source_type": "GPS_TELEMETRY",
+            "description": "08:45 — waiting, speed 0."
+          },
+          {
+            "evidence_id": "GPS-007",
+            "source_type": "GPS_TELEMETRY",
+            "description": "08:48 — waiting, speed 0."
+          },
+          {
+            "evidence_id": "GPS-008",
+            "source_type": "GPS_TELEMETRY",
+            "description": "08:51 — cancelled, speed 0."
+          }
+        ],
+        "party_relevance": "DRIVER",
+        "policy_clause_reference": "POL-3",
+        "confidence_level": 0.97
+      },
+      {
+        "fact_id": "F-VER-003",
+        "description": "Rider was notified of driver arrival at 08:43:05 via push notification and in-app alert.",
+        "supporting_evidence": [
+          {
+            "evidence_id": "APP-005",
+            "source_type": "APP_EVENT",
+            "description": "rider_notified event at 08:43:05."
+          }
+        ],
+        "party_relevance": "RIDER",
+        "policy_clause_reference": "POL-3",
+        "confidence_level": 0.99
+      },
+      {
+        "fact_id": "F-VER-004",
+        "description": "Driver sent 4 messages and made 1 call to the rider. Rider replied 0 times.",
+        "supporting_evidence": [
+          {
+            "evidence_id": "CHAT-001",
+            "source_type": "CHAT_LOG",
+            "description": "Driver message at 08:43."
+          },
+          {
+            "evidence_id": "CHAT-002",
+            "source_type": "CHAT_LOG",
+            "description": "Driver message at 08:45:20."
+          },
+          {
+            "evidence_id": "CHAT-003",
+            "source_type": "CHAT_LOG",
+            "description": "Driver call at 08:47:05, no answer."
+          },
+          {
+            "evidence_id": "CHAT-004",
+            "source_type": "CHAT_LOG",
+            "description": "Driver message at 08:49:30."
+          },
+          {
+            "evidence_id": "CHAT-005",
+            "source_type": "CHAT_LOG",
+            "description": "Driver message at 08:50:45."
+          }
+        ],
+        "party_relevance": "BOTH",
+        "policy_clause_reference": "POL-3",
+        "confidence_level": 0.98
+      },
+      {
+        "fact_id": "F-VER-005",
+        "description": "Cancellation occurred at exactly the 8-minute no-show threshold (08:51:00, driver arrived at 08:43:00).",
+        "supporting_evidence": [
+          {
+            "evidence_id": "APP-009",
+            "source_type": "APP_EVENT",
+            "description": "cancellation_fee_applied event at 08:51:00."
+          }
+        ],
+        "party_relevance": "NEUTRAL",
+        "policy_clause_reference": "POL-3",
+        "confidence_level": 0.99
+      }
+    ],
+    "disputed_facts": [
+      {
+        "fact_id": "F-DIS-001",
+        "description": "Rider claims they were at the lobby waiting, but there is no rider-side evidence (no GPS, no photo, no witness) to corroborate their presence at the pickup point.",
+        "supporting_evidence": [],
+        "party_relevance": "RIDER",
+        "confidence_level": 0.3
+      }
+    ],
+    "missing_facts": [
+      {
+        "fact_id": "F-MIS-001",
+        "description": "Rider location data at the scheduled pickup time is missing. No rider GPS or location evidence is available to verify whether the rider was actually at the pickup point.",
+        "supporting_evidence": [],
+        "party_relevance": "RIDER"
+      }
+    ],
+    "prosecutor_summary": "All five POL-3 no-show conditions are verified by system records (GPS, app events, chat). The rider's claim of being present is unsupported by any evidence. The cancellation fee appears justified. One missing fact (rider location) and one disputed fact (rider's presence claim) are noted.",
+    "report_submitted_at": "2026-09-13T09:18:00+08:00"
+  }
+}
