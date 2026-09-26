@@ -2,7 +2,7 @@ import math
 from datetime import datetime
 from typing import Any
 
-from app.services.verification.policy import get_policy_params
+from .policy import get_policy_params
 
 
 def _parse_ts(ts: Any) -> datetime | None:
