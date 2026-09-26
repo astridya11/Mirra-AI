@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mirra.ai/schemas/dispute-resolution.schema.json",
   "title": "Ryde Multi-Agent Autonomous Dispute Resolution System — Master Schema",
-  "description": "Complete data contracts, state context objects, and structured outputs for the Ryde dispute resolution pipeline. Fully compatible with official Ryde dispute datasets.",
+  "description": "Complete data contracts, state context objects, and structured outputs for the Ryde dispute resolution pipeline, including the PolicyAgent consultation invoked by JudgeAgent during deliberation and its knowledge-base feedback loop on human overrides. Fully compatible with official Ryde dispute datasets.",
   "type": "object",
   "required": [
     "case_metadata",
@@ -11,6 +11,7 @@
     "round_2_cross_exam",
     "bonus_modules",
     "prosecutor_findings",
+    "policy_consultation",
     "judge_verdict"
   ],
   "properties": {
@@ -47,15 +48,30 @@
     "prosecutor_findings": {
       "$ref": "#/$defs/ProsecutorReport"
     },
+    "policy_consultation": {
+      "$ref": "#/$defs/PolicyConsultation"
+    },
     "judge_verdict": {
       "$ref": "#/$defs/JudgeVerdict"
+    },
+    "policy_kb_update": {
+      "description": "Populated only when a human reviewer's decision during ESCALATED_HUMAN_REVIEW overrides JudgeVerdict (approval_decision is MODIFIED, OVERRIDDEN, or REJECTED_AUTO), triggering a PolicyAgent knowledge-base update. Null for FULLY_AUTOMATED cases and for human reviews that confirm the Judge's ruling as-is (CONFIRMED_AUTO).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PolicyKnowledgeBaseUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "additionalProperties": false,
   "$defs": {
     "CaseMetadata": {
       "title": "CaseMetadata",
-      "description": "Top-level case identification and workflow state-control object. The protocol is fixed at 2 advocate rounds (ROUND_1_PLEADINGS, ROUND_2_PROSECUTOR_AUDIT) followed by JUDGE_DELIBERATION and EXECUTION_ROUTER.",
+      "description": "Top-level case identification and workflow state-control object. The protocol is fixed at 2 advocate rounds (ROUND_1_PLEADINGS, ROUND_2_PROSECUTOR_AUDIT), followed by POLICY_CONSULTATION, JUDGE_DELIBERATION, and EXECUTION_ROUTER.",
       "type": "object",
       "required": [
         "case_id",
@@ -88,13 +104,14 @@
             "INIT_CLAIM",
             "ROUND_1_PLEADINGS",
             "ROUND_2_PROSECUTOR_AUDIT",
+            "POLICY_CONSULTATION",
             "JUDGE_DELIBERATION",
             "EXECUTION_ROUTER"
           ]
         },
         "current_round": {
           "type": "integer",
-          "description": "The active advocate round number. 1 = ROUND_1_PLEADINGS, 2 = ROUND_2_PROSECUTOR_AUDIT. Remains 2 during JUDGE_DELIBERATION and EXECUTION_ROUTER, since the protocol has a hard limit of 2 rounds.",
+          "description": "The active advocate round number. 1 = ROUND_1_PLEADINGS, 2 = ROUND_2_PROSECUTOR_AUDIT. Remains 2 during POLICY_CONSULTATION, JUDGE_DELIBERATION, and EXECUTION_ROUTER, since the protocol has a hard limit of 2 rounds.",
           "enum": [
             1,
             2
@@ -1358,7 +1375,7 @@
         },
         "confidence_score": {
           "type": "number",
-          "description": "Confidence score (0.0 to 1.0) for the ruling. Scores >= 0.75 qualify for FULLY_AUTOMATED execution if no safety/fraud flags are raised.",
+          "description": "Confidence score (0.0 to 1.0) for the final ruling — the sole confidence score in the pipeline, produced by JudgeAgent after weighing ProsecutorReport's verified facts against PolicySuggestion. Scores >= 0.75 qualify for FULLY_AUTOMATED execution if no safety/fraud flags are raised.",
           "minimum": 0,
           "maximum": 1
         },
@@ -1514,6 +1531,265 @@
         "human_summary_card": {
           "type": "string",
           "description": "Rich summary card content presented to the human operator for 1-click confirmation."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyClauseReference": {
+      "title": "PolicyClauseReference",
+      "description": "A specific clause from the Ryde policy library retrieved by PolicyAgent as relevant to the case.",
+      "type": "object",
+      "required": [
+        "clause_id",
+        "clause_title",
+        "relevance_summary"
+      ],
+      "properties": {
+        "clause_id": {
+          "type": "string",
+          "description": "Unique identifier of the policy clause (e.g., 'Ryde-Policy-4.2.1')."
+        },
+        "clause_title": {
+          "type": "string",
+          "description": "Short title of the clause (e.g., 'Route Deviation Refund Eligibility')."
+        },
+        "clause_text_summary": {
+          "type": "string",
+          "description": "Paraphrased summary of the clause's operative text, not a verbatim reproduction."
+        },
+        "relevance_summary": {
+          "type": "string",
+          "description": "Why PolicyAgent judged this clause relevant to the case's verified facts."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PrecedentReference": {
+      "title": "PrecedentReference",
+      "description": "A prior resolved case retrieved by PolicyAgent as a similar precedent.",
+      "type": "object",
+      "required": [
+        "precedent_id",
+        "similarity_summary",
+        "prior_ruling_type"
+      ],
+      "properties": {
+        "precedent_id": {
+          "type": "string",
+          "description": "Identifier of the prior case in the precedent store (may be a past case_id or a synthetic precedent_id assigned by a knowledge-base update)."
+        },
+        "similarity_summary": {
+          "type": "string",
+          "description": "Why this prior case is similar to the current one."
+        },
+        "prior_ruling_type": {
+          "type": "string",
+          "description": "The ruling outcome of the precedent case.",
+          "enum": [
+            "APPROVED",
+            "PARTIAL_REFUND",
+            "REJECTED",
+            "ESCALATED"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyConsultationRequest": {
+      "title": "PolicyConsultationRequest",
+      "description": "Payload sent to PolicyAgent during POLICY_CONSULTATION, the state StateEngine transitions to immediately after ROUND_2_PROSECUTOR_AUDIT completes. Carries the Prosecutor's verified evidence and case summary so PolicyAgent can retrieve applicable clauses and precedents before JudgeAgent begins deliberation. JudgeAgent's own confidence_score is produced afterward, in JudgeVerdict, once the Policy suggestion has been weighed against the Prosecutor's findings.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "dispute_type",
+        "verified_fact_ids",
+        "prosecutor_summary",
+        "requested_at"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Unique identifier for this consultation request."
+        },
+        "dispute_type": {
+          "type": "string",
+          "description": "Category of the dispute, used to narrow policy clause retrieval.",
+          "enum": [
+            "ROUTE_DEVIATION",
+            "CLEANING_FEE",
+            "SAFETY_ALERT",
+            "NO_SHOW_CHARGE"
+          ]
+        },
+        "verified_fact_ids": {
+          "type": "array",
+          "description": "IDs of ProsecutorReport.verified_facts entries provided as grounding for the consultation.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "prosecutor_summary": {
+          "type": "string",
+          "description": "Copy of ProsecutorReport.prosecutor_summary passed along for context."
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicySuggestion": {
+      "title": "PolicySuggestion",
+      "description": "PolicyAgent's response to a PolicyConsultationRequest, emitted during POLICY_CONSULTATION: the applicable clauses, matched precedents, and a suggested ruling for JudgeAgent to weigh against the Prosecutor's findings once StateEngine transitions to JUDGE_DELIBERATION. This is advisory only — JudgeAgent is not required to adopt suggested_ruling_type or suggested_recommended_action as-is.",
+      "type": "object",
+      "required": [
+        "suggestion_id",
+        "request_id",
+        "applicable_clauses",
+        "suggested_ruling_type",
+        "suggested_recommended_action",
+        "policy_confidence",
+        "rationale",
+        "suggested_at"
+      ],
+      "properties": {
+        "suggestion_id": {
+          "type": "string",
+          "description": "Unique identifier for this suggestion."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "ID of the PolicyConsultationRequest this suggestion answers."
+        },
+        "applicable_clauses": {
+          "type": "array",
+          "description": "Relevant policy clauses retrieved for this case.",
+          "items": {
+            "$ref": "#/$defs/PolicyClauseReference"
+          },
+          "minItems": 1
+        },
+        "matched_precedents": {
+          "type": "array",
+          "description": "Similar past cases retrieved from the precedent store, if any.",
+          "items": {
+            "$ref": "#/$defs/PrecedentReference"
+          },
+          "minItems": 0
+        },
+        "suggested_ruling_type": {
+          "type": "string",
+          "description": "PolicyAgent's suggested ruling outcome, for the Judge to weigh.",
+          "enum": [
+            "APPROVED",
+            "PARTIAL_REFUND",
+            "REJECTED",
+            "ESCALATED"
+          ]
+        },
+        "suggested_recommended_action": {
+          "$ref": "#/$defs/RecommendedAction"
+        },
+        "policy_confidence": {
+          "type": "number",
+          "description": "PolicyAgent's confidence (0.0-1.0) in the clause match and suggested ruling, based on how directly the retrieved clauses and precedents apply.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Natural-language explanation of how the applicable_clauses and matched_precedents support the suggested ruling."
+        },
+        "suggested_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyConsultation": {
+      "title": "PolicyConsultation",
+      "description": "Full record of the POLICY_CONSULTATION phase: PolicyAgent runs as its own state-machine step, immediately after ROUND_2_PROSECUTOR_AUDIT completes and before StateEngine transitions to JUDGE_DELIBERATION. JudgeAgent receives this record as input rather than invoking PolicyAgent itself.",
+      "type": "object",
+      "required": [
+        "request",
+        "suggestion"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/PolicyConsultationRequest"
+        },
+        "suggestion": {
+          "$ref": "#/$defs/PolicySuggestion"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyKnowledgeBaseUpdate": {
+      "title": "PolicyKnowledgeBaseUpdate",
+      "description": "Record of PolicyAgent updating its knowledge base (clause interpretation / precedent store) after a human reviewer's decision overrides JudgeVerdict during ESCALATED_HUMAN_REVIEW. Only created when the human's approval_decision differs from JudgeVerdict's own ruling_type/recommended_action (i.e. approval_decision is MODIFIED, OVERRIDDEN, or REJECTED_AUTO). Not created for FULLY_AUTOMATED cases or for CONFIRMED_AUTO human reviews.",
+      "type": "object",
+      "required": [
+        "update_id",
+        "trigger",
+        "judge_ruling_type",
+        "judge_recommended_action",
+        "human_final_action",
+        "mismatch_summary",
+        "new_precedent_id",
+        "updated_at"
+      ],
+      "properties": {
+        "update_id": {
+          "type": "string",
+          "description": "Unique identifier for this knowledge-base update event."
+        },
+        "trigger": {
+          "type": "string",
+          "description": "The human approval_decision that triggered this update. Mirrors HumanConfirmationDetails.approval_decision.",
+          "enum": [
+            "MODIFIED",
+            "OVERRIDDEN",
+            "REJECTED_AUTO"
+          ]
+        },
+        "judge_ruling_type": {
+          "type": "string",
+          "description": "JudgeVerdict.ruling_type that was overridden.",
+          "enum": [
+            "APPROVED",
+            "PARTIAL_REFUND",
+            "REJECTED",
+            "ESCALATED"
+          ]
+        },
+        "judge_recommended_action": {
+          "$ref": "#/$defs/RecommendedAction"
+        },
+        "human_final_action": {
+          "$ref": "#/$defs/RecommendedAction"
+        },
+        "clauses_flagged": {
+          "type": "array",
+          "description": "clause_id values from the PolicySuggestion.applicable_clauses whose interpretation appears responsible for the mismatch, if identifiable.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "mismatch_summary": {
+          "type": "string",
+          "description": "Natural-language note on how and why the human decision differed from the Judge's ruling."
+        },
+        "new_precedent_id": {
+          "type": "string",
+          "description": "Identifier assigned to this case as it is indexed into PolicyAgent's precedent store, for retrieval by future PrecedentReference matches."
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
         }
       },
       "additionalProperties": false
