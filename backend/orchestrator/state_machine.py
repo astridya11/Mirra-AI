@@ -1,10 +1,11 @@
 """
 state_machine.py - Multi-Agent Dispute Resolution Pipeline State Machine Engine.
 
-Handles the full lifecycle of a dispute case using real agent invocations:
+Handles the full lifecycle of a dispute case using real agent invocations via
+event-driven real-time streaming (SSE / WebSocket ready):
 1. INIT_CLAIM: Case initialization & evidence freezing
-2. ROUND_1_PLEADINGS: Rider & Driver Advocate Agents
-3. ROUND_2_PROSECUTOR_AUDIT: Prosecutor/Investigator Agent & Fraud Tools
+2. ROUND_1_PLEADINGS: Rider & Driver Advocate Agents (Live Streaming)
+3. ROUND_2_PROSECUTOR_AUDIT: Prosecutor/Investigator Agent & Fraud Tools (Live Cross-Exam Streaming)
 4. POLICY_CONSULTATION: Policy & Precedent Matching Agent
 5. JUDGE_DELIBERATION: Judge Agent Decision
 6. EXECUTION_ROUTER: Confidence Gate & Execution Routing
@@ -30,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
 # ----------------------------------------------------------------------
 from backend.agents.judge_agent import run_judge
 from backend.agents import precedent_store
+
 # ----------------------------------------------------------------------
 # Timezone & constants
 # ----------------------------------------------------------------------
@@ -53,8 +55,6 @@ def _lazy_import(module_path: str, function_name: str):
 
     Not-yet-implemented agents are loaded this way so that the framework
     is complete: the import happens at call time, not at module load time.
-    If a teammate hasn't created the module yet, the error message clearly
-    states what needs to be created.
     """
     import importlib
 
@@ -93,7 +93,7 @@ class State:
 
 
 # ----------------------------------------------------------------------
-# Enums (defined locally to avoid circular import with main.py)
+# Enums
 # ----------------------------------------------------------------------
 
 
@@ -114,7 +114,7 @@ class HumanReviewDecision(str, Enum):
 
 
 # ----------------------------------------------------------------------
-# Phase Event
+# Phase & Conversation Events
 # ----------------------------------------------------------------------
 
 
@@ -137,6 +137,36 @@ class PhaseEvent:
 
 
 # ----------------------------------------------------------------------
+# Agent Conversation Event
+# ----------------------------------------------------------------------
+
+
+class AgentConversationEvent(PhaseEvent):
+    """
+    Transport event emitted immediately after an agent message completes.
+    Used by WebSocket/SSE layer to display real-time conversations.
+    """
+
+    def __init__(
+        self,
+        phase: str,
+        speaker: str,
+        message_type: str,
+        data: Dict[str, Any],
+    ):
+        super().__init__(phase, "AGENT_CONVERSATION", data)
+        self.speaker = speaker
+        self.message_type = message_type
+
+    def to_dict(self) -> Dict[str, Any]:
+        event = super().to_dict()
+        event["event_type"] = "AGENT_CONVERSATION"
+        event["speaker"] = self.speaker
+        event["message_type"] = self.message_type
+        return event
+
+
+# ----------------------------------------------------------------------
 # Case Context — holds the full case state across all pipeline phases
 # ----------------------------------------------------------------------
 
@@ -148,7 +178,7 @@ class CaseContext:
     Field names align with shared/schemas.json top-level properties:
       case_metadata, data_sources, round_1_statements, round_2_cross_exam,
       bonus_modules, prosecutor_findings, policy_consultation,
-      judge_verdict, policy_kb_update
+      judge_verdict, policy_kb_update, agent_conversation
     """
 
     def __init__(self, case_id: str, case_data: Dict[str, Any]):
@@ -179,6 +209,9 @@ class CaseContext:
         self.judge_verdict: Dict[str, Any] = {}
         self.policy_kb_update: Optional[Dict[str, Any]] = None
 
+        # Chronological transcript shared by realtime UI and case storage.
+        self.agent_conversation: List[Dict[str, Any]] = []
+
     def update_timestamp(self) -> None:
         self.case_metadata["updated_at"] = datetime.now(_SGT).isoformat()
 
@@ -195,6 +228,7 @@ class CaseContext:
             "data_sources": self.data_sources,
             "round_1_statements": self.round_1_statements,
             "round_2_cross_exam": self.round_2_cross_exam,
+            "agent_conversation": self.agent_conversation,
             "bonus_modules": self.bonus_modules,
             "prosecutor_findings": self.prosecutor_findings,
             "policy_consultation": self.policy_consultation,
@@ -205,7 +239,7 @@ class CaseContext:
     def to_context_dict(self) -> Dict[str, Any]:
         """
         Build a flat dict suitable for passing to agents that expect
-        a context dict (e.g., run_judge, run_prosecutor_audit).
+        a context dict.
 
         This is the **information exchange contract** between the state
         machine and the agents: every agent receives the accumulated
@@ -221,9 +255,15 @@ class CaseContext:
             "policy_consultation": self.policy_consultation,
         }
 
+    def to_live_context_dict(self) -> Dict[str, Any]:
+        """Return normal agent context plus the live agent conversation."""
+        context = self.to_context_dict()
+        context["conversation"] = list(self.agent_conversation)
+        return context
+
 
 # ----------------------------------------------------------------------
-# Case persistence helpers (deferred import to avoid circular dependency)
+# Case persistence helpers
 # ----------------------------------------------------------------------
 
 
@@ -238,13 +278,13 @@ def _save_case(result: Dict[str, Any]) -> None:
 
 
 # ----------------------------------------------------------------------
-# Pipeline Engine
+# Real-Time Pipeline Engine
 # ----------------------------------------------------------------------
 
 
 class PipelineEngine:
     """
-    Orchestrates the 6-phase dispute resolution pipeline.
+    Orchestrates the 6-phase dispute resolution pipeline with real-time event streaming.
 
     Each phase:
       1. Reads the accumulated case state from self.ctx
@@ -256,8 +296,55 @@ class PipelineEngine:
     def __init__(self, case_id: str):
         self.case_id = case_id
         self.ctx: Optional[CaseContext] = None
+        # Runtime alias retained for compatibility with callers that inspect
+        # Round 2 conversation events before serialization.
+        self._round_2_agent_conversation: List[Dict[str, Any]] = []
 
-    # -- Phase 1: INIT_CLAIM ------------------------------------------------
+    def _record_conversation_event(
+        self,
+        phase: str,
+        speaker: str,
+        message_type: str,
+        target: str,
+        response: Any,
+        turn: int,
+    ) -> AgentConversationEvent:
+        """Normalize an agent response into a UI-streamable conversation event."""
+        if isinstance(response, dict):
+            content = (
+                response.get("content")
+                or response.get("message")
+                or response.get("response")
+                or response.get("question")
+                or response.get("text")
+                or ""
+            )
+            agent_output = response
+        else:
+            content = str(response)
+            agent_output = {"content": content}
+
+        event_data = {
+            "message_id": f"MSG-{uuid.uuid4().hex[:10].upper()}",
+            "speaker": speaker,
+            "message_type": message_type,
+            "target": target,
+            "content": content,
+            "turn": turn,
+            "status": "COMPLETED",
+            "agent_output": agent_output,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        self.ctx.agent_conversation.append(event_data)
+        return AgentConversationEvent(
+            phase=phase,
+            speaker=speaker,
+            message_type=message_type,
+            data=event_data,
+        )
+
+    # -- Phase 1: INIT_CLAIM -----------------------------------------------
 
     async def _phase_init_claim(self) -> PhaseEvent:
         """
@@ -290,88 +377,229 @@ class PipelineEngine:
             },
         )
 
-    # -- Phase 2: ROUND_1_PLEADINGS -----------------------------------------
+    # -- Phase 2: ROUND_1_PLEADINGS (Streaming) ----------------------------
 
-    async def _phase_round_1_pleadings(self) -> PhaseEvent:
-        """
-        Phase 2: First-round advocate pleadings.
-
-        RiderAgent extracts the passenger's claim, sentiment, requested
-        refund, and supporting narrative. DriverAgent extracts the driver's
-        response and counter-evidence. Both are structured AgentStatement
-        objects added to round_1_statements.
+    async def _stream_round_1_pleadings(self) -> AsyncGenerator[PhaseEvent, None]:
+        """Real-time streaming for ROUND_1_PLEADINGS.
 
         Agent contract:
-          run_rider_advocate(context: dict) -> dict  # schema: AgentStatement
-          run_driver_advocate(context: dict) -> dict  # schema: AgentStatement
+          rider_advocate_agent.generateResponse(context: dict, target: str) -> dict
+          driver_advocate_agent.generateResponse(context: dict, target: str) -> dict
+
+        Each response is yielded immediately and also becomes the corresponding
+        schema-aligned AgentStatement. No second advocate invocation is made.
         """
-        context = self.ctx.to_context_dict()
-
-        # --- Rider Advocate Agent ---
-        run_rider_advocate = _lazy_import(
-            "backend.agents.rider_advocate_agent", "run_rider_advocate"
+        rider_generate_response = _lazy_import(
+            "backend.agents.rider_advocate_agent", "generateResponse"
         )
-        rider_statement = await run_rider_advocate(context)
+        driver_generate_response = _lazy_import(
+            "backend.agents.driver_advocate_agent", "generateResponse"
+        )
 
-        # Ensure party/agent_role are set correctly
+        # Rider Advocate Response
+        rider_response = await rider_generate_response(
+            context=self.ctx.to_live_context_dict(),
+            target="DRIVER_ADVOCATE",
+        )
+        rider_statement = dict(rider_response) if isinstance(rider_response, dict) else {"content": str(rider_response)}
         rider_statement.setdefault("party", "RIDER")
         rider_statement.setdefault("agent_role", "RIDER_ADVOCATE")
         rider_statement.setdefault("submitted_at", datetime.now(_SGT).isoformat())
+        self.ctx.round_1_statements["rider_statement"] = rider_statement
 
-        # --- Driver Advocate Agent ---
-        run_driver_advocate = _lazy_import(
-            "backend.agents.driver_advocate_agent", "run_driver_advocate"
+        yield self._record_conversation_event(
+            State.ROUND_1_PLEADINGS,
+            "RIDER_ADVOCATE",
+            "STATEMENT",
+            "DRIVER_ADVOCATE",
+            rider_response,
+            1,
         )
-        driver_statement = await run_driver_advocate(context)
 
+        # Driver Advocate Response
+        driver_response = await driver_generate_response(
+            context=self.ctx.to_live_context_dict(),
+            target="RIDER_ADVOCATE",
+        )
+        driver_statement = dict(driver_response) if isinstance(driver_response, dict) else {"content": str(driver_response)}
         driver_statement.setdefault("party", "DRIVER")
         driver_statement.setdefault("agent_role", "DRIVER_ADVOCATE")
         driver_statement.setdefault("submitted_at", datetime.now(_SGT).isoformat())
+        self.ctx.round_1_statements["driver_statement"] = driver_statement
 
-        # Assemble round_1_statements (schema: Round1Statements)
-        self.ctx.round_1_statements = {
-            "rider_statement": rider_statement,
-            "driver_statement": driver_statement,
-        }
+        yield self._record_conversation_event(
+            State.ROUND_1_PLEADINGS,
+            "DRIVER_ADVOCATE",
+            "STATEMENT",
+            "RIDER_ADVOCATE",
+            driver_response,
+            2,
+        )
 
         self.ctx.set_state(State.ROUND_2_PROSECUTOR_AUDIT, round_num=2)
-
-        return PhaseEvent(
+        yield PhaseEvent(
             phase=State.ROUND_1_PLEADINGS,
             label="2. 第一轮辩论（申诉与答辩）",
             data=self.ctx.round_1_statements,
         )
 
-    # -- Phase 3: ROUND_2_PROSECUTOR_AUDIT ---------------------------------
+    # -- Phase 3: ROUND_2_PROSECUTOR_AUDIT (Streaming) --------------------
 
-    async def _phase_round_2_prosecutor_audit(self) -> PhaseEvent:
-        """
-        Phase 3: Prosecutor audit & cross-examination.
+    @staticmethod
+    def _normalize_live_question(question: Any, turn: int) -> Dict[str, Any]:
+        raw = dict(question) if isinstance(question, dict) else {"question": str(question)}
+        return {
+            "question_id": raw.get("question_id") or f"Q-{uuid.uuid4().hex[:10].upper()}",
+            "directed_to": raw.get("directed_to") or raw.get("target") or "BOTH",
+            "question_text": (
+                raw.get("question_text")
+                or raw.get("question")
+                or raw.get("content")
+                or raw.get("text")
+                or ""
+            ),
+            "evidence_context": raw.get("evidence_context", ""),
+            "category": raw.get("category", "OTHER"),
+            "asked_at": raw.get("asked_at") or datetime.now(_SGT).isoformat(),
+            "turn": raw.get("turn", turn),
+        }
 
-        ProsecutorAgent runs tool-based verification (GPS, EXIF, chat, fraud),
-        issues targeted questions to advocates, collects responses, and emits
-        the immutable ProsecutorReport (verified_facts, disputed_facts,
-        missing_facts, prosecutor_summary).
+    @staticmethod
+    def _normalize_live_response(
+        response: Any, question: Dict[str, Any], target: str, turn: int
+    ) -> Dict[str, Any]:
+        raw = dict(response) if isinstance(response, dict) else {"response": str(response)}
+        responding_party = (
+            "RIDER" if target == "RIDER_ADVOCATE" else
+            "DRIVER" if target == "DRIVER_ADVOCATE" else
+            raw.get("responding_party", "UNKNOWN")
+        )
+        return {
+            "question_id": raw.get("question_id") or question["question_id"],
+            "response_id": raw.get("response_id") or f"R-{uuid.uuid4().hex[:10].upper()}",
+            "responding_party": responding_party,
+            "response_text": (
+                raw.get("response_text")
+                or raw.get("response")
+                or raw.get("content")
+                or raw.get("message")
+                or raw.get("text")
+                or ""
+            ),
+            "responded_at": raw.get("responded_at") or datetime.now(_SGT).isoformat(),
+            "turn": raw.get("turn", turn),
+        }
+
+    async def _stream_round_2_prosecutor_audit(self) -> AsyncGenerator[PhaseEvent, None]:
+        """Real-time streaming for ROUND_2_PROSECUTOR_AUDIT cross-examination.
 
         Agent contract:
-          run_prosecutor_audit(context: dict) -> dict with keys:
-            round_2_cross_exam  (schema: Round2CrossExam)
-            bonus_modules       (schema: BonusModules)
-            prosecutor_findings (schema: ProsecutorReport)
-        """
-        context = self.ctx.to_context_dict()
+          prosecutor_agent.generateQuestion(context: dict, turn: int) -> dict
+          rider_advocate_agent.generateResponse(context: dict, question: dict) -> dict
+          driver_advocate_agent.generateResponse(context: dict, question: dict) -> dict
 
+        The state machine yields the prosecutor question immediately, then
+        yields the targeted advocate response immediately. There are no
+        follow-up questions after the configured single pass.
+        """
+        prosecutor_generate_question = _lazy_import(
+            "backend.agents.prosecutor_agent", "generateQuestion"
+        )
+        rider_generate_response = _lazy_import(
+            "backend.agents.rider_advocate_agent", "generateResponse"
+        )
+        driver_generate_response = _lazy_import(
+            "backend.agents.driver_advocate_agent", "generateResponse"
+        )
         run_prosecutor_audit = _lazy_import(
             "backend.agents.prosecutor_agent", "run_prosecutor_audit"
         )
-        audit_result = await run_prosecutor_audit(context)
 
-        # Unpack the prosecutor's output into schema-aligned context fields
-        self.ctx.round_2_cross_exam = audit_result.get("round_2_cross_exam", {})
-        self.ctx.bonus_modules = audit_result.get("bonus_modules", {})
-        self.ctx.prosecutor_findings = audit_result.get("prosecutor_findings", {})
+        # ------------------------------------------------------------------
+        # Step 1: 质询前 - 执行初始证据审计 (Initial Evidence Audit)
+        # 检察官先运行工具分析 telemetry, EXIF, Chat logs, Fraud score
+        # ------------------------------------------------------------------
+        initial_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
+        self.ctx.bonus_modules = initial_audit_result.get("bonus_modules", {})
+        self.ctx.prosecutor_findings = initial_audit_result.get("prosecutor_findings", {})
 
-        # Ensure round2_completed flag is set
+        yield PhaseEvent(
+            phase=State.ROUND_2_PROSECUTOR_AUDIT,
+            label="3a. 检察官初始证据审计与欺诈筛查",
+            data={
+                "prosecutor_findings": self.ctx.prosecutor_findings,
+                "bonus_modules": self.ctx.bonus_modules,
+            },
+        )
+
+        # ------------------------------------------------------------------
+        # Step 2: 质询中 - 基于已核查的证据进行交叉质询 (Cross-Examination)
+        # ------------------------------------------------------------------
+        max_turns = 10
+        for turn in range(1, max_turns + 1):
+            # 此时 generateQuestion 上下文中已经包含初始的 prosecutor_findings 证据分析
+            question = await prosecutor_generate_question(
+                context=self.ctx.to_live_context_dict(),
+                turn=turn,
+            )
+            if isinstance(question, dict) and question.get("done"):
+                break
+
+            default_target = "RIDER_ADVOCATE" if turn % 2 else "DRIVER_ADVOCATE"
+            target = question.get("target", question.get("directed_to", default_target)) if isinstance(question, dict) else default_target
+            if target not in {"RIDER_ADVOCATE", "DRIVER_ADVOCATE"}:
+                raise ValueError(
+                    f"generateQuestion() returned invalid target '{target}'. "
+                    "Expected RIDER_ADVOCATE or DRIVER_ADVOCATE."
+                )
+
+            normalized_question = self._normalize_live_question(question, turn)
+            self.ctx.round_2_cross_exam.setdefault("targeted_questions", []).append(
+                normalized_question
+            )
+
+            yield self._record_conversation_event(
+                State.ROUND_2_PROSECUTOR_AUDIT,
+                "PROSECUTOR",
+                "QUESTION",
+                target,
+                normalized_question,
+                turn,
+            )
+
+            advocate_generate_response = (
+                rider_generate_response
+                if target == "RIDER_ADVOCATE"
+                else driver_generate_response
+            )
+            response = await advocate_generate_response(
+                context=self.ctx.to_live_context_dict(),
+                question=normalized_question,
+            )
+
+            normalized_response = self._normalize_live_response(
+                response, normalized_question, target, turn
+            )
+            self.ctx.round_2_cross_exam.setdefault("targeted_responses", []).append(
+                normalized_response
+            )
+
+            yield self._record_conversation_event(
+                State.ROUND_2_PROSECUTOR_AUDIT,
+                target,
+                "RESPONSE",
+                "PROSECUTOR",
+                normalized_response,
+                turn,
+            )
+
+        # ------------------------------------------------------------------
+        # Step 3: 质询后 - 综合双方说辞与最终证据，生成终审 Prosecutor Report
+        # ------------------------------------------------------------------
+        final_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
+
+        self.ctx.bonus_modules = final_audit_result.get("bonus_modules", {})
+        self.ctx.prosecutor_findings = final_audit_result.get("prosecutor_findings", {})
         self.ctx.round_2_cross_exam.setdefault("round2_completed", True)
         self.ctx.round_2_cross_exam.setdefault(
             "completed_at", datetime.now(_SGT).isoformat()
@@ -379,11 +607,12 @@ class PipelineEngine:
 
         self.ctx.set_state(State.POLICY_CONSULTATION)
 
-        return PhaseEvent(
+        yield PhaseEvent(
             phase=State.ROUND_2_PROSECUTOR_AUDIT,
-            label="3. 第二轮调查与交叉质询（公诉审查）",
+            label="3b. 第二轮调查质询完成与检察官报告(Prosecutor Report)出具",
             data={
                 "round_2_cross_exam": self.ctx.round_2_cross_exam,
+                "agent_conversation": self.ctx.agent_conversation,
                 "bonus_modules": self.ctx.bonus_modules,
                 "prosecutor_findings": self.ctx.prosecutor_findings,
             },
@@ -507,7 +736,7 @@ class PipelineEngine:
         self.ctx.case_metadata["current_state"] = State.EXECUTION_ROUTER
         self.ctx.update_timestamp()
 
-        # Persist final result
+        # Save final state to storage
         _save_case(self.ctx.assemble_result())
 
         return PhaseEvent(
@@ -527,7 +756,7 @@ class PipelineEngine:
           1. confidence_score < 0.75
           2. safety_threat_detected == True (from bonus_modules.escalation_protocol)
           3. fraud_risk_level == HIGH (from bonus_modules.escalation_protocol)
-          4. safety threat keywords in chat transcript
+        #   4. safety threat keywords in chat transcript
         """
         verdict = self.ctx.judge_verdict
         confidence = verdict.get("confidence_score", 0.0)
@@ -553,16 +782,16 @@ class PipelineEngine:
             reasons.append("深度调查组件标记为高欺诈风险")
 
         # 4. Safety keyword scan in chat transcript
-        chat_data = self.ctx.data_sources.get("chat_communication", {})
-        transcript = chat_data.get("transcript", [])
-        chat_text = " ".join(
-            [m.get("content", "") for m in transcript]
-        ).lower()
-        safety_detected = any(
-            keyword in chat_text for keyword in SAFETY_KEYWORDS
-        )
-        if safety_detected:
-            reasons.append("对话记录中触发安全风险关键词，需要人工安全合规审核")
+        # chat_data = self.ctx.data_sources.get("chat_communication", {})
+        # transcript = chat_data.get("transcript", [])
+        # chat_text = " ".join(
+        #     [m.get("content", "") for m in transcript]
+        # ).lower()
+        # safety_detected = any(
+        #     keyword in chat_text for keyword in SAFETY_KEYWORDS
+        # )
+        # if safety_detected:
+        #     reasons.append("对话记录中触发安全风险关键词，需要人工安全合规审核")
 
         is_escalated = len(reasons) > 0
         route = (
@@ -595,7 +824,7 @@ class PipelineEngine:
         escalation_proto["is_escalated"] = is_escalated
         escalation_proto["escalation_reasons"] = reasons
         escalation_proto["priority_level"] = (
-            "URGENT" if safety_detected or fraud_risk_level == "HIGH"
+            "URGENT" if safety_threat or fraud_risk_level == "HIGH"
             else "HIGH_PRIORITY" if is_escalated
             else "STANDARD"
         )
@@ -608,7 +837,7 @@ class PipelineEngine:
             "execution_payload": execution_payload,
         }
 
-    # -- Policy suggestion builder (deterministic fallback) ----------------
+    # -- Policy suggestion fallback ----------------------------------------
 
     def _build_policy_suggestion(
         self,
@@ -616,7 +845,7 @@ class PipelineEngine:
         request: Dict[str, Any],
         now: str,
     ) -> Dict[str, Any]:
-        """Compatibility fallback if the full policy consultant is absent."""
+        """Fallback policy builder."""
         context = self.ctx.to_context_dict()
         clauses = precedent_store.retrieve_clauses(dispute_type)
         policy_values = precedent_store.compute_policy_values(dispute_type, context)
@@ -648,20 +877,25 @@ class PipelineEngine:
             "suggested_at": now,
         }
 
-    # -- Pipeline executor --------------------------------------------------
+    # -- Real-Time Pipeline Executor ---------------------------------------
 
-    async def execute_all(self) -> AsyncGenerator[PhaseEvent, None]:
-        """Run all 6 phases in sequence, yielding a PhaseEvent per phase."""
+    async def execute_all_realtime(self) -> AsyncGenerator[PhaseEvent, None]:
+        """Run the full pipeline while yielding each live conversation & phase event."""
         yield await self._phase_init_claim()
-        yield await self._phase_round_1_pleadings()
-        yield await self._phase_round_2_prosecutor_audit()
+
+        async for event in self._stream_round_1_pleadings():
+            yield event
+
+        async for event in self._stream_round_2_prosecutor_audit():
+            yield event
+
         yield await self._phase_policy_consultation()
         yield await self._phase_judge_deliberation()
         yield await self._phase_execution_router()
 
 
 # ----------------------------------------------------------------------
-# Policy suggestion helpers (used by the deterministic fallback)
+# Helper Functions (used by the deterministic fallback)
 # ----------------------------------------------------------------------
 
 
@@ -729,33 +963,20 @@ def _suggest_ruling(
 
 
 # ----------------------------------------------------------------------
-# Public API
+# Public API Entry Points (Pure Real-Time)
 # ----------------------------------------------------------------------
 
 
-async def run_dispute_pipeline_with_events(
+async def run_dispute_pipeline_realtime(
     case_id: str,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    Run the full dispute resolution pipeline, returning the final result
-    and the complete phase event stream.
+    Stream UI-ready pipeline and agent-conversation events in real time.
+    This is the primary transport entry point for SSE or WebSocket layers.
     """
     engine = PipelineEngine(case_id)
-    events: List[Dict[str, Any]] = []
-
-    async for event in engine.execute_all():
-        events.append(event.to_dict())
-
-    return engine.ctx.assemble_result(), events
-
-
-async def run_dispute_pipeline(case_id: str) -> Dict[str, Any]:
-    """
-    Run the full dispute resolution pipeline and return only the assembled
-    final result.
-    """
-    result, _ = await run_dispute_pipeline_with_events(case_id)
-    return result
+    async for event in engine.execute_all_realtime():
+        yield event.to_dict()
 
 
 async def apply_human_review(
