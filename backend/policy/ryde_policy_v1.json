@@ -4,23 +4,36 @@
   "effective_date": "2026-09-01",
   "currency": "SGD",
   "disclaimer": "Synthetic policy for the MIRRA AI hackathon prototype. Not an official Ryde policy. Monetary values are illustrative.",
-
   "clauses": {
-
     "POL-1": {
       "title": "General Principles",
-      "applies_to": ["ALL"],
+      "applies_to": [
+        "ALL"
+      ],
       "text": "All financial actions produced by the system are simulated and reversible. The Judge Agent may only recommend an outcome; execution is authorised solely by the deterministic Execution Gate (POL-6). The system never applies penalty points, warnings, suspensions or bans automatically. Every ruling must cite the policy version and the clause IDs it relies on.",
       "params": {
         "judge_can_execute": false,
         "automatic_penalties_allowed": false,
         "all_actions_simulated": true
-      }
+      },
+      "keywords": [
+        "financial",
+        "simulated",
+        "reversible",
+        "execution",
+        "authorised",
+        "penalties",
+        "suspensions",
+        "ruling",
+        "policy",
+        "clause"
+      ]
     },
-
     "POL-2": {
       "title": "Route Deviation and Fare Adjustment",
-      "applies_to": ["ROUTE_DEVIATION"],
+      "applies_to": [
+        "ROUTE_DEVIATION"
+      ],
       "text": "A trip is reviewed for route deviation when the actual route exceeds the optimal route by more than the distance threshold OR the trip duration exceeds the optimal duration by more than the time threshold. If a valid reason is verified with evidence, no refund is due. Otherwise the rider is refunded the extra distance and extra time at the rates below, never exceeding the total fare. A navigation app reroute alone is not a valid reason unless it was caused by a verified road closure or incident.",
       "params": {
         "review_trigger": {
@@ -28,8 +41,8 @@
           "min_extra_time_pct": 10
         },
         "refund_formula": "round(deviation_km * rate_per_km + extra_minutes * rate_per_minute, 2)",
-        "rate_per_km": 0.50,
-        "rate_per_minute": 0.30,
+        "rate_per_km": 0.5,
+        "rate_per_minute": 0.3,
         "extra_minutes_definition": "(trip_duration_seconds - optimal_duration_seconds) / 60",
         "refund_cap": "total_fare",
         "valid_reasons_requiring_evidence": [
@@ -43,18 +56,34 @@
           "DRIVER_PREFERENCE",
           "UNEXPLAINED"
         ]
-      }
+      },
+      "keywords": [
+        "route",
+        "deviation",
+        "detour",
+        "optimal",
+        "distance",
+        "duration",
+        "refund",
+        "reroute",
+        "closure",
+        "incident",
+        "preference",
+        "unexplained",
+        "accident"
+      ]
     },
-
     "POL-3": {
       "title": "No-Show Cancellation Charge",
-      "applies_to": ["NO_SHOW_CHARGE"],
+      "applies_to": [
+        "NO_SHOW_CHARGE"
+      ],
       "text": "After the driver arrives at the pickup point, the rider has a free waiting period. Once the no-show threshold is reached without the rider boarding, the driver may cancel and a cancellation fee is charged to the rider and paid to the driver. The fee is upheld only if ALL conditions are verified: (a) driver GPS was within the arrival radius of the pickup point, (b) the driver stayed at the pickup point until cancellation, (c) the rider was notified of arrival, (d) the driver made at least one contact attempt, and (e) cancellation happened at or after the no-show threshold. If any condition is not met, the fee is reversed. A rider's unverified statement that they were present does not by itself overturn verified system records, but the rider may submit location evidence on appeal (POL-9). Values follow the official sample dataset.",
       "params": {
         "wait_timer_starts_at": "driver_arrival_time",
         "free_wait_time_min": 5,
         "no_show_threshold_min": 8,
-        "cancellation_fee": 5.00,
+        "cancellation_fee": 5.0,
         "fee_charged_to": "RIDER",
         "fee_goes_to": "DRIVER",
         "arrival_radius_m": 50,
@@ -66,18 +95,35 @@
           "DRIVER_CONTACT_ATTEMPTED",
           "CANCELLED_AT_OR_AFTER_THRESHOLD"
         ]
-      }
+      },
+      "keywords": [
+        "noshow",
+        "show",
+        "cancellation",
+        "arrival",
+        "pickup",
+        "waiting",
+        "threshold",
+        "fee",
+        "geofence",
+        "notified",
+        "contact",
+        "stationary",
+        "canceled",
+        "cancelled"
+      ]
     },
-
     "POL-4": {
       "title": "Cleaning Fee Claims",
-      "applies_to": ["CLEANING_FEE"],
+      "applies_to": [
+        "CLEANING_FEE"
+      ],
       "text": "A driver may claim a cleaning fee from the rider for soiling caused during the trip. The claimable amount is capped by the verified damage severity. The claim requires a photo taken within the photo window after trip end at or near the drop-off location, and a cleaning receipt. Missing photo or receipt, an EXIF timestamp or location inconsistent with the trip, a recycled image, or a suspected AI-generated image must be recorded as missing or contradicted facts. Cleaning fee charges are never executed automatically; they always require human confirmation.",
       "params": {
         "severity_caps": {
-          "MINOR": 30.00,
-          "MODERATE": 60.00,
-          "SEVERE": 100.00
+          "MINOR": 30.0,
+          "MODERATE": 60.0,
+          "SEVERE": 100.0
         },
         "photo_window_min_after_trip_end": 30,
         "photo_location_radius_m": 500,
@@ -86,50 +132,116 @@
         "always_requires_human": true,
         "fee_charged_to": "RIDER",
         "fee_goes_to": "DRIVER"
-      }
+      },
+      "keywords": [
+        "cleaning",
+        "soiling",
+        "damage",
+        "severity",
+        "photo",
+        "receipt",
+        "exif",
+        "recycled",
+        "generated",
+        "dropoff",
+        "claim",
+        "charge"
+      ]
     },
-
     "POL-5": {
       "title": "Safety Incidents",
-      "applies_to": ["SAFETY_ALERT", "ALL"],
+      "applies_to": [
+        "SAFETY_ALERT",
+        "ALL"
+      ],
       "text": "Any case involving a safety threat, harassment, violence, or an accessibility concern is routed to human review immediately with URGENT priority, regardless of the monetary amount. The system does not issue an automated ruling on safety matters.",
       "params": {
         "always_requires_human": true,
         "priority_level": "URGENT",
         "automated_ruling_allowed": false
-      }
+      },
+      "keywords": [
+        "safety",
+        "threat",
+        "harassment",
+        "violence",
+        "accessibility",
+        "human",
+        "review",
+        "urgent",
+        "priority",
+        "escalated"
+      ]
     },
-
     "POL-6": {
       "title": "Execution Gate and Escalation",
-      "applies_to": ["ALL"],
+      "applies_to": [
+        "ALL"
+      ],
       "text": "A Judge recommendation is executed automatically only when every auto-execution condition is met. If any condition fails, the case is escalated to human review with the failed conditions listed as escalation reasons. Ordinary unresolved cases escalate automatically after the fallback period; a party's explicit request for human review is never delayed.",
       "params": {
         "auto_execution_conditions": {
           "min_confidence": 0.75,
-          "max_auto_amount": 20.00,
-          "fraud_risk_level_not": ["HIGH"],
+          "max_auto_amount": 20.0,
+          "fraud_risk_level_not": [
+            "HIGH"
+          ],
           "safety_threat_detected": false,
           "party_requested_human": false,
           "missing_crucial_evidence": false,
           "penalty_points": 0,
           "account_action": "NONE",
-          "allowed_auto_action_types": ["FULL_REFUND", "PARTIAL_REFUND", "NO_REFUND"]
+          "allowed_auto_action_types": [
+            "FULL_REFUND",
+            "PARTIAL_REFUND",
+            "NO_REFUND"
+          ]
         },
-        "never_auto_action_types": ["CLEANING_FEE_CHARGE", "PENALTY_ONLY", "ESCALATED_NO_ACTION"],
+        "never_auto_action_types": [
+          "CLEANING_FEE_CHARGE",
+          "PENALTY_ONLY",
+          "ESCALATED_NO_ACTION"
+        ],
         "priority_rules": [
-          {"if": "safety_threat_detected", "priority": "URGENT"},
-          {"if": "fraud_risk_level == HIGH", "priority": "HIGH_PRIORITY"},
-          {"if": "amount > 50", "priority": "HIGH_PRIORITY"},
-          {"if": "otherwise", "priority": "STANDARD"}
+          {
+            "if": "safety_threat_detected",
+            "priority": "URGENT"
+          },
+          {
+            "if": "fraud_risk_level == HIGH",
+            "priority": "HIGH_PRIORITY"
+          },
+          {
+            "if": "amount > 50",
+            "priority": "HIGH_PRIORITY"
+          },
+          {
+            "if": "otherwise",
+            "priority": "STANDARD"
+          }
         ],
         "unresolved_fallback_hours": 24
-      }
+      },
+      "keywords": [
+        "execution",
+        "escalation",
+        "automatic",
+        "confidence",
+        "amount",
+        "fraud",
+        "safety",
+        "evidence",
+        "penalty",
+        "priority",
+        "fallback",
+        "human"
+      ]
     },
-
     "POL-7": {
       "title": "Evidence Standards and Fairness",
-      "applies_to": ["ALL"],
+      "applies_to": [
+        "ALL"
+      ],
       "text": "Rulings must be based primarily on verified facts from system records. A party's statement is a claim until corroborated. Historical profiles (ratings, dispute history, bad-faith flags) may adjust the risk level but must never be the sole or primary basis of a ruling. New evidence counts only if its evidence ID exists in the case record. A party's silence or refusal of a proposal must not count against them. Advocates and the Judge must not invent facts or conceal contradictions.",
       "params": {
         "history_can_be_primary_basis": false,
@@ -142,37 +254,105 @@
           "CONTRADICTED",
           "UNKNOWN"
         ]
-      }
+      },
+      "keywords": [
+        "evidence",
+        "verified",
+        "facts",
+        "records",
+        "claim",
+        "corroborated",
+        "history",
+        "risk",
+        "contradicted",
+        "unknown",
+        "silence",
+        "fairness"
+      ]
     },
-
     "POL-8": {
       "title": "Precedents and Learning Feedback",
-      "applies_to": ["ALL"],
+      "applies_to": [
+        "ALL"
+      ],
       "text": "When a human reviewer overrides or modifies a Judge recommendation and records a reason, the case is stored as a candidate precedent. A candidate becomes citable only after approval. The Judge may cite approved precedents for consistency, but a precedent can never override a policy clause. Precedents describe how to investigate and weigh evidence; they must not be applied mechanically to a new party.",
       "params": {
-        "precedent_created_from": ["HUMAN_OVERRIDDEN", "MODIFIED"],
+        "precedent_created_from": [
+          "HUMAN_OVERRIDDEN",
+          "MODIFIED"
+        ],
         "override_reason_required": true,
         "only_approved_precedents_citable": true,
         "precedent_can_override_policy": false
-      }
+      },
+      "keywords": [
+        "precedent",
+        "learning",
+        "feedback",
+        "override",
+        "modified",
+        "approval",
+        "citable",
+        "consistency",
+        "evidence",
+        "policy",
+        "mechanically",
+        "human"
+      ]
     },
-
     "POL-9": {
       "title": "Appeals and Party Rights",
-      "applies_to": ["ALL"],
+      "applies_to": [
+        "ALL"
+      ],
       "text": "Both parties receive a plain-language explanation of the outcome and may correct inaccuracies, submit additional evidence, or request human review within the appeal window. An appeal re-opens the case with the new evidence attached.",
       "params": {
         "appeal_window_days": 7,
         "both_parties_receive_explanation": true,
         "human_review_on_request": true
-      }
+      },
+      "keywords": [
+        "appeals",
+        "appeal",
+        "rights",
+        "explanation",
+        "inaccuracies",
+        "evidence",
+        "review",
+        "window",
+        "reopens",
+        "case",
+        "party"
+      ]
     }
   },
-
   "dispute_type_clause_map": {
-    "ROUTE_DEVIATION": ["POL-1", "POL-2", "POL-6", "POL-7", "POL-9"],
-    "NO_SHOW_CHARGE": ["POL-1", "POL-3", "POL-6", "POL-7", "POL-9"],
-    "CLEANING_FEE": ["POL-1", "POL-4", "POL-6", "POL-7", "POL-9"],
-    "SAFETY_ALERT": ["POL-1", "POL-5", "POL-6", "POL-9"]
+    "ROUTE_DEVIATION": [
+      "POL-1",
+      "POL-2",
+      "POL-6",
+      "POL-7",
+      "POL-9"
+    ],
+    "NO_SHOW_CHARGE": [
+      "POL-1",
+      "POL-3",
+      "POL-6",
+      "POL-7",
+      "POL-9"
+    ],
+    "CLEANING_FEE": [
+      "POL-1",
+      "POL-4",
+      "POL-6",
+      "POL-7",
+      "POL-9"
+    ],
+    "SAFETY_ALERT": [
+      "POL-1",
+      "POL-5",
+      "POL-6",
+      "POL-9"
+    ]
   }
 }

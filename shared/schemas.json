@@ -65,6 +65,9 @@
         }
       ],
       "default": null
+    },
+    "agent_conversation": {
+      "$ref": "#/$defs/AgentConversation"
     }
   },
   "additionalProperties": false,
@@ -1793,6 +1796,37 @@
         }
       },
       "additionalProperties": false
+    },
+    "AgentConversationMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "speaker",
+        "message_type",
+        "target",
+        "content",
+        "turn",
+        "status",
+        "agent_output"
+      ],
+      "properties": {
+        "message_id": {"type": "string"},
+        "speaker": {"type": "string"},
+        "message_type": {
+          "type": "string",
+          "enum": ["STATEMENT", "QUESTION", "RESPONSE"]
+        },
+        "target": {"type": "string"},
+        "content": {"type": "string"},
+        "turn": {"type": "integer", "minimum": 1},
+        "status": {"type": "string"},
+        "agent_output": {"type": "object"}
+      }
+    },
+    "AgentConversation": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/AgentConversationMessage"}
     }
   }
 }
