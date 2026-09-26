@@ -29,12 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
 # Implemented agents (top-level imports — these exist now)
 # ----------------------------------------------------------------------
 from backend.agents.judge_agent import run_judge
-from backend.agents.policy_agent import (
-    clauses_for,
-    compute_policy_values,
-    policy_version,
-)
-
+from backend.agents import precedent_store
 # ----------------------------------------------------------------------
 # Timezone & constants
 # ----------------------------------------------------------------------
@@ -398,19 +393,13 @@ class PipelineEngine:
 
     async def _phase_policy_consultation(self) -> PhaseEvent:
         """
-        Phase 4: Policy consultation.
+        Phase 4: RAG policy consultation.
 
         StateEngine triggers PolicyAgent automatically after ROUND_2
         completes. PolicyAgent retrieves applicable clauses from the Ryde
         Policy library and matching precedents, then emits a
         PolicySuggestion (suggested ruling + recommended_action) for
         JudgeAgent to weigh.
-
-        The deterministic policy_agent helpers (clauses_for,
-        compute_policy_values, policy_version) provide the ground-truth
-        clause data and monetary values. If a future policy_consultant_agent
-        module with run_policy_consultation is created, it will be used
-        instead of the deterministic fallback.
         """
         now = datetime.now(_SGT).isoformat()
         dispute_type = self.ctx.case_metadata.get("dispute_type", "UNKNOWN")
@@ -515,7 +504,7 @@ class PipelineEngine:
 
         # Update case_metadata with final resolution channel
         self.ctx.case_metadata["resolution_channel"] = gate_decision["route"]
-        self.ctx.case_metadata["current_state"] = "EXECUTION_ROUTER"
+        self.ctx.case_metadata["current_state"] = State.EXECUTION_ROUTER
         self.ctx.update_timestamp()
 
         # Persist final result
@@ -627,51 +616,33 @@ class PipelineEngine:
         request: Dict[str, Any],
         now: str,
     ) -> Dict[str, Any]:
-        """
-        Build a PolicySuggestion (schema: PolicySuggestion) using the
-        deterministic policy_agent helpers.
-
-        This provides the correct applicable_clauses and ground-truth
-        monetary values. If a full policy_consultant_agent with
-        run_policy_consultation is later implemented, it will be used
-        instead (see _phase_policy_consultation).
-        """
+        """Compatibility fallback if the full policy consultant is absent."""
         context = self.ctx.to_context_dict()
+        clauses = precedent_store.retrieve_clauses(dispute_type)
+        policy_values = precedent_store.compute_policy_values(dispute_type, context)
+        version = precedent_store.policy_version()
+        keywords = precedent_store.extract_keywords(
+            f"{request.get('prosecutor_summary', '')} "
+            f"{' '.join(f.get('description', '') for f in self.ctx.prosecutor_findings.get('verified_facts', []))}"
+        )
 
-        # Deterministic policy data
-        applicable_clauses_raw = clauses_for(dispute_type)
-        policy_values = compute_policy_values(dispute_type, context)
-        version = policy_version()
-
-        # Build applicable_clauses (schema: PolicyClauseReference[])
-        applicable_clauses = []
-        for clause_id, clause in applicable_clauses_raw.items():
-            applicable_clauses.append(
-                {
-                    "clause_id": clause_id,
-                    "clause_title": clause.get("title", clause_id),
-                    "clause_text_summary": clause.get("text", "")[:500],
-                    "relevance_summary": clause.get("rationale", ""),
-                }
-            )
-
-        # Build suggested RecommendedAction from policy_values
+        applicable_clauses = [
+            precedent_store.clause_reference(clause, keywords)
+            for clause in clauses
+        ]
         suggested_action = _build_suggested_action(dispute_type, policy_values)
-
-        # Determine suggested ruling from policy_values
         suggested_ruling = _suggest_ruling(dispute_type, policy_values)
 
         return {
             "suggestion_id": f"PSG-{uuid.uuid4().hex[:8].upper()}",
-            "request_id": request["request_id"],
             "applicable_clauses": applicable_clauses,
             "matched_precedents": [],
             "suggested_ruling_type": suggested_ruling,
             "suggested_recommended_action": suggested_action,
-            "policy_confidence": 0.8,
+            "policy_confidence": policy_values.get("confidence", 0.3),
             "rationale": (
                 f"Policy version {version}. Clauses retrieved: "
-                f"{', '.join(applicable_clauses_raw.keys())}. "
+                f"{', '.join(c.get('id', '') for c in clauses)}. "
                 f"Policy values: {policy_values}"
             ),
             "suggested_at": now,
@@ -752,9 +723,7 @@ def _suggest_ruling(
 
     if dispute_type == "CLEANING_FEE":
         max_chargeable = policy_values.get("max_chargeable")
-        if max_chargeable is not None and max_chargeable > 0:
-            return "APPROVED"
-        return "ESCALATED"
+        return "APPROVED" if max_chargeable is not None and max_chargeable > 0 else "ESCALATED"
 
     return "ESCALATED"
 
@@ -853,26 +822,51 @@ async def apply_human_review(
             c.get("clause_id") for c in applicable_clauses if c.get("clause_id")
         ]
 
-        # Build PolicyKnowledgeBaseUpdate (schema: PolicyKnowledgeBaseUpdate)
-        case_data["policy_kb_update"] = {
-            "update_id": f"PKB-{uuid.uuid4().hex[:8].upper()}",
-            "trigger": decision_value,
-            "judge_ruling_type": judge_verdict.get("ruling_type", "ESCALATED"),
-            "judge_recommended_action": original_action,
-            "human_final_action": final_action,
-            "clauses_flagged": clauses_flagged,
-            "mismatch_summary": (
-                review_notes
-                or "Human reviewer overrode the Judge's ruling."
-            ),
-            "new_precedent_id": f"PREC-{case_id}",
-            "updated_at": now,
-        }
+        dispute_type = (
+            case_data.get("case_metadata", {}).get("dispute_type", "UNKNOWN")
+        )
 
-    # Update case_metadata
+        # Use the updated policy consultant's public learning API. This is
+        # the actual persistence path into the precedent knowledge base.
+        run_policy_module = _lazy_import(
+            "backend.agents.policy_consultant_agent",
+            "learn_from_human_override",
+        )
+
+        human_ruling_type = None
+        if isinstance(adjusted_verdict, dict):
+            human_ruling_type = adjusted_verdict.get("ruling_type")
+
+        # Prefer the policy-consultant's case keywords if they are stored;
+        # otherwise derive them from the prosecutor evidence available here.
+        prosecutor_findings = case_data.get("prosecutor_findings", {})
+        fact_text = " ".join(
+            f.get("description", "")
+            for f in prosecutor_findings.get("verified_facts", [])
+        )
+        keywords = precedent_store.extract_keywords(
+            f"{prosecutor_findings.get('prosecutor_summary', '')} {fact_text}"
+        )
+
+        kb_update = run_policy_module(
+            dispute_type=dispute_type,
+            judge_ruling_type=judge_verdict.get("ruling_type", "ESCALATED"),
+            judge_recommended_action=original_action,
+            human_final_action=final_action,
+            human_ruling_type=human_ruling_type,
+            clauses_flagged=clauses_flagged,
+            mismatch_summary=(
+                review_notes or "Human reviewer overrode the Judge's ruling."
+            ),
+            keywords=keywords,
+            trigger=decision_value,
+        )
+        case_data["policy_kb_update"] = kb_update
+
     case_data.setdefault("case_metadata", {})
     case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
     case_data["case_metadata"]["updated_at"] = now
+    case_data["judge_verdict"] = judge_verdict
 
     _save_case(case_data)
     return case_data

@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from backend.agents.llm_client import call_llm_json, LLMError
+from backend.shared.llm_client import call_llm_json, LLMError
 from backend.agents.policy_engine import clauses_for, compute_policy_values, policy_version
 
 # Timezone for deliberated_at timestamps.
