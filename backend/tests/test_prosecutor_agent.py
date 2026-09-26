@@ -157,3 +157,69 @@ def test_underlying_engine_unchanged():
     assert findings["missing_facts"] == direct["missing_facts"]
     assert findings["prosecutor_summary"] == direct["prosecutor_summary"]
     assert "report_submitted_at" in findings
+
+
+# ---------------------------------------------------------------------------
+# 9. DISP-002 without image payload -> image_exif_analyses == []
+# ---------------------------------------------------------------------------
+def test_disp002_no_images_returns_empty_exif():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    assert result["bonus_modules"]["image_exif_analyses"] == []
+
+
+# ---------------------------------------------------------------------------
+# 10. DISP-003 without actual image payload -> image_exif_analyses == []
+# ---------------------------------------------------------------------------
+def test_disp003_no_images_returns_empty_exif():
+    raw = load_case_data("DISP-003")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    assert result["bonus_modules"]["image_exif_analyses"] == []
+
+
+# ---------------------------------------------------------------------------
+# 11. Agent with valid image evidence returns real ExifAnalysis
+# ---------------------------------------------------------------------------
+def test_agent_with_image_evidence_returns_exif_analysis():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    # Inject a synthetic image_evidence payload into the context
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-TEST-001",
+            "image_url": "s3://bucket/photo.jpg",
+            "exif_timestamp": "2026-09-13T08:44:00+08:00",
+            "exif_gps_location": {"latitude": 1.2847, "longitude": 103.8382},
+            "provider_result": {
+                "is_ai_generated": False,
+                "ai_generated_confidence": 0.1,
+                "stain_damage_classification": "NO_DAMAGE_DETECTED",
+                "damage_severity": "MINOR",
+            },
+        }
+    ]
+    result = asyncio.run(run_prosecutor_audit(context))
+    analyses = result["bonus_modules"]["image_exif_analyses"]
+    assert len(analyses) == 1
+    assert analyses[0]["image_id"] == "IMG-TEST-001"
+    assert analyses[0]["exif_consistent_with_trip"] is True
+
+
+# ---------------------------------------------------------------------------
+# 12. Agent with incomplete image evidence skips, does not fabricate
+# ---------------------------------------------------------------------------
+def test_agent_skips_incomplete_image_evidence():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-PARTIAL",
+            "image_url": "s3://bucket/partial.jpg",
+            # Missing exif_timestamp, exif_gps, provider_result
+        }
+    ]
+    result = asyncio.run(run_prosecutor_audit(context))
+    analyses = result["bonus_modules"]["image_exif_analyses"]
+    assert analyses == []

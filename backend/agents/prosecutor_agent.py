@@ -16,6 +16,10 @@ it does not duplicate verification logic.
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.app.services.verification.image_analysis import (
+    analyze_image_evidence_batch,
+    extract_images_from_context,
+)
 from backend.app.services.verification.ingestion import normalize_evidence
 from backend.app.services.verification.report import generate_prosecutor_report
 
@@ -49,11 +53,16 @@ async def run_prosecutor_audit(context: dict[str, Any]) -> dict[str, Any]:
         "completed_at": now,
     }
 
-    # 4. Build bonus_modules with explicit schema-valid safe defaults
-    #    These are placeholders — P3 does NOT claim image analysis, fraud
-    #    detection, or safety analysis has been performed.
+    # 4. Image evidence analysis — real P3 layer, empty when no images present
+    image_inputs = extract_images_from_context(normalized)
+    image_exif_analyses = analyze_image_evidence_batch(
+        image_inputs, normalized.get("data_sources", {})
+    )
+
+    # 5. Build bonus_modules with explicit schema-valid safe defaults
+    #    Fraud and escalation remain placeholders for the next milestone.
     bonus_modules: dict[str, Any] = {
-        "image_exif_analyses": [],
+        "image_exif_analyses": image_exif_analyses,
         "fraud_assessment": {
             "fraud_risk_score": 0.0,
             "risk_factors": [],
