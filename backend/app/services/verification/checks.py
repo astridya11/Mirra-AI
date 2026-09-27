@@ -54,11 +54,45 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return R * c
 
 
+def _is_valid_gps_lat(value: Any) -> bool:
+    """Same validation philosophy as image_analysis.py's GPS coordinate
+    checks: reject bool, non-numeric, non-finite, and out-of-range values."""
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    if not math.isfinite(value):
+        return False
+    return -90.0 <= value <= 90.0
+
+
+def _is_valid_gps_lng(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    if not math.isfinite(value):
+        return False
+    return -180.0 <= value <= 180.0
+
+
+def _is_valid_gps_point(point: Any) -> bool:
+    return (
+        isinstance(point, dict)
+        and _is_valid_gps_lat(point.get("latitude"))
+        and _is_valid_gps_lng(point.get("longitude"))
+    )
+
+
 def check_arrival_time_verification(data: dict[str, Any]) -> dict[str, Any]:
     trip_data = data.get("data_sources", {}).get("trip_data", {})
-    app_events = data.get("data_sources", {}).get("app_events", [])
+    app_events = [e for e in data.get("data_sources", {}).get("app_events", []) if isinstance(e, dict)]
     gps_telemetry = data.get("data_sources", {}).get("gps_telemetry", {})
-    chat_transcript = data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+    chat_transcript = [
+        m
+        for m in data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+        if isinstance(m, dict)
+    ]
 
     arrival_time_str = trip_data.get("driver_arrival_time")
     if not arrival_time_str:
@@ -122,7 +156,8 @@ def check_arrival_time_verification(data: dict[str, Any]) -> dict[str, Any]:
 
     # GPS check
     gps_arrival = next(
-        (p for p in gps_telemetry.get("actual_route", []) if p.get("status") == "arrived"), None
+        (p for p in gps_telemetry.get("actual_route", []) if isinstance(p, dict) and p.get("status") == "arrived"),
+        None,
     )
     if gps_arrival:
         gps_ts = _parse_ts(gps_arrival.get("timestamp"))
@@ -273,16 +308,16 @@ def check_pickup_gps_consistency(data: dict[str, Any]) -> dict[str, Any]:
     gps_telemetry = data.get("data_sources", {}).get("gps_telemetry", {})
 
     pickup = trip_data.get("pickup_location")
-    if not pickup:
+    if not isinstance(pickup, dict) or not _is_valid_gps_lat(pickup.get("lat")) or not _is_valid_gps_lng(pickup.get("lng")):
         return {
             "status": "MISSING",
-            "description": "Pickup location is missing from trip data.",
+            "description": "Pickup location is missing or has invalid coordinates in trip data.",
             "evidence_refs": [],
             "details": {},
         }
 
     actual_route = gps_telemetry.get("actual_route", [])
-    if not actual_route:
+    if not isinstance(actual_route, list) or not actual_route:
         return {
             "status": "MISSING",
             "description": "GPS telemetry actual route is missing.",
@@ -291,12 +326,23 @@ def check_pickup_gps_consistency(data: dict[str, Any]) -> dict[str, Any]:
         }
 
     # Use the GPS point marked as "arrived" or the last point before "waiting"/"cancelled"
-    arrival_point = next((p for p in actual_route if p.get("status") == "arrived"), None)
+    arrival_point = next(
+        (p for p in actual_route if isinstance(p, dict) and p.get("status") == "arrived"), None
+    )
     if not arrival_point:
         # Fallback: last point with speed 0 before waiting/cancelled
         arrival_point = next(
-            (p for p in reversed(actual_route) if p.get("speed_kmh", 0) == 0), actual_route[-1]
+            (p for p in reversed(actual_route) if isinstance(p, dict) and p.get("speed_kmh", 0) == 0),
+            actual_route[-1],
         )
+
+    if not _is_valid_gps_point(arrival_point):
+        return {
+            "status": "MISSING",
+            "description": "GPS arrival point coordinates are missing or malformed and cannot be verified.",
+            "evidence_refs": [],
+            "details": {},
+        }
 
     distance_m = haversine_distance(
         pickup["lat"], pickup["lng"], arrival_point["latitude"], arrival_point["longitude"]
@@ -348,8 +394,12 @@ def check_pickup_gps_consistency(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_communication_attempts(data: dict[str, Any]) -> dict[str, Any]:
-    app_events = data.get("data_sources", {}).get("app_events", [])
-    chat_transcript = data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+    app_events = [e for e in data.get("data_sources", {}).get("app_events", []) if isinstance(e, dict)]
+    chat_transcript = [
+        m
+        for m in data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+        if isinstance(m, dict)
+    ]
 
     call_event = next((e for e in app_events if e.get("event_type") == "driver_called_rider"), None)
     call_chat = next(
@@ -448,9 +498,13 @@ def check_communication_attempts(data: dict[str, Any]) -> dict[str, Any]:
 
 def check_cancellation_timestamp(data: dict[str, Any]) -> dict[str, Any]:
     trip_data = data.get("data_sources", {}).get("trip_data", {})
-    app_events = data.get("data_sources", {}).get("app_events", [])
+    app_events = [e for e in data.get("data_sources", {}).get("app_events", []) if isinstance(e, dict)]
     gps_telemetry = data.get("data_sources", {}).get("gps_telemetry", {})
-    chat_transcript = data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+    chat_transcript = [
+        m
+        for m in data.get("data_sources", {}).get("chat_communication", {}).get("transcript", [])
+        if isinstance(m, dict)
+    ]
 
     cancellation_str = trip_data.get("cancellation_time")
     if not cancellation_str:
@@ -516,7 +570,8 @@ def check_cancellation_timestamp(data: dict[str, Any]) -> dict[str, Any]:
 
     # GPS check
     cancel_gps = next(
-        (p for p in gps_telemetry.get("actual_route", []) if p.get("status") == "cancelled"), None
+        (p for p in gps_telemetry.get("actual_route", []) if isinstance(p, dict) and p.get("status") == "cancelled"),
+        None,
     )
     if cancel_gps:
         gps_ts = _parse_ts(cancel_gps.get("timestamp"))
@@ -610,7 +665,7 @@ def check_cancellation_timestamp(data: dict[str, Any]) -> dict[str, Any]:
 
 def check_event_ordering(data: dict[str, Any]) -> dict[str, Any]:
     trip_data = data.get("data_sources", {}).get("trip_data", {})
-    app_events = data.get("data_sources", {}).get("app_events", [])
+    app_events = [e for e in data.get("data_sources", {}).get("app_events", []) if isinstance(e, dict)]
 
     # Build timestamp lookup for app events (only entries that parse successfully)
     event_ts: dict[str, datetime] = {}
@@ -752,7 +807,7 @@ def check_missing_gps_records(data: dict[str, Any]) -> dict[str, Any]:
 
     arrival_str = trip_data.get("driver_arrival_time")
     cancellation_str = trip_data.get("cancellation_time")
-    actual_route = gps_telemetry.get("actual_route", [])
+    actual_route = [p for p in gps_telemetry.get("actual_route", []) if isinstance(p, dict)]
 
     if not arrival_str or not cancellation_str:
         return {
