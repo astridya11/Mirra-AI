@@ -468,3 +468,246 @@ def test_mixed_naive_aware_app_events_does_not_crash():
     )
     result = analyze_image_evidence(img, ctx["data_sources"])
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# 17-32. Strict provider_result parsing — never fabricate, never coerce
+# ---------------------------------------------------------------------------
+
+def _ctx_with_image_evidence(evidence_list):
+    return {"data_sources": {"image_evidence": evidence_list}}
+
+
+def _make_raw_image(**overrides):
+    defaults = {
+        "image_id": "IMG-001",
+        "image_url": "https://example.com/photo.jpg",
+        "exif_timestamp": "2026-09-13T08:44:00+08:00",
+        "exif_gps_location": {"latitude": 1.2847, "longitude": 103.8382},
+        "provider_result": {
+            "is_ai_generated": False,
+            "ai_generated_confidence": 0.05,
+            "stain_damage_classification": "NO_DAMAGE_DETECTED",
+            "damage_severity": "MINOR",
+        },
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+# 17. provider_result missing is_ai_generated -> rejected
+def test_provider_missing_is_ai_generated_rejected():
+    raw = _make_raw_image()
+    del raw["provider_result"]["is_ai_generated"]
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 18. provider_result missing ai_generated_confidence -> rejected
+def test_provider_missing_confidence_rejected():
+    raw = _make_raw_image()
+    del raw["provider_result"]["ai_generated_confidence"]
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 19. provider_result missing stain_damage_classification -> rejected
+def test_provider_missing_classification_rejected():
+    raw = _make_raw_image()
+    del raw["provider_result"]["stain_damage_classification"]
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 20. string "false" is NOT coerced into True
+def test_provider_string_false_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["is_ai_generated"] = "false"
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 21. numeric 0 is NOT accepted in place of boolean
+def test_provider_int_zero_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["is_ai_generated"] = 0
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 22. numeric 1 is NOT accepted in place of boolean
+def test_provider_int_one_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["is_ai_generated"] = 1
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 23. invalid classification is rejected
+def test_provider_invalid_classification_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["stain_damage_classification"] = "DIRTY"
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 24. invalid severity is rejected
+def test_provider_invalid_severity_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["damage_severity"] = "EXTREME"
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 25. confidence < 0 rejected at extraction
+def test_provider_confidence_below_zero_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["ai_generated_confidence"] = -0.1
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 26. confidence > 1 rejected at extraction
+def test_provider_confidence_above_one_rejected():
+    raw = _make_raw_image()
+    raw["provider_result"]["ai_generated_confidence"] = 1.1
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is None
+
+
+# 27. latitude > 90 rejected
+def test_gps_latitude_above_90_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": 91.0, "longitude": 103.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 28. latitude < -90 rejected
+def test_gps_latitude_below_minus_90_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": -91.0, "longitude": 103.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 29. longitude > 180 rejected
+def test_gps_longitude_above_180_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": 1.0, "longitude": 181.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 30. longitude < -180 rejected
+def test_gps_longitude_below_minus_180_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": 1.0, "longitude": -181.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 31. NaN GPS rejected safely
+def test_gps_nan_rejected():
+    import math
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": float("nan"), "longitude": 103.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 32. Infinity GPS rejected safely
+def test_gps_infinity_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": 1.0, "longitude": float("inf")}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 33. boolean latitude rejected
+def test_gps_bool_latitude_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": True, "longitude": 103.0}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 34. boolean longitude rejected
+def test_gps_bool_longitude_rejected():
+    raw = _make_raw_image()
+    raw["exif_gps_location"] = {"latitude": 1.0, "longitude": False}
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].exif_gps_location is None
+
+
+# 35. incomplete provider data never emits ExifAnalysis
+def test_incomplete_provider_never_emits_exif_analysis():
+    raw = _make_raw_image()
+    raw["provider_result"] = {"is_ai_generated": False}  # missing confidence & classification
+    ctx = _ctx_with_image_evidence([raw])
+    images = extract_images_from_context(ctx)
+    assert len(images) == 1
+    assert images[0].provider_result is None
+    # Without provider_result, exif_timestamp and exif_gps are still present,
+    # but _can_emit_exif_analysis requires provider_result too.
+    result = analyze_image_evidence_batch(images, ctx["data_sources"])
+    assert result == []
+
+
+# 36. valid provider without optional severity still accepted
+def test_provider_without_optional_severity_accepted():
+    raw = _make_raw_image()
+    del raw["provider_result"]["damage_severity"]
+    images = extract_images_from_context(_ctx_with_image_evidence([raw]))
+    assert len(images) == 1
+    assert images[0].provider_result is not None
+    assert images[0].provider_result.damage_severity is None
+
+
+# 37. JSON schema sanity: DataSources with image_evidence is valid
+def test_shared_schema_accepts_optional_image_evidence():
+    import json
+    from pathlib import Path
+    schema_path = Path(__file__).resolve().parent.parent.parent / "shared" / "schemas.json"
+    with open(schema_path, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+
+    ds = schema["$defs"]["DataSources"]
+    assert "image_evidence" in ds["properties"]
+    assert "image_evidence" not in ds.get("required", [])
+
+    ie = schema["$defs"]["ImageEvidenceInput"]
+    assert "image_id" in ie["required"]
+    assert "image_url" in ie["required"]
+    assert "provider_result" not in ie["required"]
+    assert "exif_timestamp" not in ie["required"]
+
+    pr = schema["$defs"]["ProviderImageResult"]
+    assert "is_ai_generated" in pr["required"]
+    assert "ai_generated_confidence" in pr["required"]
+    assert "stain_damage_classification" in pr["required"]
+    assert "damage_severity" not in pr["required"]
+
+    gps = schema["$defs"]["ImageExifGpsLocation"]
+    assert gps["properties"]["latitude"]["minimum"] == -90
+    assert gps["properties"]["latitude"]["maximum"] == 90
+    assert gps["properties"]["longitude"]["minimum"] == -180
+    assert gps["properties"]["longitude"]["maximum"] == 180

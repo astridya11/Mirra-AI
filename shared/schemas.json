@@ -923,6 +923,111 @@
       },
       "additionalProperties": false
     },
+    "ImageExifGpsLocation": {
+      "title": "ImageExifGpsLocation",
+      "description": "GPS coordinates extracted from image EXIF metadata.  Unlike GPSCoordinate, this does not require a timestamp.",
+      "type": "object",
+      "required": ["latitude", "longitude"],
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "description": "Latitude in decimal degrees.",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Longitude in decimal degrees.",
+          "minimum": -180,
+          "maximum": 180
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderImageResult": {
+      "title": "ProviderImageResult",
+      "description": "Visual-analysis output from an actual model / vision provider.  These fields are NEVER inferred from chat text or trip data.",
+      "type": "object",
+      "required": [
+        "is_ai_generated",
+        "ai_generated_confidence",
+        "stain_damage_classification"
+      ],
+      "properties": {
+        "is_ai_generated": {
+          "type": "boolean",
+          "description": "Whether the image is detected as AI-generated (synthetic/fabricated)."
+        },
+        "ai_generated_confidence": {
+          "type": "number",
+          "description": "Confidence score (0.0-1.0) for the AI-generated detection result.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "stain_damage_classification": {
+          "type": "string",
+          "description": "Classification of the stain or damage type detected in the image.",
+          "enum": [
+            "LIQUID_SPILL",
+            "VOMIT",
+            "FOOD_RESIDUE",
+            "PHYSICAL_DAMAGE",
+            "DIRT_MUD",
+            "NO_DAMAGE_DETECTED",
+            "OTHER"
+          ]
+        },
+        "damage_severity": {
+          "type": "string",
+          "description": "Estimated severity of the detected damage.",
+          "enum": [
+            "MINOR",
+            "MODERATE",
+            "SEVERE"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImageEvidenceInput": {
+      "title": "ImageEvidenceInput",
+      "description": "A single image submitted as evidence.  The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.",
+      "type": "object",
+      "required": ["image_id", "image_url"],
+      "properties": {
+        "image_id": {
+          "type": "string",
+          "description": "Unique identifier for the submitted image (e.g., 'IMG-001')."
+        },
+        "image_url": {
+          "type": "string",
+          "description": "URL or storage path to the image."
+        },
+        "exif_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "EXIF-embedded timestamp of when the photo was taken, normalized to ISO-8601 by the provider adapter."
+        },
+        "exif_gps_location": {
+          "$ref": "#/$defs/ImageExifGpsLocation"
+        },
+        "provider_result": {
+          "$ref": "#/$defs/ProviderImageResult"
+        },
+        "image_hash": {
+          "type": "string",
+          "description": "Perceptual or cryptographic hash of the image for recycled-image detection."
+        },
+        "known_matches": {
+          "type": "object",
+          "description": "Optional corpus mapping image_hash to a prior case_id for recycled-image comparison.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "DataSources": {
       "title": "DataSources",
       "description": "Container for all collected telemetry, communication, payment, and historical data sources. All data is collected and frozen at INIT_CLAIM; no new evidence is requested or introduced during the agent debate.",
@@ -960,6 +1065,15 @@
             "$ref": "#/$defs/HistoricalProfile"
           },
           "minItems": 1
+        },
+        "image_evidence": {
+          "type": "array",
+          "description": "Optional structured image evidence submitted for this case.  Omitted or empty when no images are available.",
+          "items": {
+            "$ref": "#/$defs/ImageEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
         }
       },
       "additionalProperties": false

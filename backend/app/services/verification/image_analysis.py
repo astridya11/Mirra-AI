@@ -75,6 +75,124 @@ _EXIF_GPS_TOLERANCE_METERS: float = 200.0
 
 
 # ---------------------------------------------------------------------------
+# Strict validation helpers — never fabricate defaults
+# ---------------------------------------------------------------------------
+
+_STAIN_CLASSIFICATIONS: frozenset[str] = frozenset({
+    "LIQUID_SPILL", "VOMIT", "FOOD_RESIDUE",
+    "PHYSICAL_DAMAGE", "DIRT_MUD", "NO_DAMAGE_DETECTED", "OTHER",
+})
+
+_DAMAGE_SEVERITIES: frozenset[str] = frozenset({"MINOR", "MODERATE", "SEVERE"})
+
+
+def _is_strict_bool(value: Any) -> bool:
+    """Return True only for actual bool objects (reject int 0/1, strings, etc.)."""
+    return type(value) is bool
+
+
+def _is_valid_confidence(value: Any) -> bool:
+    """Confidence must be a real numeric (not bool) in [0.0, 1.0]."""
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(f):
+        return False
+    return 0.0 <= f <= 1.0
+
+
+def _is_valid_classification(value: Any) -> bool:
+    return isinstance(value, str) and value in _STAIN_CLASSIFICATIONS
+
+
+def _is_valid_severity(value: Any) -> bool:
+    return isinstance(value, str) and value in _DAMAGE_SEVERITIES
+
+
+def _is_valid_gps_lat(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(f):
+        return False
+    return -90.0 <= f <= 90.0
+
+
+def _is_valid_gps_lng(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(f):
+        return False
+    return -180.0 <= f <= 180.0
+
+
+def _parse_provider_result(pr_raw: Any) -> ProviderImageResult | None:
+    """Parse a provider_result dict with strict validation.
+
+    Returns None if any required field is missing, malformed, or outside
+    allowed values.  No defaults are fabricated.
+    """
+    if not isinstance(pr_raw, dict):
+        return None
+
+    is_ai_gen = pr_raw.get("is_ai_generated")
+    if not _is_strict_bool(is_ai_gen):
+        return None
+
+    confidence = pr_raw.get("ai_generated_confidence")
+    if not _is_valid_confidence(confidence):
+        return None
+
+    classification = pr_raw.get("stain_damage_classification")
+    if not _is_valid_classification(classification):
+        return None
+
+    severity_raw = pr_raw.get("damage_severity")
+    if severity_raw is not None and not _is_valid_severity(severity_raw):
+        return None
+
+    return ProviderImageResult(
+        is_ai_generated=is_ai_gen,
+        ai_generated_confidence=float(confidence),
+        stain_damage_classification=classification,
+        damage_severity=severity_raw,
+    )
+
+
+def _parse_exif_gps(gps_raw: Any) -> ExifGpsLocation | None:
+    """Parse EXIF GPS location with strict validation.
+
+    Rejects booleans, NaN, Infinity, and out-of-range coordinates.
+    """
+    if not isinstance(gps_raw, dict):
+        return None
+
+    lat = gps_raw.get("latitude")
+    lng = gps_raw.get("longitude")
+
+    if not _is_valid_gps_lat(lat) or not _is_valid_gps_lng(lng):
+        return None
+
+    return ExifGpsLocation(latitude=float(lat), longitude=float(lng))
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -130,6 +248,19 @@ def _trip_time_window(data_sources: dict[str, Any]) -> tuple[datetime | None, da
     return earliest, latest
 
 
+def _is_valid_trip_coord(value: Any) -> bool:
+    """Lightweight coordinate validity check for trip data (no bool, NaN, Infinity)."""
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(f)
+
+
 def _relevant_gps_points(data_sources: dict[str, Any]) -> list[tuple[float, float]]:
     """Return coordinates that an EXIF GPS should plausibly be near."""
     points: list[tuple[float, float]] = []
@@ -141,14 +272,14 @@ def _relevant_gps_points(data_sources: dict[str, Any]) -> list[tuple[float, floa
         if loc and isinstance(loc, dict):
             lat = loc.get("lat")
             lng = loc.get("lng")
-            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            if _is_valid_trip_coord(lat) and _is_valid_trip_coord(lng):
                 points.append((float(lat), float(lng)))
 
     for route_key in ("actual_route", "optimal_route"):
         for pt in gps.get(route_key, []):
             lat = pt.get("latitude")
             lng = pt.get("longitude")
-            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            if _is_valid_trip_coord(lat) and _is_valid_trip_coord(lng):
                 points.append((float(lat), float(lng)))
 
     return points
@@ -328,11 +459,11 @@ def analyze_image_evidence_batch(
 def extract_images_from_context(context: dict[str, Any]) -> list[ImageEvidenceInput]:
     """Discover structured image evidence from an orchestrator context.
 
-    The current DataSources schema does not define a dedicated image-evidence
-    field, so this helper looks for a conventional extension key:
+    Looks for the schema-compatible key:
         context["data_sources"]["image_evidence"]
 
     If absent (DISP-002, DISP-003 today), returns an empty list.
+    Malformed entries are silently skipped rather than fabricating defaults.
     """
     ds = context.get("data_sources", {})
     raw_images = ds.get("image_evidence", [])
@@ -346,30 +477,16 @@ def extract_images_from_context(context: dict[str, Any]) -> list[ImageEvidenceIn
 
         image_id = raw.get("image_id")
         image_url = raw.get("image_url")
-        if not image_id or not image_url:
+        if not isinstance(image_id, str) or not image_id.strip():
+            continue
+        if not isinstance(image_url, str) or not image_url.strip():
             continue
 
         exif_ts = raw.get("exif_timestamp")
-        exif_gps = None
-        gps_raw = raw.get("exif_gps_location")
-        if isinstance(gps_raw, dict):
-            lat = gps_raw.get("latitude")
-            lng = gps_raw.get("longitude")
-            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
-                exif_gps = ExifGpsLocation(latitude=float(lat), longitude=float(lng))
+        exif_ts = exif_ts if isinstance(exif_ts, str) else None
 
-        provider = None
-        pr_raw = raw.get("provider_result")
-        if isinstance(pr_raw, dict):
-            try:
-                provider = ProviderImageResult(
-                    is_ai_generated=bool(pr_raw.get("is_ai_generated")),
-                    ai_generated_confidence=float(pr_raw.get("ai_generated_confidence", 0.0)),
-                    stain_damage_classification=pr_raw.get("stain_damage_classification", "OTHER"),
-                    damage_severity=pr_raw.get("damage_severity"),
-                )
-            except (TypeError, ValueError):
-                provider = None
+        exif_gps = _parse_exif_gps(raw.get("exif_gps_location"))
+        provider = _parse_provider_result(raw.get("provider_result"))
 
         known = raw.get("known_matches")
         if not isinstance(known, dict):
@@ -377,9 +494,9 @@ def extract_images_from_context(context: dict[str, Any]) -> list[ImageEvidenceIn
 
         inputs.append(
             ImageEvidenceInput(
-                image_id=str(image_id),
-                image_url=str(image_url),
-                exif_timestamp=exif_ts if isinstance(exif_ts, str) else None,
+                image_id=image_id,
+                image_url=image_url,
+                exif_timestamp=exif_ts,
                 exif_gps_location=exif_gps,
                 provider_result=provider,
                 image_hash=raw.get("image_hash"),
