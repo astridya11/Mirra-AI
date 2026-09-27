@@ -13,7 +13,7 @@ CaseContext.to_context_dict(). This module reads `case_metadata`,
 Design — grounded in ryde_policy_v1.json:
   - Clause retrieval, and the deterministic ground-truth computation for
     POL-2 (Route Deviation), POL-3 (No-Show), POL-4 (Cleaning Fee), and
-    POL-5 (Safety) all live in backend/agents/precedent_store.py, sourced
+    POL-5 (Safety) all live in backend/policy/precedent_store.py, sourced
     from ryde_policy_v1.json's actual params (refund formulas, no-show
     conditions, severity caps).
   - Per POL-8 ("a precedent can never override a policy clause"): when
@@ -47,7 +47,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.agents import precedent_store
+from backend.policy import precedent_store
 
 # ----------------------------------------------------------------------
 # Constants

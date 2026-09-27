@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
 # Implemented agents (top-level imports — these exist now)
 # ----------------------------------------------------------------------
 from backend.agents.judge_agent import run_judge
-from backend.agents import precedent_store
+from backend.policy import precedent_store
 
 # ----------------------------------------------------------------------
 # Timezone & constants
@@ -314,7 +314,9 @@ class PipelineEngine:
             content = (
                 response.get("content")
                 or response.get("message")
+                or response.get("response_text")
                 or response.get("response")
+                or response.get("question_text")
                 or response.get("question")
                 or response.get("text")
                 or ""
@@ -461,7 +463,6 @@ class PipelineEngine:
             "evidence_context": raw.get("evidence_context", ""),
             "category": raw.get("category", "OTHER"),
             "asked_at": raw.get("asked_at") or datetime.now(_SGT).isoformat(),
-            "turn": raw.get("turn", turn),
         }
 
     @staticmethod
@@ -487,7 +488,6 @@ class PipelineEngine:
                 or ""
             ),
             "responded_at": raw.get("responded_at") or datetime.now(_SGT).isoformat(),
-            "turn": raw.get("turn", turn),
         }
 
     async def _stream_round_2_prosecutor_audit(self) -> AsyncGenerator[PhaseEvent, None]:
@@ -661,6 +661,16 @@ class PipelineEngine:
             suggestion = await run_policy_consultation(
                 self.ctx.to_context_dict()
             )
+
+            suggestion.setdefault(
+                "request_id",
+                request["request_id"],
+            )
+
+            self.ctx.policy_consultation = {
+                "request": request,
+                "suggestion": suggestion,
+            }
         except ImportError:
             # Deterministic fallback: build PolicySuggestion from
             # policy_agent helpers.
