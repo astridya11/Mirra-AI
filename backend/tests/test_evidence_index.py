@@ -91,7 +91,40 @@ def _test_disp002() -> None:
     print("=" * 60)
 
 
-# --- Test 2: DISP-001 and DISP-003 do not raise --------------------------------
+# --- Test 2: DISP-001 ROUTE-SUMMARY ------------------------------------------
+
+
+def _test_disp001_route_summary() -> None:
+    raw = _load_json(_MOCK_DIR / "DISP-001.json")
+    index = build_evidence_index(raw["data_sources"])
+
+    errors: list[str] = []
+
+    rs = index.get("ROUTE-SUMMARY")
+    if rs is None:
+        errors.append("Expected 'ROUTE-SUMMARY' in DISP-001 index, not found")
+    else:
+        desc = rs["description"]
+        if "2.3" not in desc:
+            errors.append(f"Expected '2.3' in ROUTE-SUMMARY description, got: {desc}")
+        if "35" not in desc:
+            errors.append(f"Expected '35' in ROUTE-SUMMARY description, got: {desc}")
+        if "28" not in desc:
+            errors.append(f"Expected '28' in ROUTE-SUMMARY description, got: {desc}")
+
+    if errors:
+        print("\nTEST 2 (DISP-001 ROUTE-SUMMARY) RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 2 (DISP-001 ROUTE-SUMMARY) RESULT: PASS")
+        print("  - ROUTE-SUMMARY present")
+        print(f"  - description: {rs['description']}")
+        print("  - contains '2.3', '35', '28'")
+
+
+# --- Test 3: DISP-001 and DISP-003 do not raise --------------------------------
 
 
 def _test_other_cases() -> None:
@@ -123,6 +156,7 @@ def _test_other_cases() -> None:
 
 def main() -> None:
     _test_disp002()
+    _test_disp001_route_summary()
     _test_other_cases()
     print("\nALL TESTS PASSED")
 

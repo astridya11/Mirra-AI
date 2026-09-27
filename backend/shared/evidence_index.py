@@ -59,6 +59,26 @@ def build_evidence_index(data_sources: dict) -> dict[str, dict]:
             "description": f"Optimal route point at {ts}, speed {speed} km/h",
         }
 
+    # --- GPS telemetry: route summary ---
+    deviation = gps.get("deviation_distance_km")
+    actual_dur = gps.get("trip_duration_seconds")
+    optimal_dur = gps.get("optimal_duration_seconds")
+    stops = gps.get("unexpected_stops")
+    if deviation is not None or actual_dur is not None or optimal_dur is not None or stops is not None:
+        parts: list[str] = []
+        if deviation is not None:
+            parts.append(f"Deviation {deviation} km")
+        if actual_dur is not None:
+            parts.append(f"actual trip {actual_dur / 60:.0f} min")
+        if optimal_dur is not None:
+            parts.append(f"optimal {optimal_dur / 60:.0f} min")
+        if stops is not None:
+            parts.append(f"unexpected stops {len(stops)}")
+        index["ROUTE-SUMMARY"] = {
+            "source_type": "ROUTE_TRAJECTORY",
+            "description": "; ".join(parts),
+        }
+
     # --- App events ---
     for i, evt in enumerate(data_sources.get("app_events", [])):
         eid = evt.get("evidence_id") or f"EVT-{i:03d}"
