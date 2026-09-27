@@ -12,6 +12,14 @@ from .checks import (
     check_policy_eligibility,
     check_waiting_duration,
 )
+from .checks_cleaning_fee import (
+    check_cleaning_claim_amount_consistency,
+    check_cleaning_claim_event_exists,
+    check_cleaning_claim_submission_delay,
+    check_cleaning_conflicting_party_accounts,
+    check_cleaning_photo_reference_consistency,
+    check_cleaning_structured_image_evidence,
+)
 from .checks_route_deviation import (
     check_driver_route_explanation_recorded,
     check_rider_route_objection_recorded,
@@ -48,10 +56,14 @@ ROUTE_DEVIATION_CHECKS: list[CheckFn] = [
     check_route_disputed_fare_context,
 ]
 
-# ponytail: CLEANING_FEE-specific checks land in the next milestone; an empty
-# list means only the common rider-perspective check runs for CLEANING_FEE
-# cases until then.
-CLEANING_FEE_CHECKS: list[CheckFn] = []
+CLEANING_FEE_CHECKS: list[CheckFn] = [
+    check_cleaning_claim_event_exists,
+    check_cleaning_claim_amount_consistency,
+    check_cleaning_claim_submission_delay,
+    check_cleaning_conflicting_party_accounts,
+    check_cleaning_structured_image_evidence,
+    check_cleaning_photo_reference_consistency,
+]
 
 CHECKS_BY_DISPUTE_TYPE: dict[str, list[CheckFn]] = {
     "NO_SHOW_CHARGE": NO_SHOW_CHECKS,
