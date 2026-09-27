@@ -16,6 +16,10 @@ it does not duplicate verification logic.
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.app.services.verification.cross_exam import (
+    build_cross_exam_summary,
+    review_cross_exam,
+)
 from backend.app.services.verification.escalation import assess_escalation_signals
 from backend.app.services.verification.fraud import assess_fraud_risk
 from backend.app.services.verification.image_analysis import (
@@ -46,14 +50,35 @@ async def run_prosecutor_audit(context: dict[str, Any]) -> dict[str, Any]:
     # 2. Generate prosecutor_findings using the existing deterministic engine
     prosecutor_findings = generate_prosecutor_report(normalized)
 
-    # 3. Build round_2_cross_exam (placeholder — no targeted questions yet)
+    # 3. Determine initial vs final audit based on Round 2 responses
     now = datetime.now(timezone.utc).isoformat()
-    round_2_cross_exam: dict[str, Any] = {
-        "targeted_questions": [],
-        "targeted_responses": [],
-        "round2_completed": True,
-        "completed_at": now,
-    }
+    existing_r2 = normalized.get("round_2_cross_exam", {})
+    if not isinstance(existing_r2, dict):
+        existing_r2 = {}
+
+    existing_responses = existing_r2.get("targeted_responses", [])
+    if not isinstance(existing_responses, list):
+        existing_responses = []
+
+    if existing_responses:
+        # FINAL AUDIT — responses exist; enrich summary with cross-exam review
+        round_2_cross_exam = existing_r2
+        review = review_cross_exam(
+            context=normalized,
+            prosecutor_report=prosecutor_findings,
+        )
+        cross_exam_summary = build_cross_exam_summary(review)
+        base_summary = prosecutor_findings.get("prosecutor_summary", "")
+        prosecutor_findings["prosecutor_summary"] = f"{base_summary} {cross_exam_summary}"
+        prosecutor_findings["report_submitted_at"] = now
+    else:
+        # INITIAL AUDIT — no responses yet; safe placeholder
+        round_2_cross_exam = {
+            "targeted_questions": [],
+            "targeted_responses": [],
+            "round2_completed": True,
+            "completed_at": now,
+        }
 
     # 4. Image evidence analysis — real P3 layer, empty when no images present
     image_inputs = extract_images_from_context(normalized)
