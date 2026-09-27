@@ -117,13 +117,13 @@ def test_bonus_modules_structure():
         "NO_ACTION", "FLAG_FOR_REVIEW", "BLOCK_ACCOUNT", "REFER_TO_FRAUD_TEAM"
     )
 
-    # escalation_protocol safe defaults
+    # escalation_protocol schema validity (now real, not hardcoded placeholder)
     ep = bm["escalation_protocol"]
-    assert ep["safety_threat_detected"] is False
-    assert ep["fraud_risk_level"] == "LOW"
-    assert ep["escalation_reasons"] == []
-    assert ep["is_escalated"] is False
-    assert ep["priority_level"] == "STANDARD"
+    assert isinstance(ep["safety_threat_detected"], bool)
+    assert ep["fraud_risk_level"] in ("LOW", "MEDIUM", "HIGH")
+    assert isinstance(ep["escalation_reasons"], list)
+    assert isinstance(ep["is_escalated"], bool)
+    assert ep["priority_level"] in ("STANDARD", "HIGH_PRIORITY", "URGENT")
 
 
 # ---------------------------------------------------------------------------
@@ -333,3 +333,128 @@ def test_synthetic_strong_fraud_refers_to_fraud_team():
     assert any("reuse detected" in f for f in fa["risk_factors"])
     assert any("AI-generated" in f for f in fa["risk_factors"])
     assert any("EXIF mismatch" in f for f in fa["risk_factors"])
+
+
+# ---------------------------------------------------------------------------
+# 18. DISP-002 escalation is LOW / not escalated / STANDARD
+# ---------------------------------------------------------------------------
+def test_disp002_escalation_low_not_escalated():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    ep = result["bonus_modules"]["escalation_protocol"]
+    assert ep["safety_threat_detected"] is False
+    assert ep["fraud_risk_level"] == "LOW"
+    assert ep["escalation_reasons"] == []
+    assert ep["is_escalated"] is False
+    assert ep["priority_level"] == "STANDARD"
+
+
+# ---------------------------------------------------------------------------
+# 19. DISP-003 escalation is LOW / not escalated / STANDARD
+# ---------------------------------------------------------------------------
+def test_disp003_escalation_low_not_escalated():
+    raw = load_case_data("DISP-003")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    ep = result["bonus_modules"]["escalation_protocol"]
+    assert ep["safety_threat_detected"] is False
+    assert ep["fraud_risk_level"] == "LOW"
+    assert ep["escalation_reasons"] == []
+    assert ep["is_escalated"] is False
+    assert ep["priority_level"] == "STANDARD"
+
+
+# ---------------------------------------------------------------------------
+# 20. Synthetic HIGH fraud escalates with HIGH_PRIORITY
+# ---------------------------------------------------------------------------
+def test_synthetic_high_fraud_escalates_high_priority():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-FAKE-001",
+            "image_url": "s3://bucket/fake.jpg",
+            "exif_timestamp": "2026-09-13T10:44:00+08:00",
+            "exif_gps_location": {"latitude": 5.0, "longitude": 110.0},
+            "provider_result": {
+                "is_ai_generated": True,
+                "ai_generated_confidence": 0.95,
+                "stain_damage_classification": "VOMIT",
+                "damage_severity": "SEVERE",
+            },
+            "image_hash": "hash-abc",
+            "known_matches": {"hash-abc": "DISP-PRIOR-999"},
+        }
+    ]
+    result = asyncio.run(run_prosecutor_audit(context))
+    ep = result["bonus_modules"]["escalation_protocol"]
+    assert ep["fraud_risk_level"] == "HIGH"
+    assert ep["is_escalated"] is True
+    assert ep["priority_level"] == "HIGH_PRIORITY"
+    assert any("HIGH technical risk level" in r for r in ep["escalation_reasons"])
+
+
+# ---------------------------------------------------------------------------
+# 21. Synthetic safety threat produces URGENT priority
+# ---------------------------------------------------------------------------
+def test_synthetic_safety_threat_urgent():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["case_metadata"]["dispute_type"] = "SAFETY_ALERT"
+    result = asyncio.run(run_prosecutor_audit(context))
+    ep = result["bonus_modules"]["escalation_protocol"]
+    assert ep["safety_threat_detected"] is True
+    assert ep["is_escalated"] is True
+    assert ep["priority_level"] == "URGENT"
+    # DISP-002 has no chat safety signal (safety_threat_keywords_detected is
+    # False, no message carries safety_threat_keywords) — this case is
+    # SAFETY_ALERT purely by dispute-type classification, so the reason must
+    # say that, not fabricate chat evidence that was never present.
+    assert any("SAFETY_ALERT dispute" in r for r in ep["escalation_reasons"])
+    assert not any("chat evidence" in r.lower() for r in ep["escalation_reasons"])
+
+
+# ---------------------------------------------------------------------------
+# 22. Synthetic safety + HIGH fraud -> URGENT (safety dominates)
+# ---------------------------------------------------------------------------
+def test_synthetic_safety_and_high_fraud_urgent():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["case_metadata"]["dispute_type"] = "SAFETY_ALERT"
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-FAKE-001",
+            "image_url": "s3://bucket/fake.jpg",
+            "exif_timestamp": "2026-09-13T10:44:00+08:00",
+            "exif_gps_location": {"latitude": 5.0, "longitude": 110.0},
+            "provider_result": {
+                "is_ai_generated": True,
+                "ai_generated_confidence": 0.95,
+                "stain_damage_classification": "VOMIT",
+                "damage_severity": "SEVERE",
+            },
+            "image_hash": "hash-abc",
+            "known_matches": {"hash-abc": "DISP-PRIOR-999"},
+        }
+    ]
+    result = asyncio.run(run_prosecutor_audit(context))
+    ep = result["bonus_modules"]["escalation_protocol"]
+    assert ep["safety_threat_detected"] is True
+    assert ep["fraud_risk_level"] == "HIGH"
+    assert ep["is_escalated"] is True
+    assert ep["priority_level"] == "URGENT"
+
+
+# ---------------------------------------------------------------------------
+# 23. Escalation reasons are neutral / evidence-grounded
+# ---------------------------------------------------------------------------
+def test_escalation_reasons_neutral():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["case_metadata"]["dispute_type"] = "SAFETY_ALERT"
+    result = asyncio.run(run_prosecutor_audit(context))
+    for reason in result["bonus_modules"]["escalation_protocol"]["escalation_reasons"]:
+        assert "committed fraud" not in reason.lower()
+        assert "is dangerous" not in reason.lower()
+        assert "scam" not in reason.lower()

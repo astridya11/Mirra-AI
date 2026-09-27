@@ -204,6 +204,12 @@ def _score_historical_profiles(profiles: list[dict[str, Any]]) -> tuple[float, l
     return score, factors, abuse_detected, abuse_description
 
 
+def has_current_case_signals(image_analyses: list[dict[str, Any]]) -> bool:
+    """Return True if any objective current-case fraud signal is present."""
+    count, _ = _count_current_signals(image_analyses)
+    return count > 0
+
+
 def _determine_action(score: float, has_current_signals: bool) -> str:
     """Map score to recommended fraud action.
 
