@@ -25,6 +25,7 @@ sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend.agents...` imports w
 from backend.agents import rider_advocate_agent  # noqa: E402
 from backend.agents import driver_advocate_agent  # noqa: E402
 from backend.shared.evidence_index import build_evidence_index  # noqa: E402
+from backend.policy.precedent_store import retrieve_clauses  # noqa: E402
 
 
 # --- Load mock data + fixtures ------------------------------------------------
@@ -382,6 +383,23 @@ async def _test_round1(case_id: str, mock: bool = False) -> None:
         print(f"  - only AgentStatement keys present")
         print(f"  - amounts within caps (claimant {claimant}, cap {cap})")
         print(f"  - all evidence_ids verified")
+
+    # --- Clause citation report (non-mock only) ---
+    if not mock:
+        try:
+            clause_ids = {c["clause_id"] for c in retrieve_clauses(dispute_type)}
+        except Exception:
+            clause_ids = set()
+
+        if clause_ids:
+            rider_detail = rider_stmt.get("detailed_argument", "")
+            driver_detail = driver_stmt.get("detailed_argument", "")
+            rider_cited = any(cid in rider_detail for cid in clause_ids)
+            driver_cited = any(cid in driver_detail for cid in clause_ids)
+            print(f"\n  [clause citation report for {case_id}]")
+            print(f"    applicable clause IDs: {sorted(clause_ids)}")
+            print(f"    rider detailed_argument cites a clause ID: {rider_cited}")
+            print(f"    driver detailed_argument cites a clause ID: {driver_cited}")
 
 
 # ---------------------------------------------------------------------------

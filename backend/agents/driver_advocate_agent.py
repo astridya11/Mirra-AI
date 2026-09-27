@@ -40,6 +40,7 @@ from backend.shared.advocate_utils import (
     question_is_for,
     allowed_outcomes_for_role,
 )
+from backend.policy.precedent_store import retrieve_clauses, clause_reference
 
 # Timezone for timestamps.
 _SGT = timezone(timedelta(hours=8))
@@ -87,6 +88,10 @@ Rule 8 applies to Round 1 statements. In Round 2 answers, you may still say \
 honestly that the evidence cannot support a point, but do not add a \
 conclusion about who should win.
 
+10. Cite the relevant policy clause IDs (e.g. POL-2) in detailed_argument \
+    when you rely on a rule. Only cite clause IDs listed in APPLICABLE \
+    POLICY CLAUSES.
+
 ROUND 1 — Return JSON with exactly these keys:
   argument_summary, detailed_argument, requested_outcome, \
   requested_amount, evidence_references
@@ -102,6 +107,24 @@ ROUND 2 — Return JSON with exactly this key:
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
+
+
+def _build_clauses_block(dispute_type: str) -> str:
+    """Build the APPLICABLE POLICY CLAUSES section, or '(no clauses available)'."""
+    try:
+        clauses = retrieve_clauses(dispute_type)
+        if not clauses:
+            return "(no clauses available)"
+        lines = []
+        for c in clauses:
+            ref = clause_reference(c)
+            lines.append(
+                f"{ref['clause_id']} ({ref['clause_title']}): "
+                f"{ref['clause_text_summary']}"
+            )
+        return "\n".join(lines)
+    except Exception:
+        return "(no clauses available)"
 
 
 def _build_round1_prompt(context: dict, evidence_text: str) -> str:
@@ -137,6 +160,8 @@ def _build_round1_prompt(context: dict, evidence_text: str) -> str:
         "<<<<END UNTRUSTED CLAIM TEXT>>>>\n"
     )
 
+    clauses_block = _build_clauses_block(dispute_type)
+
     prompt = f"""\
 Case ID: {case_id}
 Dispute Type: {dispute_type}
@@ -145,6 +170,9 @@ Allowed requested_outcome for your role: {', '.join(allowed)}
 
 === EVIDENCE INDEX ===
 {evidence_text}
+
+=== APPLICABLE POLICY CLAUSES ===
+{clauses_block}
 
 {claim_block}
 {other_block}
@@ -191,6 +219,8 @@ def _build_round2_prompt(
         "<<<<END UNTRUSTED PROSECUTOR QUESTION>>>>\n"
     )
 
+    clauses_block = _build_clauses_block(dispute_type)
+
     prompt = f"""\
 Case ID: {case_id}
 Dispute Type: {dispute_type}
@@ -198,6 +228,9 @@ Driver Role: {driver_role}
 
 === EVIDENCE INDEX ===
 {evidence_text}
+
+=== APPLICABLE POLICY CLAUSES ===
+{clauses_block}
 
 === PROSECUTOR FINDINGS ===
 VERIFIED FACTS:
