@@ -535,6 +535,209 @@ def test_mixed_timezone_aware_and_naive_timestamps_no_crash():
     assert "verified_facts" in report
 
 
+def test_normalize_evidence_skips_non_dict_actual_route_entries():
+    data = load_case_data("DISP-002")
+    data["data_sources"]["gps_telemetry"]["actual_route"] = [
+        {"latitude": 1.0, "longitude": 103.0, "timestamp": "2026-09-13T08:30:00+08:00"},
+        None,
+        "not-a-dict",
+        123,
+        {},
+        {"latitude": 1.1, "longitude": 103.1, "timestamp": "2026-09-13T08:35:00+08:00"},
+    ]
+    result = normalize_evidence(data)  # must not raise
+    route = result["data_sources"]["gps_telemetry"]["actual_route"]
+
+    assert route[0]["evidence_id"] == "GPS-000"
+    assert route[1] is None
+    assert route[2] == "not-a-dict"
+    assert route[3] == 123
+    # An empty dict is still a dict — it gets an evidence_id like any valid
+    # entry, but no coordinate fields are fabricated for it.
+    assert route[4]["evidence_id"] == "GPS-004"
+    assert set(route[4].keys()) == {"evidence_id"}
+    assert route[5]["evidence_id"] == "GPS-005"  # index preserved, not shifted
+
+    # Malformed non-dict entries never enter the evidence map.
+    for entry in (None, "not-a-dict", 123):
+        assert entry not in result["_evidence_map"].values()
+
+    # NOTE: intentionally does not call generate_prosecutor_report() here.
+    # NO_SHOW_CHARGE's own check functions (e.g. check_arrival_time_verification)
+    # separately assume every actual_route/app_events entry is a dict and are
+    # not hardened against a raw None surviving in the list — a distinct,
+    # newly-observed, out-of-scope crash risk reported (not fixed) alongside
+    # this pass's two authorized fixes. See test_p3_full_integration.py's
+    # test_ingestion_normalize_evidence_handles_non_dict_list_entries for the
+    # downstream-still-runs proof against a category whose checks are
+    # already hardened (ROUTE_DEVIATION).
+
+
+def test_normalize_evidence_skips_non_dict_optimal_route_entries():
+    data = load_case_data("DISP-002")
+    data["data_sources"]["gps_telemetry"]["optimal_route"] = [
+        None,
+        {"latitude": 1.0, "longitude": 103.0, "timestamp": "2026-09-13T08:30:00+08:00"},
+    ]
+    result = normalize_evidence(data)  # must not raise
+    optimal = result["data_sources"]["gps_telemetry"]["optimal_route"]
+    assert optimal[0] is None
+    assert optimal[1]["evidence_id"] == "OPT-001"
+
+
+def test_normalize_evidence_skips_non_dict_app_event_entries():
+    data = load_case_data("DISP-002")
+    data["data_sources"]["app_events"] = [
+        None,
+        "not-a-dict",
+        {"event_type": "booking_confirmed", "timestamp": "2026-09-13T08:30:00+08:00"},
+    ]
+    result = normalize_evidence(data)  # must not raise
+    events = result["data_sources"]["app_events"]
+    assert events[0] is None
+    assert events[1] == "not-a-dict"
+    assert events[2]["evidence_id"] == "EVT-002"
+
+
+def test_pickup_gps_consistency_handles_malformed_coordinates():
+    base = normalize_evidence(load_case_data("DISP-002"))
+    arrival_point = next(
+        p for p in base["data_sources"]["gps_telemetry"]["actual_route"] if p.get("status") == "arrived"
+    )
+
+    for bad_value in (
+        None, "invalid", True, False,
+        float("nan"), float("inf"), float("-inf"),
+        95.0,  # out of latitude range
+    ):
+        data = normalize_evidence(load_case_data("DISP-002"))
+        point = next(
+            p for p in data["data_sources"]["gps_telemetry"]["actual_route"] if p.get("status") == "arrived"
+        )
+        point["latitude"] = bad_value
+        result = check_pickup_gps_consistency(data)
+        assert result["status"] == "MISSING", f"latitude={bad_value!r} -> {result['status']}"
+        assert "nan" not in result["description"].lower()
+        assert "inf" not in result["description"].lower()
+
+
+def test_pickup_gps_consistency_rejects_out_of_range_longitude():
+    data = normalize_evidence(load_case_data("DISP-002"))
+    point = next(
+        p for p in data["data_sources"]["gps_telemetry"]["actual_route"] if p.get("status") == "arrived"
+    )
+    point["longitude"] = 185.0
+    result = check_pickup_gps_consistency(data)
+    assert result["status"] == "MISSING"
+
+
+def test_pickup_gps_consistency_valid_coordinates_unaffected():
+    """DISP-002's real, valid coordinates must still verify exactly as before."""
+    data = normalize_evidence(load_case_data("DISP-002"))
+    result = check_pickup_gps_consistency(data)
+    assert result["status"] == "VERIFIED"
+    assert "0.0 metres" in result["description"]
+
+
+# ---------------------------------------------------------------------------
+# NO_SHOW_CHARGE robustness hardening: non-dict list entries must never
+# crash any NO_SHOW check, and must never change the result for valid
+# entries already present in the canonical DISP-002 fixture.
+# ---------------------------------------------------------------------------
+
+_NO_SHOW_CHECK_FNS = (
+    check_arrival_time_verification,
+    check_waiting_duration,
+    check_pickup_gps_consistency,
+    check_communication_attempts,
+    check_cancellation_timestamp,
+    check_event_ordering,
+    check_missing_gps_records,
+    check_contradictory_timestamps,
+    check_policy_eligibility,
+)
+
+
+def _disp002_expected_results():
+    data = normalize_evidence(load_case_data("DISP-002"))
+    return {fn.__name__: fn(data)["status"] for fn in _NO_SHOW_CHECK_FNS}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["data_sources"]["app_events"].insert(1, None),
+        lambda d: d["data_sources"]["app_events"].insert(1, "not-a-dict"),
+        lambda d: d["data_sources"]["app_events"].insert(1, 42),
+    ],
+    ids=["app_events_none", "app_events_string", "app_events_int"],
+)
+def test_no_show_checks_survive_malformed_app_events_entry(mutate):
+    expected = _disp002_expected_results()
+    data = normalize_evidence(load_case_data("DISP-002"))
+    mutate(data)
+    for fn in _NO_SHOW_CHECK_FNS:
+        result = fn(data)  # must not raise
+        assert result["status"] == expected[fn.__name__], fn.__name__
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["data_sources"]["gps_telemetry"]["actual_route"].insert(1, None),
+        lambda d: d["data_sources"]["gps_telemetry"]["actual_route"].insert(1, "not-a-dict"),
+        lambda d: d["data_sources"]["gps_telemetry"].setdefault("optimal_route", []).insert(0, None),
+    ],
+    ids=["actual_route_none", "actual_route_string", "optimal_route_none"],
+)
+def test_no_show_checks_survive_malformed_gps_route_entry(mutate):
+    expected = _disp002_expected_results()
+    data = normalize_evidence(load_case_data("DISP-002"))
+    mutate(data)
+    for fn in _NO_SHOW_CHECK_FNS:
+        result = fn(data)  # must not raise
+        assert result["status"] == expected[fn.__name__], fn.__name__
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["data_sources"]["chat_communication"]["transcript"].insert(0, None),
+        lambda d: d["data_sources"]["chat_communication"]["transcript"].insert(0, "not-a-dict"),
+    ],
+    ids=["transcript_none", "transcript_string"],
+)
+def test_no_show_checks_survive_malformed_transcript_entry(mutate):
+    expected = _disp002_expected_results()
+    data = normalize_evidence(load_case_data("DISP-002"))
+    mutate(data)
+    for fn in _NO_SHOW_CHECK_FNS:
+        result = fn(data)  # must not raise
+        assert result["status"] == expected[fn.__name__], fn.__name__
+
+
+def test_no_show_full_pipeline_survives_combined_malformed_entries():
+    """The complete normalize_evidence -> generate_prosecutor_report chain
+    must produce the byte-identical canonical DISP-002 result even with
+    malformed non-dict entries scattered across every evidence list at
+    once."""
+    baseline = generate_prosecutor_report(normalize_evidence(load_case_data("DISP-002")))
+
+    data = normalize_evidence(load_case_data("DISP-002"))
+    data["data_sources"]["app_events"].insert(1, None)
+    data["data_sources"]["app_events"].insert(2, "bad")
+    data["data_sources"]["gps_telemetry"]["actual_route"].insert(1, None)
+    data["data_sources"]["gps_telemetry"]["actual_route"].insert(2, "bad")
+    data["data_sources"]["chat_communication"]["transcript"].insert(0, None)
+    data["data_sources"]["chat_communication"]["transcript"].insert(1, "bad")
+
+    report = generate_prosecutor_report(data)  # must not raise
+    assert report["verified_facts"] == baseline["verified_facts"]
+    assert report["disputed_facts"] == baseline["disputed_facts"]
+    assert report["missing_facts"] == baseline["missing_facts"]
+    assert report["prosecutor_summary"] == baseline["prosecutor_summary"]
+
+
 def test_report_with_partially_valid_evidence_still_well_formed():
     data = normalize_evidence(load_case_data("DISP-002"))
     data["data_sources"]["trip_data"]["driver_arrival_time"] = "invalid"

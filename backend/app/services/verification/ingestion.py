@@ -57,38 +57,58 @@ def normalize_evidence(data: dict[str, Any]) -> dict[str, Any]:
     ds = normalized.setdefault("data_sources", {})
 
     # GPS telemetry — actual route
+    # ponytail: non-dict entries (None, str, ...) are skipped rather than
+    # mutated/crashed on. idx is still taken from enumerate() over the
+    # original list, so a valid entry's ID is always its own list position
+    # (e.g. [valid, None, valid] -> "GPS-000", <skipped>, "GPS-002") — this
+    # keeps IDs consistent with backend/shared/evidence_index.py, which
+    # numbers by the same raw list position.
     gps = ds.setdefault("gps_telemetry", {})
     actual_route = gps.setdefault("actual_route", [])
     for idx, point in enumerate(actual_route):
+        if not isinstance(point, dict):
+            continue
         point["evidence_id"] = point.get("evidence_id") or f"GPS-{idx:03d}"
 
     # GPS telemetry — optimal route
     optimal_route = gps.setdefault("optimal_route", [])
     for idx, point in enumerate(optimal_route):
+        if not isinstance(point, dict):
+            continue
         point["evidence_id"] = point.get("evidence_id") or f"OPT-{idx:03d}"
 
     # App events
     app_events = ds.setdefault("app_events", [])
     for idx, event in enumerate(app_events):
+        if not isinstance(event, dict):
+            continue
         event["evidence_id"] = event.get("evidence_id") or f"EVT-{idx:03d}"
 
     # Chat transcript (preserve existing IDs, generate only if missing)
     chat = ds.setdefault("chat_communication", {})
     transcript = chat.setdefault("transcript", [])
     for idx, msg in enumerate(transcript):
+        if not isinstance(msg, dict):
+            continue
         if not msg.get("message_id"):
             msg["message_id"] = f"CHAT-GEN-{idx:03d}"
 
-    # Build evidence map for quick lookup
+    # Build evidence map for quick lookup. Non-dict entries were never
+    # assigned an ID above, so they are simply absent here — no fabricated
+    # evidence is added for them.
     evidence_map: dict[str, Any] = {}
     for point in actual_route:
-        evidence_map[point["evidence_id"]] = point
+        if isinstance(point, dict):
+            evidence_map[point["evidence_id"]] = point
     for point in optimal_route:
-        evidence_map[point["evidence_id"]] = point
+        if isinstance(point, dict):
+            evidence_map[point["evidence_id"]] = point
     for event in app_events:
-        evidence_map[event["evidence_id"]] = event
+        if isinstance(event, dict):
+            evidence_map[event["evidence_id"]] = event
     for msg in transcript:
-        evidence_map[msg["message_id"]] = msg
+        if isinstance(msg, dict):
+            evidence_map[msg["message_id"]] = msg
 
     normalized["_evidence_map"] = evidence_map
     return normalized
