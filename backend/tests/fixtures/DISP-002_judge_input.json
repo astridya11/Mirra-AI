@@ -10,7 +10,7 @@
       "currency": "SGD",
       "evidence_references": [
         {
-          "evidence_id": "APP-004",
+          "evidence_id": "EVT-003",
           "source_type": "APP_EVENT",
           "description": "Driver arrived at pickup at 08:43."
         }
@@ -27,7 +27,7 @@
       "currency": "SGD",
       "evidence_references": [
         {
-          "evidence_id": "GPS-005",
+          "evidence_id": "GPS-004",
           "source_type": "GPS_TELEMETRY",
           "description": "Driver GPS at pickup, speed 0, arrived."
         },
@@ -52,12 +52,12 @@
         "description": "Driver arrived at 08:43 within 10 meters of the pickup point (GPS confirmed arrival).",
         "supporting_evidence": [
           {
-            "evidence_id": "APP-004",
+            "evidence_id": "EVT-003",
             "source_type": "APP_EVENT",
             "description": "driver_arrived event at 08:43, GPS within 10m."
           },
           {
-            "evidence_id": "GPS-005",
+            "evidence_id": "GPS-004",
             "source_type": "GPS_TELEMETRY",
             "description": "GPS coordinate at pickup, speed 0, status arrived."
           }
@@ -71,22 +71,22 @@
         "description": "Driver remained stationary at the pickup point from 08:43 until cancellation at 08:51 (8 minutes).",
         "supporting_evidence": [
           {
-            "evidence_id": "GPS-005",
+            "evidence_id": "GPS-004",
             "source_type": "GPS_TELEMETRY",
             "description": "08:43 — arrived, speed 0."
           },
           {
-            "evidence_id": "GPS-006",
+            "evidence_id": "GPS-005",
             "source_type": "GPS_TELEMETRY",
             "description": "08:45 — waiting, speed 0."
           },
           {
-            "evidence_id": "GPS-007",
+            "evidence_id": "GPS-006",
             "source_type": "GPS_TELEMETRY",
             "description": "08:48 — waiting, speed 0."
           },
           {
-            "evidence_id": "GPS-008",
+            "evidence_id": "GPS-007",
             "source_type": "GPS_TELEMETRY",
             "description": "08:51 — cancelled, speed 0."
           }
@@ -100,7 +100,7 @@
         "description": "Rider was notified of driver arrival at 08:43:05 via push notification and in-app alert.",
         "supporting_evidence": [
           {
-            "evidence_id": "APP-005",
+            "evidence_id": "EVT-004",
             "source_type": "APP_EVENT",
             "description": "rider_notified event at 08:43:05."
           }
@@ -148,7 +148,7 @@
         "description": "Cancellation occurred at exactly the 8-minute no-show threshold (08:51:00, driver arrived at 08:43:00).",
         "supporting_evidence": [
           {
-            "evidence_id": "APP-009",
+            "evidence_id": "EVT-008",
             "source_type": "APP_EVENT",
             "description": "cancellation_fee_applied event at 08:51:00."
           }
@@ -177,5 +177,29 @@
     ],
     "prosecutor_summary": "All five POL-3 no-show conditions are verified by system records (GPS, app events, chat). The rider's claim of being present is unsupported by any evidence. The cancellation fee appears justified. One missing fact (rider location) and one disputed fact (rider's presence claim) are noted.",
     "report_submitted_at": "2026-09-13T09:18:00+08:00"
+  },
+  "policy_consultation": {
+    "suggestion": {
+      "suggestion_id": "SUG-DISP-002-001",
+      "request_id": "REQ-DISP-002-001",
+      "applicable_clauses": [
+        {
+          "clause_id": "POL-3",
+          "clause_title": "No-Show Cancellation Charge",
+          "clause_text_summary": "If a driver arrives at the pickup point and waits for the full no-show threshold (8 minutes) while the rider does not board, a cancellation fee may be charged to the rider.",
+          "relevance_summary": "All five no-show conditions under POL-3 are verified: driver arrival, stationary wait, rider notification, contact attempts, and threshold cancellation."
+        }
+      ],
+      "matched_precedents": [],
+      "suggested_ruling_type": "REJECTED",
+      "suggested_recommended_action": {
+        "action_type": "NO_REFUND",
+        "refund_amount": 0,
+        "currency": "SGD"
+      },
+      "policy_confidence": 0.9,
+      "rationale": "Driver waited the full no-show threshold per POL-3.",
+      "suggested_at": "2026-09-13T09:19:00+08:00"
+    }
   }
 }
