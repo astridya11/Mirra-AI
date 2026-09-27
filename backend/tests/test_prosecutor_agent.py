@@ -94,7 +94,7 @@ def test_round_2_cross_exam_schema():
 
 
 # ---------------------------------------------------------------------------
-# 6. bonus_modules contains the three required sub-keys
+# 6. bonus_modules contains the three required sub-keys and schema-valid fraud assessment
 # ---------------------------------------------------------------------------
 def test_bonus_modules_structure():
     raw = load_case_data("DISP-002")
@@ -106,12 +106,16 @@ def test_bonus_modules_structure():
     assert "fraud_assessment" in bm
     assert "escalation_protocol" in bm
 
-    # fraud_assessment safe defaults
+    # fraud_assessment schema validity (now real, not hardcoded placeholder)
     fa = bm["fraud_assessment"]
-    assert fa["fraud_risk_score"] == 0.0
-    assert fa["risk_factors"] == []
-    assert fa["collusion_warning_flag"] is False
-    assert fa["abuse_pattern_detected"] is False
+    assert isinstance(fa["fraud_risk_score"], (int, float))
+    assert 0.0 <= fa["fraud_risk_score"] <= 1.0
+    assert isinstance(fa["risk_factors"], list)
+    assert isinstance(fa["collusion_warning_flag"], bool)
+    assert isinstance(fa["abuse_pattern_detected"], bool)
+    assert fa["recommended_fraud_action"] in (
+        "NO_ACTION", "FLAG_FOR_REVIEW", "BLOCK_ACCOUNT", "REFER_TO_FRAUD_TEAM"
+    )
 
     # escalation_protocol safe defaults
     ep = bm["escalation_protocol"]
@@ -223,3 +227,109 @@ def test_agent_skips_incomplete_image_evidence():
     result = asyncio.run(run_prosecutor_audit(context))
     analyses = result["bonus_modules"]["image_exif_analyses"]
     assert analyses == []
+
+
+# ---------------------------------------------------------------------------
+# 13. DISP-002 fraud assessment is real, not hardcoded zero
+# ---------------------------------------------------------------------------
+def test_disp002_fraud_assessment_is_real_not_placeholder():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    fa = result["bonus_modules"]["fraud_assessment"]
+    # Rider history has bad_faith_flag + risk_score; score should be > 0
+    assert fa["fraud_risk_score"] > 0.0
+    assert len(fa["risk_factors"]) > 0
+    assert fa["recommended_fraud_action"] in ("NO_ACTION", "FLAG_FOR_REVIEW")
+    assert fa["recommended_fraud_action"] != "REFER_TO_FRAUD_TEAM"
+
+
+# ---------------------------------------------------------------------------
+# 14. DISP-003 fraud assessment is real, not hardcoded zero
+# ---------------------------------------------------------------------------
+def test_disp003_fraud_assessment_is_real_not_placeholder():
+    raw = load_case_data("DISP-003")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    fa = result["bonus_modules"]["fraud_assessment"]
+    # Driver history has bad_faith_flag + risk_score; score should be > 0
+    assert fa["fraud_risk_score"] > 0.0
+    assert len(fa["risk_factors"]) > 0
+    assert fa["recommended_fraud_action"] in ("NO_ACTION", "FLAG_FOR_REVIEW")
+    assert fa["recommended_fraud_action"] != "REFER_TO_FRAUD_TEAM"
+
+
+# ---------------------------------------------------------------------------
+# 15. Prosecutor agent exact 3-key top-level contract remains unchanged
+# ---------------------------------------------------------------------------
+def test_prosecutor_agent_three_key_contract_unchanged():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    assert set(result.keys()) == {"round_2_cross_exam", "bonus_modules", "prosecutor_findings"}
+    assert set(result["bonus_modules"].keys()) == {
+        "image_exif_analyses",
+        "fraud_assessment",
+        "escalation_protocol",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 16. Image analysis behavior remains unchanged
+# ---------------------------------------------------------------------------
+def test_image_analysis_unchanged_with_real_fraud():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    result = asyncio.run(run_prosecutor_audit(context))
+    assert result["bonus_modules"]["image_exif_analyses"] == []
+
+    # With synthetic image evidence
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-TEST-001",
+            "image_url": "s3://bucket/photo.jpg",
+            "exif_timestamp": "2026-09-13T08:44:00+08:00",
+            "exif_gps_location": {"latitude": 1.2847, "longitude": 103.8382},
+            "provider_result": {
+                "is_ai_generated": False,
+                "ai_generated_confidence": 0.1,
+                "stain_damage_classification": "NO_DAMAGE_DETECTED",
+                "damage_severity": "MINOR",
+            },
+        }
+    ]
+    result2 = asyncio.run(run_prosecutor_audit(context))
+    analyses = result2["bonus_modules"]["image_exif_analyses"]
+    assert len(analyses) == 1
+    assert analyses[0]["image_id"] == "IMG-TEST-001"
+
+
+# ---------------------------------------------------------------------------
+# 17. Synthetic strong-fraud scenario triggers REFER_TO_FRAUD_TEAM
+# ---------------------------------------------------------------------------
+def test_synthetic_strong_fraud_refers_to_fraud_team():
+    raw = load_case_data("DISP-002")
+    context = normalize_evidence(raw)
+    context["data_sources"]["image_evidence"] = [
+        {
+            "image_id": "IMG-FAKE-001",
+            "image_url": "s3://bucket/fake.jpg",
+            "exif_timestamp": "2026-09-13T10:44:00+08:00",  # outside trip window
+            "exif_gps_location": {"latitude": 5.0, "longitude": 110.0},  # far away
+            "provider_result": {
+                "is_ai_generated": True,
+                "ai_generated_confidence": 0.95,
+                "stain_damage_classification": "VOMIT",
+                "damage_severity": "SEVERE",
+            },
+            "image_hash": "hash-abc",
+            "known_matches": {"hash-abc": "DISP-PRIOR-999"},
+        }
+    ]
+    result = asyncio.run(run_prosecutor_audit(context))
+    fa = result["bonus_modules"]["fraud_assessment"]
+    assert fa["fraud_risk_score"] >= 0.55
+    assert fa["recommended_fraud_action"] == "REFER_TO_FRAUD_TEAM"
+    assert any("reuse detected" in f for f in fa["risk_factors"])
+    assert any("AI-generated" in f for f in fa["risk_factors"])
+    assert any("EXIF mismatch" in f for f in fa["risk_factors"])
