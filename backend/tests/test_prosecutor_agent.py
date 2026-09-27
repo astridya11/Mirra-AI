@@ -837,7 +837,19 @@ def test_repeated_final_audit_deterministic_metadata():
     assert r1["round_2_cross_exam"] == r2["round_2_cross_exam"]
 
     # Timestamps differ naturally
-    assert r1["prosecutor_findings"]["report_submitted_at"] != r2["prosecutor_findings"]["report_submitted_at"]
+    from datetime import datetime
+
+    # Submission timestamps are valid timezone-aware ISO timestamps.
+    # Two very fast consecutive audit runs may legitimately share the
+    # same timestamp, so inequality is not a determinism requirement.
+    ts1 = r1["prosecutor_findings"]["report_submitted_at"]
+    ts2 = r2["prosecutor_findings"]["report_submitted_at"]
+
+    dt1 = datetime.fromisoformat(ts1)
+    dt2 = datetime.fromisoformat(ts2)
+
+    assert dt1.tzinfo is not None
+    assert dt2.tzinfo is not None
 
 
 # ---------------------------------------------------------------------------
