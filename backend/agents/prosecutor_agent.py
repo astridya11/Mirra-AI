@@ -28,6 +28,7 @@ from backend.app.services.verification.image_analysis import (
 )
 from backend.app.services.verification.ingestion import normalize_evidence
 from backend.app.services.verification.report import generate_prosecutor_report
+from backend.agents.prosecutor_questions import generateQuestion  # noqa: F401  (P2: cross-exam question generation)
 
 
 async def run_prosecutor_audit(context: dict[str, Any]) -> dict[str, Any]:
