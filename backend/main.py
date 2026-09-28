@@ -89,6 +89,18 @@ def save_case(result: dict[str, Any]) -> None:
     _completed_results[case_id] = result
 
 
+def get_completed_case(case_id: str) -> dict[str, Any] | None:
+    """
+    Return the completed pipeline result for case_id from the in-memory
+    store, or None if the pipeline has not been run for this case.
+
+    Used by apply_human_review so the human decision is applied to the
+    real pipeline result (judge_verdict, policy_consultation,
+    prosecutor_findings), not the raw mock_data file.
+    """
+    return _completed_results.get(case_id)
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request models
 # ---------------------------------------------------------------------------
