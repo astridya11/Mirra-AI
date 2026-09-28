@@ -90,12 +90,12 @@ def test_disp002_full_pipeline():
     assert data["case_metadata"]["dispute_type"] == "NO_SHOW_CHARGE"
 
     report = generate_prosecutor_report(data)
-    assert [f["fact_id"] for f in report["verified_facts"]] == [f"F-VER-{i:03d}" for i in range(1, 8)]
+    assert [f["fact_id"] for f in report["verified_facts"]] == [f"F-VER-{i:03d}" for i in range(1, 9)]
     assert report["disputed_facts"] == []
-    assert [f["fact_id"] for f in report["missing_facts"]] == [f"F-MIS-{i:03d}" for i in range(1, 4)]
+    assert [f["fact_id"] for f in report["missing_facts"]] == [f"F-MIS-{i:03d}" for i in range(1, 3)]
     assert report["prosecutor_summary"] == (
         "Prosecutor audit completed for no-show cancellation dispute. "
-        "7 of 9 evidentiary checks verified. 3 item(s) missing or unresolved."
+        "8 of 9 evidentiary checks verified. 2 item(s) missing or unresolved."
     )
 
     all_text = " ".join(f["description"] for f in _all_facts(report)).lower()
