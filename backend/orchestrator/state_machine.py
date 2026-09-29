@@ -807,10 +807,9 @@ class PipelineEngine:
         if refund_amount > HIGH_PRIORITY_THRESHOLD or cleaning_fee_amount > HIGH_PRIORITY_THRESHOLD:
             reasons.append(f"金额超过高优先级阈值 ({HIGH_PRIORITY_THRESHOLD})")
 
-        # 6. If the recommended action is to suspend or ban the account / add penalty points, escalate to human review
+        # 6. If the recommended action is to suspend or ban the account, escalate to human review
         account_action = recommended_action.get("account_action", "NONE")
-        penalty_points = recommended_action.get("penalty_points", 0)
-        if account_action != "NONE" or penalty_points > 0:
+        if account_action != "NONE":
             reasons.append("建议采取账户冻结、扣分等惩罚措施，需人工审核")
 
         # 7. If the party has requested human review

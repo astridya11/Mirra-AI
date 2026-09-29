@@ -28,8 +28,7 @@ from backend.orchestrator.state_machine import (
     ExecutionRoute,
     HumanReviewDecision,
     apply_human_review,
-    run_dispute_pipeline,
-    run_dispute_pipeline_with_events,
+    run_dispute_pipeline_realtime
 )
 
 # ---------------------------------------------------------------------------
@@ -198,38 +197,8 @@ async def get_dispute_data(dispute_id: str):
 # Pipeline execution
 # ---------------------------------------------------------------------------
 
-
-@app.post("/api/disputes/{dispute_id}/run")
-async def run_pipeline(dispute_id: str):
-    """
-    Execute the full 6-phase dispute resolution pipeline for the given case.
-
-    Returns the complete schema-compliant result object with all phases
-    populated: case_metadata, data_sources, round_1_statements,
-    round_2_cross_exam, bonus_modules, prosecutor_findings,
-    policy_consultation, judge_verdict, and policy_kb_update.
-    """
-    case_data = get_case(dispute_id)
-    if case_data is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Dispute dataset not found: {dispute_id}",
-        )
-
-    try:
-        result = await run_dispute_pipeline(dispute_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline execution failed: {exc}",
-        )
-
-    _completed_results[dispute_id] = result
-    return result
-
-
-@app.post("/api/disputes/{dispute_id}/run-with-events")
-async def run_pipeline_with_events(dispute_id: str):
+@app.post("/api/disputes/{dispute_id}/run-realtime")
+async def run_pipeline_realtime(dispute_id: str):
     """
     Execute the pipeline and return both the result and the phase event log.
 
@@ -244,7 +213,7 @@ async def run_pipeline_with_events(dispute_id: str):
         )
 
     try:
-        result, events = await run_dispute_pipeline_with_events(dispute_id)
+        result, events = await run_dispute_pipeline_realtime(dispute_id)
     except Exception as exc:
         raise HTTPException(
             status_code=500,

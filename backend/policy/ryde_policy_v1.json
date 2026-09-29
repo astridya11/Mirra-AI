@@ -10,10 +10,10 @@
       "applies_to": [
         "ALL"
       ],
-      "text": "All financial actions produced by the system are simulated and reversible. The Judge Agent may only recommend an outcome; execution is authorised solely by the deterministic Execution Gate (POL-6). The system never applies penalty points, warnings, suspensions or bans automatically. Every ruling must cite the policy version and the clause IDs it relies on.",
+      "text": "All financial actions produced by the system are simulated and reversible. The Judge Agent may only recommend an outcome; execution is authorised solely by the deterministic Execution Gate (POL-6). The system never applies warnings, suspensions or bans automatically. Every ruling must cite the policy version and the clause IDs it relies on.",
       "params": {
         "judge_can_execute": false,
-        "automatic_penalties_allowed": false,
+        "automatic_account_actions_allowed": false,
         "all_actions_simulated": true
       },
       "keywords": [
@@ -23,6 +23,7 @@
         "execution",
         "authorised",
         "penalties",
+        "account_actions",
         "suspensions",
         "ruling",
         "policy",
@@ -189,7 +190,6 @@
           "safety_threat_detected": false,
           "party_requested_human": false,
           "missing_crucial_evidence": false,
-          "penalty_points": 0,
           "account_action": "NONE",
           "allowed_auto_action_types": [
             "FULL_REFUND",
@@ -324,6 +324,70 @@
         "case",
         "party"
       ]
+    },
+    "POL-10": {
+      "title": "Account Actions for Confirmed Misconduct",
+      "applies_to": [
+        "ALL"
+      ],
+      "text": "Confirmed account-level misconduct may result in an account action. An account action may be recommended only when the current case contains verified evidence of the misconduct and the responsible rider or driver account is identified. Account actions are determined from the confirmed misconduct in the current case: fabricated or recycled evidence may result in a warning; a confirmed repeated bad-faith abuse pattern may result in a temporary suspension; confirmed collusion may result in a temporary suspension; a confirmed moderate safety violation may result in a temporary suspension; and a confirmed severe safety violation may result in an account ban. When multiple confirmed misconduct findings apply to the same account in one case, the strongest applicable account action is recommended. Historical profile information may support investigation of a repeated pattern but must not by itself trigger an account action. All account actions require human confirmation and must never be executed automatically.",
+      "params": {
+        "automatic_account_actions_allowed": false,
+        "account_actions_are_case_level": true,
+        "verified_evidence_required": true,
+        "target_account_required": true,
+        "misconduct_action_table": {
+          "FABRICATED_EVIDENCE_CONFIRMED": {
+            "account_action": "WARNING_ISSUED",
+            "condition": "Verified case evidence establishes that the account knowingly submitted fabricated, recycled, or AI-generated evidence in support of the dispute."
+          },
+          "REPEATED_BAD_FAITH_PATTERN": {
+            "account_action": "TEMPORARY_SUSPENSION",
+            "condition": "The current case contains a verified bad-faith abuse pattern and the historical profile contains a prior verified bad-faith finding for the same account."
+          },
+          "COLLUSION_CONFIRMED": {
+            "account_action": "TEMPORARY_SUSPENSION",
+            "condition": "Verified evidence establishes coordinated manipulation of the dispute, trip, evidence, or account process by the target account."
+          },
+          "SAFETY_VIOLATION_CONFIRMED_MODERATE": {
+            "account_action": "TEMPORARY_SUSPENSION",
+            "condition": "A verified safety violation is classified as MODERATE."
+          },
+          "SAFETY_VIOLATION_CONFIRMED_SEVERE": {
+            "account_action": "ACCOUNT_BAN",
+            "condition": "A verified safety violation is classified as SEVERE, including a confirmed serious threat or violence."
+          }
+        },
+        "action_precedence": [
+          "ACCOUNT_BAN",
+          "TEMPORARY_SUSPENSION",
+          "WARNING_ISSUED",
+          "NONE"
+        ],
+        "target_party_values": [
+          "RIDER",
+          "DRIVER"
+        ],
+        "required_target_field": "target_party"
+      },
+      "keywords": [
+        "account",
+        "misconduct",
+        "warning",
+        "suspension",
+        "ban",
+        "fabricated",
+        "recycled",
+        "generated",
+        "badfaith",
+        "collusion",
+        "safety",
+        "severe",
+        "moderate",
+        "violation",
+        "verified",
+        "human"
+      ]
     }
   },
   "dispute_type_clause_map": {
@@ -332,27 +396,31 @@
       "POL-2",
       "POL-6",
       "POL-7",
-      "POL-9"
+      "POL-9",
+      "POL-10"
     ],
     "NO_SHOW_CHARGE": [
       "POL-1",
       "POL-3",
       "POL-6",
       "POL-7",
-      "POL-9"
+      "POL-9",
+      "POL-10"
     ],
     "CLEANING_FEE": [
       "POL-1",
       "POL-4",
       "POL-6",
       "POL-7",
-      "POL-9"
+      "POL-9",
+      "POL-10"
     ],
     "SAFETY_ALERT": [
       "POL-1",
       "POL-5",
       "POL-6",
-      "POL-9"
+      "POL-9",
+      "POL-10"
     ]
   }
 }

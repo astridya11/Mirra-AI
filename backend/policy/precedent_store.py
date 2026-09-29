@@ -5,7 +5,7 @@ Two parts, matching workflow.md's Phase 4 (Policy Consultation):
 
   1. Clause library: loaded from ryde_policy_v1.json (POLICY_FILE_PATH env
      var, default alongside this module). This is the real Ryde policy
-     document — POL-1..POL-9, each with `applies_to`, `text`, and a
+     document — POL-1..POL-10, each with `applies_to`, `text`, and a
      `params` block with the actual computable rules (refund formulas,
      no-show conditions, cleaning-fee severity caps, execution-gate
      thresholds, etc.), plus a `dispute_type_clause_map`. Legal text
@@ -377,70 +377,84 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
 
 
 def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    """POL-4: enforce evidence prerequisites; human confirmation remains mandatory."""
+    """POL-4 using only evidence fields represented by schemas.json.
+
+    The schema does not define a structured cleaning receipt, trip-end timestamp,
+    or a receipt/claim object. Those prerequisites therefore cannot be invented
+    from unrelated fields; when they are absent the policy computation escalates
+    rather than silently treating them as satisfied.
+    """
     params = clause.get("params", {})
     ds = context.get("data_sources", {}) or {}
     bonus = context.get("bonus_modules", {}) or {}
     analyses = bonus.get("image_exif_analyses", []) or []
-    claim = ds.get("cleaning_claim") or bonus.get("cleaning_claim") or {}
     if not analyses:
-        return {"computable": False, "reason": "no image_exif_analyses submitted"}
+        return {"computable": False, "reason": "POL-4 requires image_exif_analyses"}
 
     trip = ds.get("trip_data") or {}
-    trip_end = _parse_dt(trip.get("trip_end_time") or trip.get("dropoff_time"))
-    dropoff = trip.get("dropoff_location") or trip.get("destination_location")
-    claim_filed = _parse_dt(claim.get("claim_filed_at") or claim.get("filed_at"))
+    dropoff = trip.get("dropoff_location")
+    if not dropoff:
+        return {"computable": False, "reason": "POL-4 photo location check requires trip_data.dropoff_location"}
 
-    if params.get("receipt_required", True):
-        receipt_present = claim.get("receipt_present")
-        if receipt_present is None:
-            receipt_present = bool(claim.get("receipt") or claim.get("receipt_id") or ds.get("cleaning_receipt"))
-        if not receipt_present:
-            return {"computable": False, "reason": "POL-4 requires a cleaning receipt"}
+    # The master schema has no structured trip-end timestamp or cleaning-receipt
+    # field. Accept an explicitly supplied runtime adapter field only when it is
+    # outside the case schema; otherwise remain non-computable rather than infer.
+    trip_end = _parse_dt(
+        trip.get("trip_end_time")
+        or trip.get("dropoff_time")
+        or context.get("trip_end_time")
+    )
+    receipt_present = context.get("cleaning_receipt_present")
+    if receipt_present is None:
+        receipt_present = context.get("cleaning_claim", {}).get("receipt_present") if isinstance(context.get("cleaning_claim"), dict) else None
+    if params.get("receipt_required", True) and receipt_present is not True:
+        return {
+            "computable": False,
+            "reason": "POL-4 requires a verified cleaning receipt; schemas.json does not define a structured receipt field",
+        }
+    if not trip_end:
+        return {
+            "computable": False,
+            "reason": "POL-4 photo_window_min_after_trip_end requires a trip-end timestamp; schemas.json TripData does not define one",
+        }
 
-    filing_window_hours = params.get("claim_filing_window_hours")
-    if filing_window_hours is not None:
-        if not trip_end or not claim_filed:
-            return {"computable": False, "reason": "POL-4 claim_filing_window_hours requires trip end and claim filed timestamps"}
-        if (claim_filed - trip_end).total_seconds() < 0 or (claim_filed - trip_end).total_seconds() > filing_window_hours * 3600:
-            return {"computable": True, "ruling_type": "REJECTED", "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"}, "reason": "Cleaning claim was filed outside the POL-4 claim window.", "confidence": 0.95}
-
-    photo_window_min = params.get("photo_window_min_after_trip_end")
-    location_radius = params.get("photo_location_radius_m")
     valid = []
     invalid_reasons = []
     for img in analyses:
-        if img.get("is_ai_generated", False):
-            invalid_reasons.append("AI-generated image")
+        # ExifAnalysis has explicit required EXIF fields. Missing values cannot
+        # be replaced with image-analysis guesses.
+        exif_timestamp = _parse_dt(img.get("exif_timestamp"))
+        exif_location = img.get("exif_gps_location")
+        if not exif_timestamp or not isinstance(exif_location, dict):
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: missing required EXIF timestamp/location")
             continue
-        if img.get("recycled_image_detected", False):
-            invalid_reasons.append("recycled image")
+
+        if img.get("is_ai_generated") is True:
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: AI-generated image")
+            continue
+        if img.get("recycled_image_detected") is True:
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: recycled image")
             continue
         if img.get("exif_consistent_with_trip") is False:
-            invalid_reasons.append("EXIF inconsistency")
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: EXIF inconsistent with trip")
             continue
-        if photo_window_min is not None:
-            photo_t = _parse_dt(img.get("photo_timestamp") or img.get("timestamp"))
-            if not trip_end or not photo_t:
-                invalid_reasons.append("missing photo/trip-end timestamp")
-                continue
-            delta = (photo_t - trip_end).total_seconds() / 60
-            if delta < 0 or delta > photo_window_min:
-                invalid_reasons.append("photo outside time window")
-                continue
-        if location_radius is not None:
-            photo_loc = img.get("photo_location") or img.get("location")
-            if not dropoff or not photo_loc:
-                invalid_reasons.append("missing photo/drop-off location")
-                continue
-            try:
-                distance = _haversine_m(photo_loc["lat"], photo_loc["lng"], dropoff["lat"], dropoff["lng"])
-            except (KeyError, TypeError, ValueError):
-                invalid_reasons.append("invalid photo/drop-off location")
-                continue
-            if distance > location_radius:
-                invalid_reasons.append("photo outside location radius")
-                continue
+
+        delta = (exif_timestamp - trip_end).total_seconds() / 60
+        if delta < 0 or delta > params.get("photo_window_min_after_trip_end", 30):
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: EXIF timestamp outside photo window")
+            continue
+
+        try:
+            distance = _haversine_m(
+                exif_location["latitude"], exif_location["longitude"],
+                dropoff["lat"], dropoff["lng"],
+            )
+        except (KeyError, TypeError, ValueError):
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: invalid EXIF/drop-off location")
+            continue
+        if distance > params.get("photo_location_radius_m", 500):
+            invalid_reasons.append(f"{img.get('image_id', 'image')}: EXIF location outside drop-off radius")
+            continue
         valid.append(img)
 
     if not valid:
@@ -448,7 +462,7 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
             "computable": True,
             "ruling_type": "REJECTED",
             "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
-            "reason": "No submitted photo satisfies the POL-4 evidence requirements; claim is not supported.",
+            "reason": "No submitted image satisfies the POL-4 evidence requirements.",
             "confidence": 0.9,
             "evidence_issues": invalid_reasons,
         }
@@ -456,13 +470,14 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
     severity_order = {"SEVERE": 3, "MODERATE": 2, "MINOR": 1}
     top = max(valid, key=lambda img: severity_order.get(str(img.get("damage_severity", "MINOR")).upper(), 0))
     severity = str(top.get("damage_severity", "MINOR")).upper()
-    cap = params.get("severity_caps", {}).get(severity, 0)
-    if cap <= 0 or top.get("stain_damage_classification") == "NO_DAMAGE_DETECTED":
+    classification = str(top.get("stain_damage_classification", "OTHER")).upper()
+    cap = float(params.get("severity_caps", {}).get(severity, 0) or 0)
+    if cap <= 0 or classification == "NO_DAMAGE_DETECTED":
         return {
             "computable": True,
             "ruling_type": "REJECTED",
             "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
-            "reason": "No chargeable damage detected in verified photo evidence.",
+            "reason": "No chargeable damage detected in verified image evidence.",
             "confidence": 0.85,
         }
     return {
@@ -494,24 +509,246 @@ _COMPUTE_BY_DISPUTE_TYPE = {
 }
 
 
+def _compute_account_action(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute the score-free POL-10 account-action recommendation.
+
+    Account actions are based only on confirmed misconduct in the current case.
+    HistoricalProfile.bad_faith_flag may support the *repeated bad-faith* rule,
+    but no account penalty balance is stored, read, accumulated, or thresholded.
+    FraudAssessment/EscalationProtocol flags are suspicion indicators; a matching
+    verified Prosecutor fact is still required before an action is recommended.
+    """
+    policy = _load_policy()
+    params = policy.get("clauses", {}).get("POL-10", {}).get("params", {})
+    table = params.get("misconduct_action_table", {})
+    precedence = params.get(
+        "action_precedence",
+        ["ACCOUNT_BAN", "TEMPORARY_SUSPENSION", "WARNING_ISSUED", "NONE"],
+    )
+
+    bonus = context.get("bonus_modules", {}) or {}
+    fraud = bonus.get("fraud_assessment") or {}
+    analyses = bonus.get("image_exif_analyses", []) or []
+    escalation = bonus.get("escalation_protocol") or {}
+    data_sources = context.get("data_sources", {}) or {}
+    historical = data_sources.get("historical_profiles", []) or []
+    findings = context.get("prosecutor_findings", {}) or {}
+    verified_facts = findings.get("verified_facts", []) or []
+
+    def _party(value: Any) -> str:
+        return {"RIDER_ADVOCATE": "RIDER", "DRIVER_ADVOCATE": "DRIVER"}.get(
+            str(value or "").upper(), str(value or "").upper()
+        )
+
+    def _fact_text(fact: Dict[str, Any]) -> str:
+        return str(fact.get("description", "") or "").lower()
+
+    def _contains_any(text: str, terms: tuple) -> bool:
+        return any(term in text for term in terms)
+
+    explicit_target = _party(context.get("target_party"))
+    if explicit_target not in {"RIDER", "DRIVER"}:
+        explicit_target = _party(context.get("account_action_target"))
+    target = explicit_target if explicit_target in {"RIDER", "DRIVER"} else "NONE"
+
+    violations: List[str] = []
+
+    def _confirmed_violation(key: str, terms: tuple) -> None:
+        nonlocal target
+        matching = [f for f in verified_facts if _contains_any(_fact_text(f), terms)]
+        if not matching:
+            return
+
+        parties = {
+            _party(f.get("party_relevance"))
+            for f in matching
+            if _party(f.get("party_relevance")) in {"RIDER", "DRIVER", "BOTH"}
+        }
+        attributed = target
+        if attributed not in {"RIDER", "DRIVER"} and len(parties) == 1:
+            only = next(iter(parties))
+            if only in {"RIDER", "DRIVER"}:
+                attributed = only
+        # BOTH is not sufficient to attribute an account action to one account.
+        if attributed not in {"RIDER", "DRIVER"}:
+            return
+        target = attributed
+        if key not in violations:
+            violations.append(key)
+
+    # A confirmed Prosecutor fact is the trigger. FraudAssessment is advisory
+    # context only and must never be required for a confirmed fact to trigger POL-10.
+    if verified_facts:
+        # POL-10 specifically requires a prior verified bad-faith finding for
+        # the repeated-pattern action. First identify the current-case target,
+        # then check that same party's HistoricalProfile.bad_faith_flag.
+        current_bad_faith_facts = [
+            f for f in verified_facts
+            if _contains_any(_fact_text(f), ("bad-faith", "bad faith", "repeated fake", "abuse pattern"))
+        ]
+        candidate_parties = {
+            _party(f.get("party_relevance"))
+            for f in current_bad_faith_facts
+            if _party(f.get("party_relevance")) in {"RIDER", "DRIVER"}
+        }
+        if target not in {"RIDER", "DRIVER"} and len(candidate_parties) == 1:
+            target = next(iter(candidate_parties))
+
+        prior_bad_faith = any(
+            isinstance(profile, dict)
+            and _party(profile.get("party")) == target
+            and profile.get("bad_faith_flag") is True
+            for profile in historical
+        )
+        if prior_bad_faith:
+            _confirmed_violation(
+                "REPEATED_BAD_FAITH_PATTERN",
+                ("bad-faith", "bad faith", "repeated fake", "abuse pattern"),
+            )
+
+    # Collusion is triggered by a verified Prosecutor fact, not merely by the
+    # FraudAssessment collusion_warning_flag.
+    _confirmed_violation(
+            "COLLUSION_CONFIRMED",
+            ("collusion", "coordinated manipulation", "coordinated fraud"),
+    )
+
+    fabricated_evidence_present = any(
+        a.get("is_ai_generated") is True or a.get("recycled_image_detected") is True
+        for a in analyses
+    )
+    if fabricated_evidence_present or any(
+        _contains_any(_fact_text(f), ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image"))
+        for f in verified_facts
+    ):
+        _confirmed_violation(
+            "FABRICATED_EVIDENCE_CONFIRMED",
+            ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image"),
+        )
+
+    # Safety severity is determined from the verified fact because
+    # EscalationProtocol does not define a severity field.
+    if any(
+        _contains_any(_fact_text(f), ("severe safety", "severe threat", "serious threat", "violence", "violent", "moderate safety", "moderate threat"))
+        for f in verified_facts
+    ) or escalation.get("safety_threat_detected"):
+        severe_terms = ("severe safety", "severe threat", "serious threat", "violence", "violent")
+        moderate_terms = ("moderate safety", "moderate threat")
+        if any(_contains_any(_fact_text(f), severe_terms) for f in verified_facts):
+            _confirmed_violation("SAFETY_VIOLATION_CONFIRMED_SEVERE", severe_terms)
+        elif any(_contains_any(_fact_text(f), moderate_terms) for f in verified_facts):
+            _confirmed_violation("SAFETY_VIOLATION_CONFIRMED_MODERATE", moderate_terms)
+
+    if not violations:
+        return {
+            "computable": True,
+            "account_action": "NONE",
+            "target": target,
+            "violations": [],
+            "reason": "No POL-10 misconduct is both verified and attributable to a specific account.",
+        }
+
+    actions = [table.get(v, {}).get("account_action", "NONE") for v in violations]
+    action_rank = {action: i for i, action in enumerate(precedence)}
+    account_action = max(actions, key=lambda action: action_rank.get(action, len(precedence)))
+
+    return {
+        "computable": True,
+        "account_action": account_action,
+        "target": target,
+        "violations": violations,
+        "reason": (
+            f"POL-10 confirmed misconduct: {', '.join(violations)}; "
+            f"case-level account action recommendation is {account_action} for {target}."
+        ),
+    }
+
+
+def compute_account_action(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Backward-compatible public wrapper for the POL-10 deterministic check."""
+    policy = _load_policy()
+    clause = policy.get("clauses", {}).get("POL-10", {})
+    return _compute_account_action(clause, context)
+
+
 def compute_policy_values(dispute_type: str, context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Ground-truth computation against ryde_policy_v1.json's params for the
-    operative clause of this dispute_type. Returns at minimum
-    {"computable": bool}; when computable, also ruling_type, action,
-    reason, confidence, and clause_id (the operative clause this
-    computation is grounded in, for citation).
+    Run all deterministic policy checks needed for a policy consultation.
+
+    Account actions are POL-10 checks and are independent of dispute type.
+    Therefore _compute_account_action() is evaluated on every call, using the
+    current Prosecutor verified_facts. The dispute-specific computation is then
+    evaluated through _COMPUTE_BY_DISPUTE_TYPE as before.
+
+    Return shape:
+      {
+        "computable": bool,
+        "clause_id": <dispute computation clause or None>,
+        "ruling_type": ... (when a dispute computation exists),
+        "action": ... (when a dispute computation exists),
+        "account_action": {
+            "computable": bool,
+            "account_action": "NONE" | "WARNING_ISSUED" |
+                              "TEMPORARY_SUSPENSION" | "ACCOUNT_BAN",
+            "target": "RIDER" | "DRIVER" | "NONE",
+            "violations": [...]
+        }
+      }
+
+    The nested account_action object is always present so downstream callers
+    do not need to infer whether POL-10 was evaluated. A confirmed misconduct
+    finding can therefore produce an account-action recommendation even when
+    dispute_type has no entry in _COMPUTE_BY_DISPUTE_TYPE.
     """
+    # POL-10 is case-level and must be checked regardless of dispute type.
+    policy = _load_policy()
+    account_clause = policy.get("clauses", {}).get("POL-10", {})
+    try:
+        account_result = _compute_account_action(context)
+    except Exception as exc:
+        # Keep the policy consultation alive, but never silently manufacture
+        # an account action when the misconduct computation fails.
+        account_result = {
+            "computable": False,
+            "account_action": "NONE",
+            "target": "NONE",
+            "violations": [],
+            "reason": f"POL-10 computation error: {exc}",
+        }
+
     entry = _COMPUTE_BY_DISPUTE_TYPE.get(dispute_type)
     if entry is None:
-        return {"computable": False, "reason": f"no computation rule for dispute_type '{dispute_type}'"}
+        return {
+            "computable": False,
+            "clause_id": None,
+            "reason": f"no computation rule for dispute_type '{dispute_type}'",
+            "account_action": account_result,
+        }
+
     clause_id, fn = entry
-    clause = _load_policy()["clauses"].get(clause_id, {})
+    clause = policy.get("clauses", {}).get(clause_id, {})
     try:
         result = fn(clause, context)
     except Exception as exc:  # never let a malformed context crash POLICY_CONSULTATION
-        return {"computable": False, "reason": f"computation error: {exc}"}
+        return {
+            "computable": False,
+            "clause_id": clause_id,
+            "reason": f"computation error: {exc}",
+            "account_action": account_result,
+        }
+
     result["clause_id"] = clause_id
+    result["account_action"] = account_result
+
+    # Keep the canonical RecommendedAction-compatible shape used by the
+    # policy consultant. POL-10 is an additional case-level recommendation,
+    # not a penalty-point calculation. Do not add/remove penalty scores here.
+    action = result.get("action")
+    if isinstance(action, dict):
+        action["account_action"] = account_result.get("account_action", "NONE")
+        action["penalty_target"] = account_result.get("target", "NONE")
+        result["action"] = action
+
     return result
 
 

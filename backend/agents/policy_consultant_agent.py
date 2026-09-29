@@ -120,21 +120,80 @@ def _vote_from_precedents(precedents: List[Dict[str, Any]]) -> Tuple[str, Dict[s
     return winner, action, confidence
 
 
+def _merge_account_action(
+    action: Dict[str, Any], computed: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Merge the independent POL-10 account-action result into the action.
+
+    POL-10 is evaluated by precedent_store.compute_policy_values() on every
+    consultation, independently of the dispute-type computation.  It must
+    therefore survive both computable and inconclusive POL-2/3/4/5 results.
+
+    No penalty-point balance or accumulation is introduced here.
+    """
+    merged = dict(action or _DEFAULT_ACTION)
+    merged.setdefault("refund_amount", 0)
+    merged.setdefault("currency", "SGD")
+
+    account_result = computed.get("account_action") or {}
+    if isinstance(account_result, dict):
+        account_action = account_result.get("account_action", "NONE")
+        target = account_result.get("target", "NONE")
+        if account_action and account_action != "NONE":
+            merged["account_action"] = account_action
+            merged["penalty_target"] = target or "NONE"
+        else:
+            merged.setdefault("account_action", "NONE")
+            merged.setdefault("penalty_target", target or "NONE")
+
+    # compute_policy_values() may already have put these fields directly into
+    # the authoritative action. Preserve them if present.
+    computed_action = computed.get("action") or {}
+    if isinstance(computed_action, dict):
+        if "account_action" in computed_action:
+            merged["account_action"] = computed_action["account_action"]
+        if "penalty_target" in computed_action:
+            merged["penalty_target"] = computed_action["penalty_target"]
+
+    return merged
+
+
 def _derive_suggestion(
     computed: Dict[str, Any], precedent_records: List[Dict[str, Any]]
 ) -> Tuple[str, Dict[str, Any], float, str]:
+    """Return the ruling/action while keeping POL-10 independent.
+
+    POL-2/3/4/5 remain authoritative whenever their deterministic
+    computation is conclusive.  If they are inconclusive, precedent voting
+    supplies the dispute ruling, but a confirmed POL-10 account action is
+    still carried into the returned action and is never replaced by a
+    precedent.
     """
-    Returns (ruling_type, action, confidence, basis) where basis is
-    "POLICY_CLAUSE" or "PRECEDENT_ONLY" — used by the rationale builders to
-    explain which source actually drove the suggestion.
-    """
+    account_result = computed.get("account_action") or {}
+    has_confirmed_account_action = (
+        isinstance(account_result, dict)
+        and account_result.get("account_action", "NONE") != "NONE"
+    )
+
     if computed.get("computable"):
-        action = dict(computed.get("action", _DEFAULT_ACTION))
-        action.setdefault("refund_amount", 0)
-        action.setdefault("currency", "SGD")
-        return computed["ruling_type"], action, computed.get("confidence", 0.75), "POLICY_CLAUSE"
+        action = _merge_account_action(
+            dict(computed.get("action", _DEFAULT_ACTION)), computed
+        )
+        return (
+            computed.get("ruling_type", "ESCALATED"),
+            action,
+            computed.get("confidence", 0.75),
+            "POLICY_CLAUSE",
+        )
 
     ruling_type, action, confidence = _vote_from_precedents(precedent_records)
+    action = _merge_account_action(action, computed)
+
+    # A verified POL-10 misconduct finding is independent of the dispute
+    # ruling. Keep the precedent fallback basis for the financial/dispute
+    # ruling, while preserving the account action for the Judge.
+    if has_confirmed_account_action:
+        return ruling_type, action, confidence, "PRECEDENT_ONLY_WITH_ACCOUNT_ACTION"
     return ruling_type, action, confidence, "PRECEDENT_ONLY"
 
 
@@ -154,6 +213,10 @@ def _deterministic_rationale(
     basis: str,
 ) -> str:
     clause_titles = ", ".join(f"{c['clause_id']} ({c['clause_title']})" for c in applicable_clauses)
+    account_result = computed.get("account_action") or {}
+    account_action = account_result.get("account_action", "NONE") if isinstance(account_result, dict) else "NONE"
+    account_target = account_result.get("target", "NONE") if isinstance(account_result, dict) else "NONE"
+
     if basis == "POLICY_CLAUSE":
         grounding = (
             f"Grounded directly in {computed.get('clause_id')}: {computed.get('reason', '')}"
@@ -161,8 +224,14 @@ def _deterministic_rationale(
     else:
         grounding = (
             f"Policy computation was inconclusive ({computed.get('reason', 'insufficient data')}), "
-            "so this suggestion falls back to matched precedent(s) and carries reduced confidence, "
+            "so the dispute ruling falls back to matched precedent(s) and carries reduced confidence, "
             "consistent with POL-8 (a precedent can never override a policy clause)."
+        )
+
+    if account_action != "NONE":
+        grounding += (
+            f" Independently, POL-10 identified confirmed misconduct and recommends "
+            f"{account_action} for {account_target}."
         )
 
     if precedent_records:
@@ -195,11 +264,12 @@ async def _llm_rationale(
     fallback: str,
 ) -> str:
     """
-    RAG synthesis step: Claude receives retrieved policy clauses and approved
-    precedents plus the deterministic policy result, then writes the rationale.
-    It may synthesize/explain the supplied evidence but cannot invent facts,
-    clauses, numbers, or override the deterministic policy result. Falls back
-    to a deterministic grounded rationale on any error.
+    Ask Claude to narrate the already-derived suggestion in plain language.
+    The LLM only explains what _derive_suggestion already decided — given
+    clause/precedent text and the winning ruling/action, and told not to
+    introduce new facts, clauses, or numbers. Falls back to `fallback` on
+    any error, missing API key, or timeout, so this step can never break
+    the POLICY_CONSULTATION phase.
     """
     if _anthropic_client is None:
         return fallback
@@ -215,18 +285,28 @@ async def _llm_rationale(
         )
         or "None found."
     )
+    account_result = computed.get("account_action") or {}
+    account_action = account_result.get("account_action", "NONE") if isinstance(account_result, dict) else "NONE"
+    account_target = account_result.get("target", "NONE") if isinstance(account_result, dict) else "NONE"
+
     basis_note = (
         f"This suggestion is grounded directly in clause {computed.get('clause_id')} "
         f"({computed.get('reason', '')})."
         if basis == "POLICY_CLAUSE"
         else "Policy computation could not reach a conclusion from available case data, "
-        "so this suggestion leans on precedent only and should be presented as lower-confidence."
+        "so the dispute ruling leans on precedent only and should be presented as lower-confidence."
     )
+    if account_action != "NONE":
+        basis_note += (
+            f" Separately, POL-10 produced the account action {account_action} "
+            f"for target {account_target}; this result is deterministic and must not be "
+            f"replaced by precedent voting."
+        )
 
     prompt = (
-        "You are the synthesis step of a retrieval-augmented PolicyAgent in the Ryde dispute-resolution pipeline. "
-        "Use the retrieved policy clauses and approved precedents as grounding context and write a short "
-        "(2-4 sentence) rationale explaining the supplied suggested ruling and action. Use ONLY the facts, "
+        "You are PolicyAgent's narration step in the Ryde dispute-resolution pipeline. "
+        "Write a short (2-4 sentence) rationale explaining why the applicable clauses and "
+        "precedents below support the suggested ruling and action. Use ONLY the facts, "
         "clauses, and precedents given here — do not invent new clause numbers, dollar "
         "amounts, or facts. If a precedent is marked HUMAN_OVERRIDE, you may note that it "
         "reflects a prior human-corrected outcome. Output only the rationale text, no preamble.\n\n"
@@ -238,6 +318,8 @@ async def _llm_rationale(
         f"{basis_note}\n"
         f"Suggested ruling: {suggested_ruling_type}\n"
         f"Suggested action: {suggested_action}\n"
+        "POL-10 account actions are case-level, score-free actions. Do not invent "
+        "penalty-point balances, thresholds, or accumulated scores.\n"
     )
 
     try:
@@ -373,46 +455,3 @@ def learn_from_human_override(
         keywords=keywords,
         trigger=trigger,
     )
-
-
-# ----------------------------------------------------------------------
-# Local smoke test
-# ----------------------------------------------------------------------
-
-if __name__ == "__main__":
-    _now_iso = datetime.now(_SGT).isoformat()
-    _sample_context = {
-        "case_metadata": {"dispute_type": "ROUTE_DEVIATION"},
-        "data_sources": {
-            "gps_telemetry": {
-                "actual_route": [{"latitude": 1.30, "longitude": 103.80, "timestamp": _now_iso}],
-                "optimal_route": [{"latitude": 1.30, "longitude": 103.80, "timestamp": _now_iso}],
-                "deviation_distance_km": 2.1,
-                "trip_duration_seconds": 1800,
-                "optimal_duration_seconds": 1200,
-                "unexpected_stops": [],
-            },
-            "payment_fare_data": {
-                "original_fare": {"base_fare": 3.0, "distance_fare": 8.0, "time_fare": 2.0, "total_fare": 13.0, "currency": "SGD"},
-                "disputed_amount": 2.0,
-                "disputed_amount_currency": "SGD",
-            },
-        },
-        "prosecutor_findings": {
-            "verified_facts": [{"fact_id": "F-VER-001", "description": "2km unexplained detour with no logged reason."}],
-            "disputed_facts": [],
-            "missing_facts": [],
-            "prosecutor_summary": "Driver took a 2.1km detour with no valid reason recorded.",
-            "report_submitted_at": datetime.now(_SGT).isoformat(),
-        },
-        "bonus_modules": {"image_exif_analyses": [], "fraud_assessment": {}, "escalation_protocol": {}},
-        "policy_consultation": {},
-    }
-
-    async def _main() -> None:
-        result = await run_policy_consultation(_sample_context)
-        import json
-
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-
-    asyncio.run(_main())
