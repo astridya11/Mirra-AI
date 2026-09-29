@@ -1271,6 +1271,10 @@
           "type": "boolean",
           "description": "Informational flag indicating that crucial evidence is missing (mirrors ProsecutorReport.missing_facts). Not an independent escalation trigger: missing crucial evidence lowers confidence_score, which escalates the case through the confidence threshold.",
           "default": false
+        },
+        "party_requested_human": {
+          "type": "boolean",
+          "description": "Whether the party has requested human review after receiving the automated decision."
         }
       },
       "additionalProperties": false

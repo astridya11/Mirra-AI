@@ -53,20 +53,22 @@
              +-----------------+                +-----------------+
              |                                                    |
              v                                                    v
-+--------------------------+                        +---------------------------+
-| Path A: FULLY_AUTOMATED  |                        | Path B: HUMAN_ESCALATION  |
-| (High Confidence / Standard)|                      | (Safety/Fraud/Low Conf.)  |
-| -> Instant API Refund    |                        | -> Human 1-Click Dashboard|
-+--------------------------+                        +-------------+-------------+
-                                                                    |
-                                                    Human decision differs
-                                                    from Judge's ruling?
-                                                                    |
-                                                                    v
-                                                    +---------------------------+
-                                                    |   PolicyConsultantAgent Knowledge   |
-                                                    |   Base Update (Feedback)  |
-                                                    +---------------------------+
++-----------------------------+                        +--------------------------------------------------+
+| Path A: FULLY_AUTOMATED     |                        | Path B: HUMAN_ESCALATION                         |
+| (High Confidence / Standard)|                        | (Safety/Fraud/Low Conf./                         |
+|                             |                        |   Missing crucial evidence/Exceed amt. threshold/|
+|                             |                        |   Acc related penalty/Human requested)           |
+| -> Instant API Refund       |                        | -> Human 1-Click Dashboard                       |
++-----------------------------+                        +-------------------------+------------------------+
+                                                                                 |
+                                                                  Human decision differs
+                                                                  from Judge's ruling?
+                                                                                 |
+                                                                                 v
+                                                                  +---------------------------+
+                                                                  |   PolicyConsultantAgent Knowledge   |
+                                                                  |   Base Update (Feedback)  |
+                                                                  +---------------------------+
 ```
 
 ### Agent Roles & Responsibilities

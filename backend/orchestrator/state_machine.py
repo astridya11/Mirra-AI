@@ -791,17 +791,32 @@ class PipelineEngine:
         if fraud_risk_level == "HIGH":
             reasons.append("深度调查组件标记为高欺诈风险")
 
-        # 4. Safety keyword scan in chat transcript
-        # chat_data = self.ctx.data_sources.get("chat_communication", {})
-        # transcript = chat_data.get("transcript", [])
-        # chat_text = " ".join(
-        #     [m.get("content", "") for m in transcript]
-        # ).lower()
-        # safety_detected = any(
-        #     keyword in chat_text for keyword in SAFETY_KEYWORDS
-        # )
-        # if safety_detected:
-        #     reasons.append("对话记录中触发安全风险关键词，需要人工安全合规审核")
+        # 4. Missing crucial evidence
+        missing_crucial_evidence = escalation_proto.get("missing_crucial_evidence", False)
+        if missing_crucial_evidence:
+            reasons.append("缺少关键证据")
+
+        # 5. Amount threshold check, if > 20, escalate to human review. if > 50, escalate to human review and mark as HIGH_PRIORITY
+        AMOUNT_THRESHOLD = 20
+        HIGH_PRIORITY_THRESHOLD = 50
+        recommended_action = verdict.get("recommended_action", {})
+        refund_amount = recommended_action.get("refund_amount", 0)
+        cleaning_fee_amount = recommended_action.get("cleaning_fee_amount", 0)
+        if refund_amount > AMOUNT_THRESHOLD or cleaning_fee_amount > AMOUNT_THRESHOLD:
+            reasons.append("金额超过自动执行阈值，需要人工审核")
+        if refund_amount > HIGH_PRIORITY_THRESHOLD or cleaning_fee_amount > HIGH_PRIORITY_THRESHOLD:
+            reasons.append(f"金额超过高优先级阈值 ({HIGH_PRIORITY_THRESHOLD})")
+
+        # 6. If the recommended action is to suspend or ban the account / add penalty points, escalate to human review
+        account_action = recommended_action.get("account_action", "NONE")
+        penalty_points = recommended_action.get("penalty_points", 0)
+        if account_action != "NONE" or penalty_points > 0:
+            reasons.append("建议采取账户冻结、扣分等惩罚措施，需人工审核")
+
+        # 7. If the party has requested human review
+        party_requested_human = escalation_proto.get("party_requested_human", False)
+        if party_requested_human:
+            reasons.append("当事人不满意自动决策，请求人工审核")
 
         is_escalated = len(reasons) > 0
         route = (

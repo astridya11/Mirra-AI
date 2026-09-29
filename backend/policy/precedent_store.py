@@ -161,7 +161,7 @@ def _compute_route_deviation(clause: Dict[str, Any], context: Dict[str, Any]) ->
     gps = ds.get("gps_telemetry") or {}
     fare = (ds.get("payment_fare_data") or {}).get("original_fare") or {}
 
-    if "deviation_distance_km" not in gps:
+    if not gps or "deviation_distance_km" not in gps:
         return {"computable": False, "reason": "gps_telemetry.deviation_distance_km not available"}
 
     deviation_km = gps.get("deviation_distance_km")
@@ -293,12 +293,16 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
 
     radius_m = params.get("arrival_radius_m", 50)
     route = gps.get("actual_route", []) or []
-    window_points = []
-    for p in route:
-        t = _parse_dt(p.get("timestamp"))
-        if t and arrival_t <= t <= cancel_t and all(k in p for k in ("latitude", "longitude")):
-            window_points.append((t, p))
     conditions: Dict[str, Optional[bool]] = {}
+
+    # (a) driver within arrival radius at arrival time, and
+    # (b) stayed within radius until cancellation (checked over the same window)
+    window_points = [
+        (t, p) for p in route
+        if (t := _parse_dt(p.get("timestamp"))) 
+        and arrival_t <= t <= cancel_t 
+        and all(k in p for k in ("latitude", "longitude"))
+    ]
     if window_points:
         window_points.sort(key=lambda x: x[0])
         distances = [_haversine_m(p["latitude"], p["longitude"], pickup["lat"], pickup["lng"]) for _, p in window_points]
@@ -308,6 +312,7 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
         conditions["DRIVER_WITHIN_ARRIVAL_RADIUS"] = None
         conditions["DRIVER_STATIONARY_UNTIL_CANCELLATION"] = None
 
+    # (c) rider notified of arrival — heuristic: matching app_event
     app_events = ds.get("app_events", []) or []
     arrival_events = []
     for e in app_events:
@@ -317,6 +322,8 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
             arrival_events.append(e)
     conditions["RIDER_NOTIFIED_OF_ARRIVAL"] = bool(arrival_events) or None
 
+
+    # (d) driver made contact attempt — heuristic: driver chat message or a "call"/"contact" app_event before cancellation
     chat = ((ds.get("chat_communication") or {}).get("transcript", []) or [])
     driver_messages = []
     for m in chat:
@@ -331,6 +338,7 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
             contact_events.append(e)
     conditions["DRIVER_CONTACT_ATTEMPTED"] = bool(driver_messages or contact_events) or None
 
+    # (e) cancelled at/after the no-show threshold
     threshold_min = params.get("no_show_threshold_min", 8)
     elapsed_min = (cancel_t - arrival_t).total_seconds() / 60
     conditions["CANCELLED_AT_OR_AFTER_THRESHOLD"] = elapsed_min >= threshold_min
