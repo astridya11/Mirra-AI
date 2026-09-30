@@ -651,32 +651,13 @@ class PipelineEngine:
             "requested_at": now,
         }
 
-        # Try to use a full policy_consultant_agent if it exists.
-        # Otherwise, use the deterministic policy_agent helpers.
-        try:
-            run_policy_consultation = _lazy_import(
-                "backend.agents.policy_consultant_agent",
-                "run_policy_consultation",
-            )
-            suggestion = await run_policy_consultation(
-                self.ctx.to_context_dict()
-            )
-
-            suggestion.setdefault(
-                "request_id",
-                request["request_id"],
-            )
-
-            self.ctx.policy_consultation = {
-                "request": request,
-                "suggestion": suggestion,
-            }
-        except ImportError:
-            # Deterministic fallback: build PolicySuggestion from
-            # policy_agent helpers.
-            suggestion = self._build_policy_suggestion(
-                dispute_type, request, now
-            )
+        run_policy_consultation = _lazy_import(
+            "backend.agents.policy_consultant_agent",
+            "run_policy_consultation",
+        )
+        suggestion = await run_policy_consultation(
+            self.ctx.to_context_dict()
+        )
 
         # Assemble policy_consultation (schema: PolicyConsultation)
         self.ctx.policy_consultation = {
@@ -859,46 +840,6 @@ class PipelineEngine:
             "escalation_reasons": reasons,
             "requires_human_signoff": is_escalated,
             "execution_payload": execution_payload,
-        }
-
-    # -- Policy suggestion fallback ----------------------------------------
-
-    def _build_policy_suggestion(
-        self,
-        dispute_type: str,
-        request: Dict[str, Any],
-        now: str,
-    ) -> Dict[str, Any]:
-        """Fallback policy builder."""
-        context = self.ctx.to_context_dict()
-        clauses = precedent_store.retrieve_clauses(dispute_type)
-        policy_values = precedent_store.compute_policy_values(dispute_type, context)
-        version = precedent_store.policy_version()
-        keywords = precedent_store.extract_keywords(
-            f"{request.get('prosecutor_summary', '')} "
-            f"{' '.join(f.get('description', '') for f in self.ctx.prosecutor_findings.get('verified_facts', []))}"
-        )
-
-        applicable_clauses = [
-            precedent_store.clause_reference(clause, keywords)
-            for clause in clauses
-        ]
-        suggested_action = _build_suggested_action(dispute_type, policy_values)
-        suggested_ruling = _suggest_ruling(dispute_type, policy_values)
-
-        return {
-            "suggestion_id": f"PSG-{uuid.uuid4().hex[:8].upper()}",
-            "applicable_clauses": applicable_clauses,
-            "matched_precedents": [],
-            "suggested_ruling_type": suggested_ruling,
-            "suggested_recommended_action": suggested_action,
-            "policy_confidence": policy_values.get("confidence", 0.3),
-            "rationale": (
-                f"Policy version {version}. Clauses retrieved: "
-                f"{', '.join(c.get('id', '') for c in clauses)}. "
-                f"Policy values: {policy_values}"
-            ),
-            "suggested_at": now,
         }
 
     # -- Real-Time Pipeline Executor ---------------------------------------
