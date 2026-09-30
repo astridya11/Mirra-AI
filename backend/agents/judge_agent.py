@@ -328,8 +328,10 @@ def _post_process(
     confidence_score = min(llm_confidence, rule_confidence, policy_confidence)
 
     # --- 5. Confidence caps ---
-    suggested_ruling_type = suggestion.get("suggested_ruling_type", "")
-    if ruling != suggested_ruling_type:
+    # The judge agrees with the suggestion when the final action_type equals
+    # the suggestion's suggested_recommended_action.action_type. Only cap at
+    # 0.70 when the action types differ.
+    if action_type != suggested_action_type:
         confidence_score = min(confidence_score, 0.70)
     if ruling == "ESCALATED":
         confidence_score = min(confidence_score, 0.50)

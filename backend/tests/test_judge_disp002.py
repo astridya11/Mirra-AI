@@ -564,6 +564,105 @@ async def _run_test5(mock: bool = False) -> None:
         print("  - penalty_points == 0")
 
 
+# --- Test 6: different ruling, same action type — no disagreement cap --------
+
+
+async def _run_test6(mock: bool = False) -> None:
+    """Test 6: suggestion ruling APPROVED + action PARTIAL_REFUND 3.25,
+    mock LLM ruling PARTIAL_REFUND + action PARTIAL_REFUND.
+
+    The action types match, so the judge agrees with the suggestion and the
+    confidence is NOT capped at 0.70. With a mock LLM confidence of 0.9 and
+    a suggestion policy_confidence of 0.85, the result should be 0.85 minus
+    the rule deductions (i.e. above 0.70).
+    """
+    context = _build_context()
+
+    # Override the suggestion: APPROVED + PARTIAL_REFUND 3.25.
+    context["policy_consultation"] = {
+        "suggestion": {
+            "suggestion_id": "SUG-DISP-002-006",
+            "request_id": "REQ-DISP-002-001",
+            "applicable_clauses": [
+                {
+                    "clause_id": "POL-3",
+                    "clause_title": "No-Show Cancellation Charge",
+                    "clause_text_summary": "If a driver arrives and waits for the full no-show threshold while the rider does not board, a cancellation fee may be charged.",
+                    "relevance_summary": "All five no-show conditions verified."
+                }
+            ],
+            "matched_precedents": [],
+            "suggested_ruling_type": "APPROVED",
+            "suggested_recommended_action": {
+                "action_type": "PARTIAL_REFUND",
+                "refund_amount": 3.25,
+                "currency": "SGD",
+                "account_action": "NONE",
+                "penalty_target": "NONE",
+            },
+            "policy_confidence": 0.85,
+            "rationale": "Driver waited the full no-show threshold per POL-3.",
+            "suggested_at": "2026-09-13T09:19:00+08:00"
+        }
+    }
+
+    # Mock LLM: ruling PARTIAL_REFUND, action PARTIAL_REFUND (same as suggestion),
+    # confidence 0.9.
+    mock_response = copy.deepcopy(_MOCK_LLM_RESPONSE)
+    mock_response["ruling_type"] = "PARTIAL_REFUND"
+    mock_response["confidence_score"] = 0.9
+    mock_response["recommended_action"]["action_type"] = "PARTIAL_REFUND"
+    mock_response["recommended_action"]["refund_amount"] = 3.25
+
+    if mock:
+        original = judge_agent.call_llm_json
+
+        async def _mock_llm_same_action(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+            return mock_response
+
+        judge_agent.call_llm_json = _mock_llm_same_action
+        print("[MOCK MODE] Using fake LLM response for test 6\n")
+    else:
+        original = None
+
+    try:
+        verdict = await run_judge(context)
+    finally:
+        if original is not None:
+            judge_agent.call_llm_json = original
+
+    print("=" * 60)
+    print("TEST 6 — DIFFERENT RULING, SAME ACTION TYPE (NO CAP)")
+    print("=" * 60)
+    print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    print("=" * 60)
+
+    confidence = verdict.get("confidence_score", 1.0)
+    action = verdict.get("recommended_action", {})
+    action_type = action.get("action_type", "")
+
+    errors: list[str] = []
+
+    if action_type != "PARTIAL_REFUND":
+        errors.append(f"Expected action_type == PARTIAL_REFUND, got {action_type}")
+
+    if confidence <= 0.70:
+        errors.append(
+            f"Expected confidence_score > 0.70 (action types match, no cap), "
+            f"got {confidence}"
+        )
+
+    if errors:
+        print("\nTEST 6 RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 6 RESULT: PASS")
+        print(f"  - action_type == PARTIAL_REFUND (matches suggestion)")
+        print(f"  - confidence_score == {confidence} (> 0.70, not capped)")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -577,6 +676,8 @@ async def _run_all_tests(mock: bool = False) -> None:
     await _run_test4(mock=mock)
     print()
     await _run_test5(mock=mock)
+    print()
+    await _run_test6(mock=mock)
     print()
     print("=" * 60)
     print("ALL TESTS PASSED")
