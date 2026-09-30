@@ -381,6 +381,189 @@ async def _run_test4(mock: bool = False) -> None:
         print(f"  - confidence_score == {confidence} (<= 0.50)")
 
 
+# --- Test 5: account actions come from the policy suggestion -------------------
+
+
+async def _run_test5(mock: bool = False) -> None:
+    """Test 5: account_action / penalty_target / penalty_points always come
+    from the policy suggestion, never from the LLM.
+
+    (a) Mock LLM returns account_action "ACCOUNT_BAN" while the suggestion
+        has "NONE" → verdict must have "NONE".
+    (b) Suggestion has account_action "WARNING_ISSUED", penalty_target
+        "DRIVER" → verdict copies both; penalty_points is 0 in both.
+    """
+    context = _build_context()
+
+    # --- Case (a): LLM tries to set ACCOUNT_BAN; suggestion says NONE ---
+    context["policy_consultation"] = {
+        "suggestion": {
+            "suggestion_id": "SUG-DISP-002-005a",
+            "request_id": "REQ-DISP-002-001",
+            "applicable_clauses": [
+                {
+                    "clause_id": "POL-3",
+                    "clause_title": "No-Show Cancellation Charge",
+                    "clause_text_summary": "If a driver arrives and waits for the full no-show threshold while the rider does not board, a cancellation fee may be charged.",
+                    "relevance_summary": "All five no-show conditions verified."
+                }
+            ],
+            "matched_precedents": [],
+            "suggested_ruling_type": "REJECTED",
+            "suggested_recommended_action": {
+                "action_type": "NO_REFUND",
+                "refund_amount": 0,
+                "currency": "SGD",
+                "account_action": "NONE",
+                "penalty_target": "NONE",
+            },
+            "policy_confidence": 0.9,
+            "rationale": "Driver waited the full no-show threshold per POL-3.",
+            "suggested_at": "2026-09-13T09:19:00+08:00"
+        }
+    }
+
+    mock_response_a = copy.deepcopy(_MOCK_LLM_RESPONSE)
+    mock_response_a["recommended_action"]["account_action"] = "ACCOUNT_BAN"
+    mock_response_a["recommended_action"]["penalty_target"] = "DRIVER"
+    mock_response_a["recommended_action"]["penalty_points"] = 10
+
+    if mock:
+        original = judge_agent.call_llm_json
+
+        async def _mock_llm_account_ban(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+            return mock_response_a
+
+        judge_agent.call_llm_json = _mock_llm_account_ban
+        print("[MOCK MODE] Using fake LLM response for test 5a\n")
+    else:
+        original = None
+
+    try:
+        verdict_a = await run_judge(context)
+    finally:
+        if original is not None:
+            judge_agent.call_llm_json = original
+
+    print("=" * 60)
+    print("TEST 5a — LLM tries ACCOUNT_BAN, suggestion says NONE")
+    print("=" * 60)
+    print(json.dumps(verdict_a, indent=2, ensure_ascii=False))
+    print("=" * 60)
+
+    action_a = verdict_a.get("recommended_action", {})
+
+    errors: list[str] = []
+
+    if action_a.get("account_action") != "NONE":
+        errors.append(
+            f"5a: Expected account_action == NONE, got {action_a.get('account_action')}"
+        )
+    if action_a.get("penalty_target") != "NONE":
+        errors.append(
+            f"5a: Expected penalty_target == NONE, got {action_a.get('penalty_target')}"
+        )
+    if action_a.get("penalty_points") != 0:
+        errors.append(
+            f"5a: Expected penalty_points == 0, got {action_a.get('penalty_points')}"
+        )
+
+    if errors:
+        print("\nTEST 5a RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 5a RESULT: PASS")
+        print("  - account_action == NONE (from suggestion, not LLM)")
+        print("  - penalty_target == NONE")
+        print("  - penalty_points == 0")
+
+    # --- Case (b): suggestion has WARNING_ISSUED + DRIVER ---
+    context_b = _build_context()
+    context_b["policy_consultation"] = {
+        "suggestion": {
+            "suggestion_id": "SUG-DISP-002-005b",
+            "request_id": "REQ-DISP-002-001",
+            "applicable_clauses": [
+                {
+                    "clause_id": "POL-3",
+                    "clause_title": "No-Show Cancellation Charge",
+                    "clause_text_summary": "If a driver arrives and waits for the full no-show threshold while the rider does not board, a cancellation fee may be charged.",
+                    "relevance_summary": "All five no-show conditions verified."
+                }
+            ],
+            "matched_precedents": [],
+            "suggested_ruling_type": "REJECTED",
+            "suggested_recommended_action": {
+                "action_type": "NO_REFUND",
+                "refund_amount": 0,
+                "currency": "SGD",
+                "account_action": "WARNING_ISSUED",
+                "penalty_target": "DRIVER",
+            },
+            "policy_confidence": 0.9,
+            "rationale": "Driver waited the full no-show threshold per POL-3.",
+            "suggested_at": "2026-09-13T09:19:00+08:00"
+        }
+    }
+
+    # LLM tries to override with different values.
+    mock_response_b = copy.deepcopy(_MOCK_LLM_RESPONSE)
+    mock_response_b["recommended_action"]["account_action"] = "ACCOUNT_BAN"
+    mock_response_b["recommended_action"]["penalty_target"] = "RIDER"
+    mock_response_b["recommended_action"]["penalty_points"] = 15
+
+    if mock:
+        original = judge_agent.call_llm_json
+
+        async def _mock_llm_warning(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+            return mock_response_b
+
+        judge_agent.call_llm_json = _mock_llm_warning
+        print("[MOCK MODE] Using fake LLM response for test 5b\n")
+    else:
+        original = None
+
+    try:
+        verdict_b = await run_judge(context_b)
+    finally:
+        if original is not None:
+            judge_agent.call_llm_json = original
+
+    print("=" * 60)
+    print("TEST 5b — suggestion has WARNING_ISSUED + DRIVER")
+    print("=" * 60)
+    print(json.dumps(verdict_b, indent=2, ensure_ascii=False))
+    print("=" * 60)
+
+    action_b = verdict_b.get("recommended_action", {})
+
+    if action_b.get("account_action") != "WARNING_ISSUED":
+        errors.append(
+            f"5b: Expected account_action == WARNING_ISSUED, got {action_b.get('account_action')}"
+        )
+    if action_b.get("penalty_target") != "DRIVER":
+        errors.append(
+            f"5b: Expected penalty_target == DRIVER, got {action_b.get('penalty_target')}"
+        )
+    if action_b.get("penalty_points") != 0:
+        errors.append(
+            f"5b: Expected penalty_points == 0, got {action_b.get('penalty_points')}"
+        )
+
+    if errors:
+        print("\nTEST 5b RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 5b RESULT: PASS")
+        print("  - account_action == WARNING_ISSUED (from suggestion)")
+        print("  - penalty_target == DRIVER (from suggestion)")
+        print("  - penalty_points == 0")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -392,6 +575,8 @@ async def _run_all_tests(mock: bool = False) -> None:
     await _run_test3(mock=mock)
     print()
     await _run_test4(mock=mock)
+    print()
+    await _run_test5(mock=mock)
     print()
     print("=" * 60)
     print("ALL TESTS PASSED")
