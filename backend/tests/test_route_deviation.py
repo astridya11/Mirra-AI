@@ -419,11 +419,11 @@ def test_malformed_route_values_never_crash():
 # DISP-002 (NO_SHOW_CHARGE) regression — must be unaffected by dispatch
 # ===========================================================================
 
-_EXPECTED_DISP002_VERIFIED_IDS = [f"F-VER-{i:03d}" for i in range(1, 8)]
-_EXPECTED_DISP002_MISSING_IDS = [f"F-MIS-{i:03d}" for i in range(1, 4)]
+_EXPECTED_DISP002_VERIFIED_IDS = [f"F-VER-{i:03d}" for i in range(1, 9)]
+_EXPECTED_DISP002_MISSING_IDS = [f"F-MIS-{i:03d}" for i in range(1, 3)]
 _EXPECTED_DISP002_SUMMARY = (
     "Prosecutor audit completed for no-show cancellation dispute. "
-    "7 of 9 evidentiary checks verified. 3 item(s) missing or unresolved."
+    "8 of 9 evidentiary checks verified. 2 item(s) missing or unresolved."
 )
 
 
@@ -436,7 +436,7 @@ def test_disp002_dispatch_uses_unchanged_no_show_checks():
 def test_disp002_verified_facts_unchanged(disp002_data):
     report = generate_prosecutor_report(disp002_data)
     assert [f["fact_id"] for f in report["verified_facts"]] == _EXPECTED_DISP002_VERIFIED_IDS
-    assert len(report["verified_facts"]) == 7
+    assert len(report["verified_facts"]) == 8
 
 
 # 32. disputed_facts equivalent
@@ -449,7 +449,7 @@ def test_disp002_disputed_facts_unchanged(disp002_data):
 def test_disp002_missing_facts_unchanged(disp002_data):
     report = generate_prosecutor_report(disp002_data)
     assert [f["fact_id"] for f in report["missing_facts"]] == _EXPECTED_DISP002_MISSING_IDS
-    assert len(report["missing_facts"]) == 3
+    assert len(report["missing_facts"]) == 2
 
 
 # 34. fact IDs equivalent (combined, exact set)
@@ -796,6 +796,16 @@ _EXPECTED_DISP002_VERIFIED_FACTS = [
         ],
         "confidence_level": 1.0,
     },
+    {
+        "fact_id": "F-VER-008",
+        "description": "Actual waiting duration (480s) meets or exceeds the no-show threshold (480s) per policy ryde_policy_v1.json POL-3 v1.",
+        "supporting_evidence": [
+            {"evidence_id": "TRIP-DATA", "source_type": "APP_EVENT", "description": "Waiting duration (2026-09-13T08:43:00+08:00 to 2026-09-13T08:51:00+08:00)"},
+        ],
+        "party_relevance": "NEUTRAL",
+        "policy_clause_reference": "ryde_policy_v1.json POL-3 v1",
+        "confidence_level": 1.0,
+    },
 ]
 
 _EXPECTED_DISP002_MISSING_FACTS = [
@@ -813,18 +823,6 @@ _EXPECTED_DISP002_MISSING_FACTS = [
     },
     {
         "fact_id": "F-MIS-002",
-        "description": (
-            "No authoritative policy parameters are available for dispute type 'NO_SHOW_CHARGE'; "
-            "policy eligibility cannot be assessed. Actual waiting duration was 480 seconds (8 minutes)."
-        ),
-        "supporting_evidence": [
-            {"evidence_id": "TRIP-DATA", "source_type": "APP_EVENT", "description": "Waiting duration (2026-09-13T08:43:00+08:00 to 2026-09-13T08:51:00+08:00)"},
-        ],
-        "party_relevance": "NEUTRAL",
-        "confidence_level": 1.0,
-    },
-    {
-        "fact_id": "F-MIS-003",
         "description": (
             "No rider communication or response is recorded in the evidence. "
             "The rider's perspective is absent from the case record."

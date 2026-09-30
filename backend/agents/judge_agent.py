@@ -74,6 +74,8 @@ RIGID RULES:
    recommended_action must have exactly these keys:
    action_type, refund_amount, cleaning_fee_amount, currency, \
    penalty_points, penalty_target, account_action.
+   account_action, penalty_target and penalty_points are set by the system \
+   from the policy suggestion; output NONE, NONE, 0.
 """
 
 
@@ -300,6 +302,13 @@ def _post_process(
         # Defer setting reasoning_summary until the verdict dict is built.
         raw["reasoning_summary"] = existing_reasoning + escalation_note
 
+    # --- 2c. Account actions come from the Policy Consultant, never the LLM ---
+    # POL-10 is computed by code; POL-1 forbids automatic account actions.
+    # An account action always goes to human review via the execution gate.
+    action["account_action"] = suggested_action.get("account_action", "NONE")
+    action["penalty_target"] = suggested_action.get("penalty_target", "NONE")
+    action["penalty_points"] = 0
+
     # --- 3. Keep only clauses and precedents from the suggestion ---
     raw_clauses = raw.get("policy_clauses_applied", [])
     filtered_clauses = [cid for cid in raw_clauses if cid in valid_clause_ids]
@@ -319,15 +328,19 @@ def _post_process(
     confidence_score = min(llm_confidence, rule_confidence, policy_confidence)
 
     # --- 5. Confidence caps ---
-    suggested_ruling_type = suggestion.get("suggested_ruling_type", "")
-    if ruling != suggested_ruling_type:
+    # The judge agrees with the suggestion when the final action_type equals
+    # the suggestion's suggested_recommended_action.action_type. Only cap at
+    # 0.70 when the action types differ.
+    if action_type != suggested_action_type:
         confidence_score = min(confidence_score, 0.70)
     if ruling == "ESCALATED":
         confidence_score = min(confidence_score, 0.50)
 
-    # --- 6. Penalty defaults (POL-1: judge never auto-applies penalties) ---
-    # Keep LLM-proposed penalty unchanged; execution gate will escalate.
-    # (Already set by _sanitize_action defaults if LLM didn't provide.)
+    # --- 6. Account-action / penalty handling ---
+    # account_action and penalty_target are copied from the policy suggestion
+    # (POL-10, computed by code); penalty_points is always 0 (penalty points
+    # were removed from the policy).
+    # (Already set in section 2c above, regardless of ruling.)
 
     # --- 7. Build final verdict ---
     now = datetime.now(_SGT).isoformat()

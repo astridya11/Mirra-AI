@@ -91,6 +91,12 @@ conclusion about who should win.
 10. Cite the relevant policy clause IDs (e.g. POL-2) in detailed_argument \
     when you rely on a rule. Only cite clause IDs listed in APPLICABLE \
     POLICY CLAUSES.
+11. Use only information in the case record. Do not add outside knowledge \
+    or guesses about places, buildings, companies or people, including \
+    hedged guesses with words like 'may have', 'likely' or 'probably' \
+    (for example, do not say a location may have several entrances or \
+    lobbies). If the record does not show something, say the record does \
+    not show it.
 
 ROUND 1 — Return JSON with exactly these keys:
   argument_summary, detailed_argument, requested_outcome, \
