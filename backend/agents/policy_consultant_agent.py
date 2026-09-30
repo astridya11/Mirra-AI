@@ -29,7 +29,7 @@ Design — grounded in ryde_policy_v1.json:
     on every future consultation for that pattern, and (2) can decide the
     suggestion outright on cases the deterministic policy math can't
     resolve — all without touching this file.
-  - An LLM (Claude, via the Anthropic SDK) is used only for the
+  - An LLM (DeepSeek, via backend/shared/llm_client.py) is used only for the
     natural-language `rationale` field, grounded strictly in the
     already-computed clauses/precedents/ruling. Optional: if no API key
     is configured, or the call fails or times out, a deterministic
@@ -41,13 +41,13 @@ $defs.PolicyClauseReference, $defs.PrecedentReference,
 $defs.RecommendedAction, $defs.PolicyKnowledgeBaseUpdate.
 """
 
-import asyncio
-import os
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.policy import precedent_store
+from backend.shared.llm_client import call_llm_json, LLMError
 
 # ----------------------------------------------------------------------
 # Constants
@@ -62,24 +62,6 @@ _DEFAULT_ACTION: Dict[str, Any] = {"action_type": "ESCALATED_NO_ACTION", "refund
 # grounded computation — consistent with POL-8's "a precedent can never
 # override a policy clause".
 _PRECEDENT_ONLY_CONFIDENCE_CAP = 0.6
-
-_LLM_TIMEOUT_SECONDS = 12
-_POLICY_MODEL = os.environ.get("POLICY_AGENT_MODEL", "claude-sonnet-5")
-
-# ----------------------------------------------------------------------
-# Optional LLM client (Claude via Anthropic SDK) — fails soft if absent
-# ----------------------------------------------------------------------
-
-try:
-    from anthropic import AsyncAnthropic  # type: ignore
-
-    _ANTHROPIC_SDK_AVAILABLE = True
-except ImportError:
-    _ANTHROPIC_SDK_AVAILABLE = False
-
-_anthropic_client: Optional["AsyncAnthropic"] = None
-if _ANTHROPIC_SDK_AVAILABLE and os.environ.get("ANTHROPIC_API_KEY"):
-    _anthropic_client = AsyncAnthropic()
 
 
 # ----------------------------------------------------------------------
@@ -264,16 +246,18 @@ async def _llm_rationale(
     fallback: str,
 ) -> str:
     """
-    Ask Claude to narrate the already-derived suggestion in plain language.
-    The LLM only explains what _derive_suggestion already decided — given
-    clause/precedent text and the winning ruling/action, and told not to
-    introduce new facts, clauses, or numbers. Falls back to `fallback` on
-    any error, missing API key, or timeout, so this step can never break
-    the POLICY_CONSULTATION phase.
-    """
-    if _anthropic_client is None:
-        return fallback
+    Ask DeepSeek (via backend/shared/llm_client.py) to narrate the
+    already-derived suggestion in plain language. The LLM only explains
+    what _derive_suggestion already decided — given clause/precedent text
+    and the winning ruling/action, and told not to introduce new facts,
+    clauses, or numbers. Falls back to `fallback` on any error, missing
+    API key, or timeout, so this step can never break the
+    POLICY_CONSULTATION phase.
 
+    Numbers in the rationale must come from the policy computation (i.e.
+    appear in the user_prompt), never from the LLM. If a number appears
+    in the rationale but not in the user_prompt, we return `fallback`.
+    """
     clause_lines = "\n".join(
         f"- {c['clause_id']} ({c['clause_title']}): {c['clause_text_summary']}" for c in applicable_clauses
     )
@@ -303,13 +287,17 @@ async def _llm_rationale(
             f"replaced by precedent voting."
         )
 
-    prompt = (
+    system_prompt = (
         "You are PolicyAgent's narration step in the Ryde dispute-resolution pipeline. "
         "Write a short (2-4 sentence) rationale explaining why the applicable clauses and "
         "precedents below support the suggested ruling and action. Use ONLY the facts, "
         "clauses, and precedents given here — do not invent new clause numbers, dollar "
         "amounts, or facts. If a precedent is marked HUMAN_OVERRIDE, you may note that it "
-        "reflects a prior human-corrected outcome. Output only the rationale text, no preamble.\n\n"
+        "reflects a prior human-corrected outcome. "
+        "Return JSON with exactly one key: {\"rationale\": \"<2-4 sentences>\"}."
+    )
+
+    user_prompt = (
         f"Policy version: {version}\n"
         f"Dispute type: {dispute_type}\n"
         f"Prosecutor summary: {prosecutor_summary or '(none provided)'}\n"
@@ -323,21 +311,34 @@ async def _llm_rationale(
     )
 
     try:
-        response = await asyncio.wait_for(
-            _anthropic_client.messages.create(
-                model=_POLICY_MODEL,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            ),
-            timeout=_LLM_TIMEOUT_SECONDS,
+        raw = await call_llm_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            thinking=False,
+            temperature=0.1,
+            max_retries=1,
+            timeout_s=30.0,
         )
-        text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
-        text = "\n".join(text_blocks).strip()
-        return text or fallback
-    except Exception:
+    except (LLMError, Exception):
         # Network error, timeout, malformed response, rate limit, etc. —
         # never let rationale generation break the POLICY_CONSULTATION phase.
         return fallback
+
+    rationale = raw.get("rationale")
+    if not rationale or not isinstance(rationale, str) or not rationale.strip():
+        return fallback
+
+    rationale = rationale.strip()
+
+    # Numbers in the rationale must originate from the policy computation
+    # (which is embedded in the user_prompt), never from the LLM. If any
+    # number appears in the rationale but not in the user_prompt, reject it.
+    prompt_numbers = set(re.findall(r"\d+", user_prompt))
+    rationale_numbers = set(re.findall(r"\d+", rationale))
+    if rationale_numbers - prompt_numbers:
+        return fallback
+
+    return rationale
 
 
 # ----------------------------------------------------------------------

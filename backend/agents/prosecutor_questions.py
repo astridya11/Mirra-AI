@@ -452,25 +452,34 @@ def _deterministic_fallback(
     # Build an ordered list of (fact, is_missing) candidates.
     # Skip policy-related facts: the evidence layer's policy-eligibility
     # check is not a party question.
-    candidates: list[tuple[dict[str, Any], bool]] = []
-    for fact in missing_facts:
-        if not isinstance(fact, dict):
-            continue
-        fid = fact.get("fact_id", "")
-        if fid and fid in used_ids:
-            continue
-        if _is_policy_fact(fact):
-            continue
-        candidates.append((fact, True))
-    for fact in disputed_facts:
-        if not isinstance(fact, dict):
-            continue
-        fid = fact.get("fact_id", "")
-        if fid and fid in used_ids:
-            continue
-        if _is_policy_fact(fact):
-            continue
-        candidates.append((fact, False))
+    #
+    # Ordering: party-specific facts (party_relevance == RIDER or DRIVER)
+    # come first, then neutral/both/unknown facts.  Within each group,
+    # missing facts precede disputed facts, and original list order is
+    # preserved.  Goal: a neutral fact is asked after party-specific ones,
+    # so it goes to the party with fewer questions and both sides get asked.
+    party_specific: list[tuple[dict[str, Any], bool]] = []
+    other: list[tuple[dict[str, Any], bool]] = []
+
+    def _collect(facts: list, is_missing: bool) -> None:
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            fid = fact.get("fact_id", "")
+            if fid and fid in used_ids:
+                continue
+            if _is_policy_fact(fact):
+                continue
+            relevance = str(fact.get("party_relevance", "")).upper()
+            if relevance in (_RIDER, _DRIVER):
+                party_specific.append((fact, is_missing))
+            else:
+                other.append((fact, is_missing))
+
+    _collect(missing_facts, True)
+    _collect(disputed_facts, False)
+
+    candidates = party_specific + other
 
     if not candidates:
         return {"done": True, "reason": "no remaining gaps"}

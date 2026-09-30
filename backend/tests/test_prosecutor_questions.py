@@ -888,6 +888,79 @@ async def _check_rephrased_repeat() -> None:
         print("  - rephrased repeat with same focus was rejected")
 
 
+async def _check_balanced_parties() -> None:
+    """LLM fails (same way as EXTRA CHECK 1); use the real DISP-002 initial
+    prosecutor findings.  Call generateQuestion for turn 1 and turn 2
+    (feeding turn 1's question into the context the same way the main
+    loop does).  Check the two questions are directed to different parties
+    (one RIDER, one DRIVER).
+    """
+    context = _build_context("DISP-002")
+    # Populate prosecutor_findings via the real initial audit.
+    audit = await prosecutor_agent.run_prosecutor_audit(context)
+    context["prosecutor_findings"] = audit.get("prosecutor_findings", {})
+
+    orig_llm = prosecutor_questions.call_llm_json
+
+    async def _raising_llm(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        raise LLMError("simulated failure")
+
+    prosecutor_questions.call_llm_json = _raising_llm
+
+    print("\n" + "=" * 70)
+    print("EXTRA CHECK 5 — BALANCED PARTIES (DETERMINISTIC FALLBACK)")
+    print("=" * 70)
+
+    errors: list[str] = []
+
+    try:
+        # Turn 1 — deterministic fallback.
+        q1 = await prosecutor_questions.generateQuestion(
+            context=context, turn=1
+        )
+        print(f"Turn 1: {json.dumps(q1, indent=2, ensure_ascii=False)}")
+
+        if not isinstance(q1, dict) or q1.get("done"):
+            errors.append("Turn 1: expected a question, got done")
+        else:
+            # Normalize and store turn 1 question (same as the main loop).
+            normalized_q1 = PipelineEngine._normalize_live_question(q1, 1)
+            context["round_2_cross_exam"]["targeted_questions"].append(
+                normalized_q1
+            )
+
+            # Turn 2 — deterministic fallback with turn 1 in context.
+            q2 = await prosecutor_questions.generateQuestion(
+                context=context, turn=2
+            )
+            print(f"Turn 2: {json.dumps(q2, indent=2, ensure_ascii=False)}")
+
+            if not isinstance(q2, dict) or q2.get("done"):
+                errors.append("Turn 2: expected a question, got done")
+            else:
+                p1 = q1.get("directed_to", "")
+                p2 = q2.get("directed_to", "")
+                parties = {p1, p2}
+                if parties != {"RIDER", "DRIVER"}:
+                    errors.append(
+                        f"Expected one RIDER and one DRIVER, got "
+                        f"turn1={p1} turn2={p2}"
+                    )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"generateQuestion raised: {exc}")
+    finally:
+        prosecutor_questions.call_llm_json = orig_llm
+
+    if errors:
+        print("\nEXTRA CHECK 5 RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nEXTRA CHECK 5 RESULT: PASS")
+        print("  - turn 1 and turn 2 directed to different parties")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -908,6 +981,8 @@ async def _run_all(mock: bool = False, case: str | None = None) -> None:
     await _check_injection()
     print()
     await _check_rephrased_repeat()
+    print()
+    await _check_balanced_parties()
     print()
 
     print("=" * 70)
