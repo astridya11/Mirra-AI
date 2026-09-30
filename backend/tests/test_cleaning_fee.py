@@ -664,11 +664,11 @@ def test_disp001_regression_summary(disp001_data):
 # Regression: DISP-002 (NO_SHOW_CHARGE) must be unchanged
 # ===========================================================================
 
-_EXPECTED_DISP002_VERIFIED_IDS = [f"F-VER-{i:03d}" for i in range(1, 8)]
-_EXPECTED_DISP002_MISSING_IDS = [f"F-MIS-{i:03d}" for i in range(1, 4)]
+_EXPECTED_DISP002_VERIFIED_IDS = [f"F-VER-{i:03d}" for i in range(1, 9)]
+_EXPECTED_DISP002_MISSING_IDS = [f"F-MIS-{i:03d}" for i in range(1, 3)]
 _EXPECTED_DISP002_SUMMARY = (
     "Prosecutor audit completed for no-show cancellation dispute. "
-    "7 of 9 evidentiary checks verified. 3 item(s) missing or unresolved."
+    "8 of 9 evidentiary checks verified. 2 item(s) missing or unresolved."
 )
 
 
@@ -680,7 +680,7 @@ def test_disp002_regression_dispatch_unchanged():
 def test_disp002_regression_verified_facts(disp002_data):
     report = generate_prosecutor_report(disp002_data)
     assert [f["fact_id"] for f in report["verified_facts"]] == _EXPECTED_DISP002_VERIFIED_IDS
-    assert len(report["verified_facts"]) == 7
+    assert len(report["verified_facts"]) == 8
 
 
 def test_disp002_regression_disputed_facts(disp002_data):
@@ -691,7 +691,7 @@ def test_disp002_regression_disputed_facts(disp002_data):
 def test_disp002_regression_missing_facts(disp002_data):
     report = generate_prosecutor_report(disp002_data)
     assert [f["fact_id"] for f in report["missing_facts"]] == _EXPECTED_DISP002_MISSING_IDS
-    assert len(report["missing_facts"]) == 3
+    assert len(report["missing_facts"]) == 2
 
 
 def test_disp002_regression_summary(disp002_data):

@@ -21,7 +21,7 @@ from app.services.verification.checks import (
     check_policy_eligibility,
     check_waiting_duration,
 )
-from app.services.verification.policy import PolicyThresholds
+from app.services.verification.policy import PolicyThresholds, get_policy_clause, get_policy_params
 from app.services.verification.report import generate_prosecutor_report
 
 
@@ -169,12 +169,14 @@ def test_contradictory_timestamps_arrival_after_cancellation():
 # ---------------------------------------------------------------------------
 # 8. Policy eligibility — backend-owned policy registry only (Issue 2)
 # ---------------------------------------------------------------------------
-def test_policy_eligibility_unresolved_without_backend_policy(disp002_data):
-    """No policy is registered for any dispute_type today — must be MISSING, never guessed."""
+def test_policy_eligibility_verified_with_backend_policy(disp002_data):
+    """NO_SHOW_CHARGE now has a real policy — 480s wait >= 480s threshold -> VERIFIED."""
     result = check_policy_eligibility(disp002_data)
-    assert result["status"] == "MISSING"
-    assert "cannot be assessed" in result["description"].lower()
+    assert result["status"] == "VERIFIED"
     assert result["details"]["duration_seconds"] == 480
+    assert result["details"]["no_show_threshold_seconds"] == 480
+    assert result["details"]["policy_clause_reference"] == "ryde_policy_v1.json POL-3 v1"
+    assert "480" in result["description"]
 
 
 def test_policy_eligibility_disputed_when_backend_policy_says_insufficient(disp002_data, monkeypatch):
@@ -217,11 +219,39 @@ def test_policy_source_and_version_recorded_when_applied(disp002_data, monkeypat
     assert "TEST-POLICY v7" in result["description"]
 
 
-def test_registry_empty_by_default_no_invented_ryde_policy():
-    """Confirms no fabricated Ryde policy numbers were smuggled into the registry."""
-    assert policy_module.get_policy_params("NO_SHOW_CHARGE") is None
-    assert policy_module.get_policy_params("ROUTE_DEVIATION") is None
-    assert policy_module.get_policy_params(None) is None
+def test_policy_registry_returns_real_thresholds_for_no_show():
+    """NO_SHOW_CHARGE: free_wait 5 min -> 300s, no_show 8 min -> 480s."""
+    params = get_policy_params("NO_SHOW_CHARGE")
+    assert params is not None
+    assert params.free_wait_period_seconds == 300
+    assert params.no_show_threshold_seconds == 480
+    assert params.source == "ryde_policy_v1.json POL-3"
+    assert params.version == "1"
+
+
+def test_policy_clause_returns_correct_clause_ids():
+    assert get_policy_clause("ROUTE_DEVIATION")["clause_id"] == "POL-2"
+    assert get_policy_clause("NO_SHOW_CHARGE")["clause_id"] == "POL-3"
+    assert get_policy_clause("CLEANING_FEE")["clause_id"] == "POL-4"
+
+
+def test_policy_clause_returns_none_for_unknown_and_none():
+    assert get_policy_clause("UNKNOWN_TYPE") is None
+    assert get_policy_clause(None) is None
+
+
+def test_policy_params_returns_none_for_route_deviation():
+    """ROUTE_DEVIATION has no free_wait_time_min / no_show_threshold_min params."""
+    assert get_policy_params("ROUTE_DEVIATION") is None
+
+
+def test_policy_eligibility_missing_when_policy_params_monkeypatched_to_none(disp002_data, monkeypatch):
+    """When get_policy_params is forced to return None, eligibility must be MISSING."""
+    monkeypatch.setattr(checks_module, "get_policy_params", lambda dispute_type: None)
+    result = check_policy_eligibility(disp002_data)
+    assert result["status"] == "MISSING"
+    assert "cannot be assessed" in result["description"].lower()
+    assert result["details"]["duration_seconds"] == 480
 
 
 def test_policy_params_argument_removed_from_check_function_signature(disp002_data):
@@ -441,11 +471,16 @@ def test_verify_endpoint_driver_cannot_bias_policy_outcome(client, create_disp00
     assert driver_attempt.status_code == 200
     body = driver_attempt.json()
     all_facts = body["verified_facts"] + body["disputed_facts"] + body["missing_facts"]
-    policy_facts = [f for f in all_facts if "policy eligibility" in f["description"].lower()]
+    policy_facts = [f for f in all_facts if "policy eligibility" in f["description"].lower() or "no-show threshold" in f["description"].lower()]
     assert policy_facts, "expected a policy-eligibility fact in the report"
-    assert all(f in body["missing_facts"] for f in policy_facts), (
-        "policy eligibility must stay unresolved (MISSING) regardless of client-supplied numbers"
+    # The policy-eligibility fact must be VERIFIED, using 480 seconds from the
+    # policy file — never the client-supplied 999999.
+    assert all(f in body["verified_facts"] for f in policy_facts), (
+        "policy eligibility must be VERIFIED regardless of client-supplied numbers"
     )
+    for f in policy_facts:
+        assert "999999" not in f["description"]
+        assert "480" in f["description"]
 
 
 def test_verify_endpoint_response_has_no_policy_params_schema_leftover():

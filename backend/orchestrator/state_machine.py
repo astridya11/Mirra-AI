@@ -277,6 +277,11 @@ def _save_case(result: Dict[str, Any]) -> None:
     save_case(result)
 
 
+def _get_completed_case(case_id: str) -> Optional[Dict[str, Any]]:
+    from backend.main import get_completed_case
+    return get_completed_case(case_id)
+
+
 # ----------------------------------------------------------------------
 # Real-Time Pipeline Engine
 # ----------------------------------------------------------------------
@@ -1019,10 +1024,16 @@ async def apply_human_review(
     for future PolicyAgent retrieval.
 
     Schema reference: HumanConfirmationDetails and PolicyKnowledgeBaseUpdate.
+
+    Reads the completed pipeline result (not raw mock_data); the pipeline must be run first.
     """
-    case_data = _get_case(case_id)
+    case_data = _get_completed_case(case_id)
     if not case_data:
-        raise ValueError(f"Case {case_id} not found.")
+        raise ValueError(f"No completed result for case {case_id}. Run the pipeline first.")
+
+    existing_status = ((case_data.get("judge_verdict") or {}).get("execution_payload") or {}).get("execution_status")
+    if existing_status in ("HUMAN_CONFIRMED", "HUMAN_OVERRIDDEN"):
+        raise ValueError(f"Case {case_id} has already been reviewed ({existing_status}).")
 
     judge_verdict = case_data.get("judge_verdict", {})
     policy_consultation = case_data.get("policy_consultation", {})
