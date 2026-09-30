@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 
 from backend.orchestrator.state_machine import (
@@ -209,32 +211,34 @@ async def get_dispute_data(dispute_id: str):
 # Pipeline execution
 # ---------------------------------------------------------------------------
 
-@app.post("/api/disputes/{dispute_id}/run-realtime")
-async def run_pipeline_realtime(dispute_id: str):
+@app.get("/api/disputes/{dispute_id}/stream")
+async def stream_pipeline_realtime(dispute_id: str):
     """
-    Execute the pipeline and return both the result and the phase event log.
-
-    Each event captures a state transition with a phase, label, data summary,
-    and timestamp — suitable for real-time UI updates via polling.
+    通过 SSE (Server-Sent Events) 实时推送 Pipeline 执行事件
     """
     case_data = get_case(dispute_id)
     if case_data is None:
         raise HTTPException(
-            status_code=404,
-            detail=f"Dispute dataset not found: {dispute_id}",
+            status_code=404, detail=f"Dispute dataset not found: {dispute_id}"
         )
 
-    try:
-        result, events = await run_dispute_pipeline_realtime(dispute_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline execution failed: {exc}",
-        )
+    async def event_generator():
+        # 实时产生事件，出一条就往前端推一条
+        async for event in run_dispute_pipeline_realtime(dispute_id):
+            # event 是一个 dict，例如: {"phase": "ROUND_1_PLEADINGS", "data": {...}}
+            yield {
+                "event": "pipeline_event",  # 事件类型
+                "data": json.dumps(event),  # 转为 JSON 字符串传输
+            }
 
-    _completed_results[dispute_id] = result
-    return {"result": result, "events": events}
+        # 流结束时，推推送一条完成通知及最终 verdict 结果
+        final_result = get_completed_case(dispute_id)
+        yield {
+            "event": "pipeline_complete",
+            "data": json.dumps({"result": final_result}),
+        }
 
+    return EventSourceResponse(event_generator())
 
 # ---------------------------------------------------------------------------
 # Completed results retrieval
