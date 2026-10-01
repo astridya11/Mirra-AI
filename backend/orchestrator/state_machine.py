@@ -113,27 +113,57 @@ class HumanReviewDecision(str, Enum):
     REJECTED_AUTO = "REJECTED_AUTO"
 
 
+class PartyDecisionType(str, Enum):
+    """Terminal-user (rider/driver) decision on a FULLY_AUTOMATED case."""
+
+    ACCEPT = "ACCEPT"
+    REQUEST_HUMAN_REVIEW = "REQUEST_HUMAN_REVIEW"
+
+
 # ----------------------------------------------------------------------
 # Phase & Conversation Events
 # ----------------------------------------------------------------------
 
 
 class PhaseEvent:
-    """Captures a single phase transition for event streaming."""
+    """Transport event for a pipeline phase lifecycle transition.
 
-    def __init__(self, phase: str, label: str, data: Dict[str, Any]):
+    ``event_type`` deliberately distinguishes lifecycle events from agent
+    conversation events so the UI does not have to infer ordering from the
+    event label.
+    """
+
+    PHASE_STARTED = "PHASE_STARTED"
+    PHASE_COMPLETED = "PHASE_COMPLETED"
+
+    def __init__(
+        self,
+        phase: str,
+        label: str,
+        data: Dict[str, Any],
+        event_type: str = PHASE_COMPLETED,
+        sub_phase: Optional[str] = None,
+    ):
         self.phase = phase
         self.label = label
         self.data = data
+        self.event_type = event_type
+        # Optional UI sub-stage inside one pipeline phase. ROUND_2 uses:
+        #   INITIAL_AUDIT -> CROSS_EXAM -> FINAL_REPORT
+        self.sub_phase = sub_phase
         self.timestamp = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        event = {
+            "event_type": self.event_type,
             "phase": self.phase,
             "label": self.label,
             "data": self.data,
             "timestamp": self.timestamp,
         }
+        if self.sub_phase:
+            event["sub_phase"] = self.sub_phase
+        return event
 
 
 # ----------------------------------------------------------------------
@@ -153,8 +183,9 @@ class AgentConversationEvent(PhaseEvent):
         speaker: str,
         message_type: str,
         data: Dict[str, Any],
+        sub_phase: Optional[str] = None,
     ):
-        super().__init__(phase, "AGENT_CONVERSATION", data)
+        super().__init__(phase, "AGENT_CONVERSATION", data, sub_phase=sub_phase)
         self.speaker = speaker
         self.message_type = message_type
 
@@ -313,6 +344,7 @@ class PipelineEngine:
         target: str,
         response: Any,
         turn: int,
+        sub_phase: Optional[str] = None,
     ) -> AgentConversationEvent:
         """Normalize an agent response into a UI-streamable conversation event."""
         if isinstance(response, dict):
@@ -349,6 +381,23 @@ class PipelineEngine:
             speaker=speaker,
             message_type=message_type,
             data=event_data,
+            sub_phase=sub_phase,
+        )
+
+    @staticmethod
+    def _phase_started(
+        phase: str,
+        label: str,
+        data: Optional[Dict[str, Any]] = None,
+        sub_phase: Optional[str] = None,
+    ) -> PhaseEvent:
+        """Create an explicit phase-start event for the realtime UI."""
+        return PhaseEvent(
+            phase=phase,
+            label=label,
+            data={"status": "STARTED", **(data or {})},
+            event_type=PhaseEvent.PHASE_STARTED,
+            sub_phase=sub_phase,
         )
 
     # -- Phase 1: INIT_CLAIM -----------------------------------------------
@@ -374,7 +423,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.INIT_CLAIM,
-            label="1. 案件初始化与证据冻结",
+            label="案件初始化与证据冻结完成",
             data={
                 "status": "EVIDENCE_FROZEN",
                 "dispute_type": self.ctx.case_metadata["dispute_type"],
@@ -446,7 +495,7 @@ class PipelineEngine:
         self.ctx.set_state(State.ROUND_2_PROSECUTOR_AUDIT, round_num=2)
         yield PhaseEvent(
             phase=State.ROUND_1_PLEADINGS,
-            label="2. 第一轮辩论（申诉与答辩）",
+            label="第一轮辩论（申诉与答辩）结束",
             data=self.ctx.round_1_statements,
         )
 
@@ -522,24 +571,39 @@ class PipelineEngine:
 
         # ------------------------------------------------------------------
         # Step 1: 质询前 - 执行初始证据审计 (Initial Evidence Audit)
-        # 检察官先运行工具分析 telemetry, EXIF, Chat logs, Fraud score
         # ------------------------------------------------------------------
+        # Emit PHASE_STARTED before any audit work so the UI can render the
+        # 3a phase header before its result arrives.
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "检察官开始初始证据审计与欺诈筛查",
+            sub_phase="INITIAL_AUDIT",
+        )
+
         initial_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
         self.ctx.bonus_modules = initial_audit_result.get("bonus_modules", {})
         self.ctx.prosecutor_findings = initial_audit_result.get("prosecutor_findings", {})
 
         yield PhaseEvent(
             phase=State.ROUND_2_PROSECUTOR_AUDIT,
-            label="3a. 检察官初始证据审计与欺诈筛查",
+            label="检察官结束初始证据审计与欺诈筛查",
             data={
                 "prosecutor_findings": self.ctx.prosecutor_findings,
                 "bonus_modules": self.ctx.bonus_modules,
             },
+            sub_phase="INITIAL_AUDIT",
         )
 
         # ------------------------------------------------------------------
         # Step 2: 质询中 - 基于已核查的证据进行交叉质询 (Cross-Examination)
         # ------------------------------------------------------------------
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "检察官开始交叉质询",
+            sub_phase="CROSS_EXAM",
+        )
+
+        questions_asked = 0
         max_turns = 10
         for turn in range(1, max_turns + 1):
             # 此时 generateQuestion 上下文中已经包含初始的 prosecutor_findings 证据分析
@@ -570,7 +634,9 @@ class PipelineEngine:
                 target,
                 normalized_question,
                 turn,
+                sub_phase="CROSS_EXAM",
             )
+            questions_asked += 1
 
             advocate_generate_response = (
                 rider_generate_response
@@ -596,11 +662,31 @@ class PipelineEngine:
                 "PROSECUTOR",
                 normalized_response,
                 turn,
+                sub_phase="CROSS_EXAM",
             )
+
+        yield PhaseEvent(
+            phase=State.ROUND_2_PROSECUTOR_AUDIT,
+            label=f"交叉质询结束（共 {questions_asked} 个问题）",
+            data={
+                "questions_asked": questions_asked,
+                "targeted_questions": self.ctx.round_2_cross_exam.get("targeted_questions", []),
+                "targeted_responses": self.ctx.round_2_cross_exam.get("targeted_responses", []),
+            },
+            sub_phase="CROSS_EXAM",
+        )
 
         # ------------------------------------------------------------------
         # Step 3: 质询后 - 综合双方说辞与最终证据，生成终审 Prosecutor Report
         # ------------------------------------------------------------------
+        # The cross-examination conversation is already complete. Start 3b
+        # explicitly before generating the final Prosecutor Report.
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "开始第二轮调查",
+            sub_phase="FINAL_REPORT",
+        )
+
         final_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
 
         self.ctx.bonus_modules = final_audit_result.get("bonus_modules", {})
@@ -614,13 +700,14 @@ class PipelineEngine:
 
         yield PhaseEvent(
             phase=State.ROUND_2_PROSECUTOR_AUDIT,
-            label="3b. 第二轮调查质询完成与检察官报告(Prosecutor Report)出具",
+            label="第二轮调查完成，检察官报告已出具",
             data={
                 "round_2_cross_exam": self.ctx.round_2_cross_exam,
                 "agent_conversation": self.ctx.agent_conversation,
                 "bonus_modules": self.ctx.bonus_modules,
                 "prosecutor_findings": self.ctx.prosecutor_findings,
             },
+            sub_phase="FINAL_REPORT",
         )
 
     # -- Phase 4: POLICY_CONSULTATION --------------------------------------
@@ -656,32 +743,13 @@ class PipelineEngine:
             "requested_at": now,
         }
 
-        # Try to use a full policy_consultant_agent if it exists.
-        # Otherwise, use the deterministic policy_agent helpers.
-        try:
-            run_policy_consultation = _lazy_import(
-                "backend.agents.policy_consultant_agent",
-                "run_policy_consultation",
-            )
-            suggestion = await run_policy_consultation(
-                self.ctx.to_context_dict()
-            )
-
-            suggestion.setdefault(
-                "request_id",
-                request["request_id"],
-            )
-
-            self.ctx.policy_consultation = {
-                "request": request,
-                "suggestion": suggestion,
-            }
-        except ImportError:
-            # Deterministic fallback: build PolicySuggestion from
-            # policy_agent helpers.
-            suggestion = self._build_policy_suggestion(
-                dispute_type, request, now
-            )
+        run_policy_consultation = _lazy_import(
+            "backend.agents.policy_consultant_agent",
+            "run_policy_consultation",
+        )
+        suggestion = await run_policy_consultation(
+            self.ctx.to_context_dict()
+        )
 
         # Assemble policy_consultation (schema: PolicyConsultation)
         self.ctx.policy_consultation = {
@@ -693,7 +761,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.POLICY_CONSULTATION,
-            label="4. 平台条款与历史判例检索",
+            label="平台条款与历史判例检索完成",
             data=self.ctx.policy_consultation,
         )
 
@@ -722,7 +790,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.JUDGE_DELIBERATION,
-            label="5. 大模型法官终审裁决",
+            label="大模型法官终审裁决结束",
             data=self.ctx.judge_verdict,
         )
 
@@ -756,7 +824,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.EXECUTION_ROUTER,
-            label="6. 执行路由与人工审核分流",
+            label="执行路由与人工审核分流完成",
             data=gate_decision,
         )
 
@@ -866,129 +934,59 @@ class PipelineEngine:
             "execution_payload": execution_payload,
         }
 
-    # -- Policy suggestion fallback ----------------------------------------
-
-    def _build_policy_suggestion(
-        self,
-        dispute_type: str,
-        request: Dict[str, Any],
-        now: str,
-    ) -> Dict[str, Any]:
-        """Fallback policy builder."""
-        context = self.ctx.to_context_dict()
-        clauses = precedent_store.retrieve_clauses(dispute_type)
-        policy_values = precedent_store.compute_policy_values(dispute_type, context)
-        version = precedent_store.policy_version()
-        keywords = precedent_store.extract_keywords(
-            f"{request.get('prosecutor_summary', '')} "
-            f"{' '.join(f.get('description', '') for f in self.ctx.prosecutor_findings.get('verified_facts', []))}"
-        )
-
-        applicable_clauses = [
-            precedent_store.clause_reference(clause, keywords)
-            for clause in clauses
-        ]
-        suggested_action = _build_suggested_action(dispute_type, policy_values)
-        suggested_ruling = _suggest_ruling(dispute_type, policy_values)
-
-        return {
-            "suggestion_id": f"PSG-{uuid.uuid4().hex[:8].upper()}",
-            "applicable_clauses": applicable_clauses,
-            "matched_precedents": [],
-            "suggested_ruling_type": suggested_ruling,
-            "suggested_recommended_action": suggested_action,
-            "policy_confidence": policy_values.get("confidence", 0.3),
-            "rationale": (
-                f"Policy version {version}. Clauses retrieved: "
-                f"{', '.join(c.get('id', '') for c in clauses)}. "
-                f"Policy values: {policy_values}"
-            ),
-            "suggested_at": now,
-        }
-
     # -- Real-Time Pipeline Executor ---------------------------------------
 
     async def execute_all_realtime(self) -> AsyncGenerator[PhaseEvent, None]:
-        """Run the full pipeline while yielding each live conversation & phase event."""
+        """Run the full pipeline with explicit lifecycle/conversation events.
+
+        Every UI phase follows this contract:
+
+            PHASE_STARTED
+                -> zero or more AGENT_CONVERSATION events
+                -> PHASE_COMPLETED
+
+        Round 2 additionally exposes its two visible sub-phases (3a/3b) using
+        the same lifecycle contract.
+        """
+        # 1. INIT_CLAIM
+        yield self._phase_started(
+            State.INIT_CLAIM,
+            "正在进行案件初始化与证据冻结",
+        )
         yield await self._phase_init_claim()
 
+        # 2. ROUND_1_PLEADINGS
+        yield self._phase_started(
+            State.ROUND_1_PLEADINGS,
+            "开始第一轮辩论（申诉与答辩）",
+        )
         async for event in self._stream_round_1_pleadings():
             yield event
 
+        # 3a / 3b are emitted by the Round 2 streaming phase itself.
         async for event in self._stream_round_2_prosecutor_audit():
             yield event
 
+        # 4. POLICY_CONSULTATION
+        yield self._phase_started(
+            State.POLICY_CONSULTATION,
+            "正在进行平台条款与历史判例检索",
+        )
         yield await self._phase_policy_consultation()
+
+        # 5. JUDGE_DELIBERATION
+        yield self._phase_started(
+            State.JUDGE_DELIBERATION,
+            "大模型法官终审裁决中",
+        )
         yield await self._phase_judge_deliberation()
+
+        # 6. EXECUTION_ROUTER
+        yield self._phase_started(
+            State.EXECUTION_ROUTER,
+            "正在执行路由与人工审核分流",
+        )
         yield await self._phase_execution_router()
-
-
-# ----------------------------------------------------------------------
-# Helper Functions (used by the deterministic fallback)
-# ----------------------------------------------------------------------
-
-
-def _build_suggested_action(
-    dispute_type: str, policy_values: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Build a RecommendedAction (schema: RecommendedAction) from policy values."""
-    action: Dict[str, Any] = {
-        "action_type": "NO_REFUND",
-        "refund_amount": 0,
-        "cleaning_fee_amount": 0,
-        "currency": "SGD",
-        "penalty_points": 0,
-        "penalty_target": "NONE",
-        "account_action": "NONE",
-    }
-
-    if not policy_values.get("computable", False):
-        action["action_type"] = "ESCALATED_NO_ACTION"
-        return action
-
-    if dispute_type == "ROUTE_DEVIATION":
-        refund = policy_values.get("refund_if_no_valid_reason", 0)
-        if refund and refund > 0:
-            action["action_type"] = "FULL_REFUND"
-            action["refund_amount"] = refund
-
-    elif dispute_type == "NO_SHOW_CHARGE":
-        refund = policy_values.get("refund_if_fee_reversed", 0)
-        if refund and refund > 0:
-            action["action_type"] = "FULL_REFUND"
-            action["refund_amount"] = refund
-
-    elif dispute_type == "CLEANING_FEE":
-        max_chargeable = policy_values.get("max_chargeable")
-        if max_chargeable is not None and max_chargeable > 0:
-            action["action_type"] = "CLEANING_FEE_CHARGE"
-            action["cleaning_fee_amount"] = max_chargeable
-        else:
-            action["action_type"] = "ESCALATED_NO_ACTION"
-
-    return action
-
-
-def _suggest_ruling(
-    dispute_type: str, policy_values: Dict[str, Any]
-) -> str:
-    """Determine a suggested ruling_type from policy values."""
-    if not policy_values.get("computable", False):
-        return "ESCALATED"
-
-    if dispute_type == "ROUTE_DEVIATION":
-        refund = policy_values.get("refund_if_no_valid_reason", 0)
-        return "APPROVED" if refund and refund > 0 else "REJECTED"
-
-    if dispute_type == "NO_SHOW_CHARGE":
-        threshold_met = policy_values.get("threshold_met", False)
-        return "REJECTED" if threshold_met else "APPROVED"
-
-    if dispute_type == "CLEANING_FEE":
-        max_chargeable = policy_values.get("max_chargeable")
-        return "APPROVED" if max_chargeable is not None and max_chargeable > 0 else "ESCALATED"
-
-    return "ESCALATED"
 
 
 # ----------------------------------------------------------------------
@@ -1122,6 +1120,125 @@ async def apply_human_review(
     case_data.setdefault("case_metadata", {})
     case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
     case_data["case_metadata"]["updated_at"] = now
+    case_data["judge_verdict"] = judge_verdict
+
+    _save_case(case_data)
+    return case_data
+
+
+# ----------------------------------------------------------------------
+# Party Decision (terminal-user accept / request human review)
+# ----------------------------------------------------------------------
+
+
+async def apply_party_decision(
+    case_id: str,
+    decision: PartyDecisionType,
+    comment: str = "",
+) -> Dict[str, Any]:
+    """
+    Apply a terminal-user (rider/driver) decision to a FULLY_AUTOMATED case.
+
+    Only cases with resolution_channel=FULLY_AUTOMATED and no prior
+    party_decision are eligible. Cases already escalated to human review
+    are not eligible.
+
+    ACCEPT:
+      - Records party_decision in execution_payload.
+      - case_final_status stays AUTO_RESOLVED.
+      - No change to existing transaction_id (refund already issued).
+
+    REQUEST_HUMAN_REVIEW:
+      - Sets party_requested_human=True, is_escalated=True.
+      - Appends escalation reason matching _evaluate_execution_gate wording.
+      - Changes execution_status to PENDING_HUMAN_APPROVAL.
+      - Changes case_final_status to PENDING.
+      - Changes resolution_channel to ESCALATED_HUMAN_REVIEW.
+      - Does NOT roll back any already-issued refund (transaction_id preserved).
+      - Records party_decision in execution_payload.
+
+    Idempotent: calling on an already-decided case raises ValueError (→ 409).
+    Does not affect the apply_human_review flow (human reviewer can still
+    review the case afterward).
+
+    Schema reference: ExecutionPayload.party_decision and
+    EscalationProtocol.party_requested_human.
+    """
+    case_data = _get_completed_case(case_id)
+    if not case_data:
+        raise ValueError(f"No completed result for case {case_id}. Run the pipeline first.")
+
+    judge_verdict = case_data.get("judge_verdict", {})
+    execution_payload = judge_verdict.get("execution_payload", {})
+
+    # Check for prior party_decision
+    if execution_payload.get("party_decision"):
+        raise ValueError(
+            f"Case {case_id} has already received a party decision "
+            f"({execution_payload['party_decision'].get('decision')})."
+        )
+
+    # Only FULLY_AUTOMATED cases are eligible
+    resolution_channel = case_data.get("case_metadata", {}).get("resolution_channel", "")
+    if resolution_channel != "FULLY_AUTOMATED":
+        raise ValueError(
+            f"Case {case_id} is not eligible for party decision "
+            f"(resolution_channel={resolution_channel}). "
+            f"Only FULLY_AUTOMATED cases can receive a party decision."
+        )
+
+    now = datetime.now(_SGT).isoformat()
+    decision_value = decision.value if hasattr(decision, "value") else str(decision)
+
+    party_decision = {
+        "decision": decision_value,
+        "decided_at": now,
+    }
+    if comment:
+        party_decision["comment"] = comment
+
+    execution_payload["party_decision"] = party_decision
+
+    if decision == PartyDecisionType.ACCEPT:
+        # Case stays resolved; no further changes needed
+        execution_payload.setdefault("case_final_status", "AUTO_RESOLVED")
+    else:
+        # REQUEST_HUMAN_REVIEW — escalate to human review
+        execution_payload["execution_status"] = "PENDING_HUMAN_APPROVAL"
+        execution_payload["case_final_status"] = "PENDING"
+        # Preserve existing transaction_id — do NOT roll back refunds
+
+        # Update escalation protocol
+        bonus = case_data.get("bonus_modules", {})
+        esc_proto = bonus.get("escalation_protocol", {})
+        if not esc_proto:
+            esc_proto = {
+                "safety_threat_detected": False,
+                "fraud_risk_level": "LOW",
+                "escalation_reasons": [],
+                "is_escalated": False,
+                "priority_level": "STANDARD",
+            }
+            bonus["escalation_protocol"] = esc_proto
+            case_data["bonus_modules"] = bonus
+
+        esc_proto["party_requested_human"] = True
+        esc_proto["is_escalated"] = True
+        if "escalation_reasons" not in esc_proto or not isinstance(
+            esc_proto["escalation_reasons"], list
+        ):
+            esc_proto["escalation_reasons"] = []
+        esc_proto["escalation_reasons"].append(
+            "当事人不满意自动决策，请求人工审核"
+        )
+        esc_proto["priority_level"] = "HIGH_PRIORITY"
+
+        # Update case metadata
+        case_data.setdefault("case_metadata", {})
+        case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
+
+    case_data["case_metadata"]["updated_at"] = now
+    judge_verdict["execution_payload"] = execution_payload
     case_data["judge_verdict"] = judge_verdict
 
     _save_case(case_data)

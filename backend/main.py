@@ -16,18 +16,24 @@ Schema reference: shared/schemas.json (RydeMultiAgentAutonomousDisputeResolution
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.orchestrator.state_machine import (
     ExecutionRoute,
     HumanReviewDecision,
+    PartyDecisionType,
     apply_human_review,
+    apply_party_decision,
     run_dispute_pipeline_realtime
 )
 
@@ -45,6 +51,20 @@ app = FastAPI(
         "JUDGE_DELIBERATION → EXECUTION_ROUTER."
     ),
     version="1.0.0",
+)
+
+# 从环境变量获取允许的域名列表，以逗号分隔；若未配置则使用默认开发环境域名
+raw_origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+)
+allowed_origins = [origin.strip() for origin in raw_origins.split(",")]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 _SGT = timezone(timedelta(hours=8))
@@ -120,6 +140,14 @@ class HumanReviewRequest(BaseModel):
     review_notes: str = Field("", description="Additional review notes")
 
 
+class PartyDecisionRequest(BaseModel):
+    decision: str = Field(
+        ...,
+        description="ACCEPT | REQUEST_HUMAN_REVIEW",
+    )
+    comment: str = Field("", description="Optional comment from the party")
+
+
 class RefundRequest(BaseModel):
     amount: float = Field(..., ge=0)
     currency: str = Field("SGD")
@@ -155,6 +183,37 @@ async def health_check():
 # Dispute listing & raw data loading
 # ---------------------------------------------------------------------------
 
+@app.get("/api/trips")
+async def list_trips():
+    """
+    List all available trips by scanning the mock_data directory.
+    """
+    trips: list[dict[str, Any]] = []
+    if not _MOCK_DATA_DIR.exists():
+        return trips
+
+    for file_path in sorted(_MOCK_DATA_DIR.glob("*.json")):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                case_data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        meta = case_data.get("case_metadata", {})
+        data_sources = case_data.get("data_sources", {})
+        case_id = meta.get("case_id", file_path.stem)
+
+        trips.append(
+            {
+                "case_id": case_id,
+                "trip_id": meta.get("trip_id"),
+                "trip_data": data_sources.get("trip_data"),
+                "historical_profiles": data_sources.get("historical_profiles"),
+                "payment_fare_data": data_sources.get("payment_fare_data")
+            }
+        )
+
+    return trips
 
 @app.get("/api/disputes")
 async def list_dispute_cases():
@@ -209,32 +268,37 @@ async def get_dispute_data(dispute_id: str):
 # Pipeline execution
 # ---------------------------------------------------------------------------
 
-@app.post("/api/disputes/{dispute_id}/run-realtime")
-async def run_pipeline_realtime(dispute_id: str):
+@app.get("/api/disputes/{dispute_id}/stream")
+async def stream_pipeline_realtime(dispute_id: str):
     """
-    Execute the pipeline and return both the result and the phase event log.
-
-    Each event captures a state transition with a phase, label, data summary,
-    and timestamp — suitable for real-time UI updates via polling.
+    通过 SSE (Server-Sent Events) 实时推送 Pipeline 执行事件
     """
     case_data = get_case(dispute_id)
     if case_data is None:
         raise HTTPException(
-            status_code=404,
-            detail=f"Dispute dataset not found: {dispute_id}",
+            status_code=404, detail=f"Dispute dataset not found: {dispute_id}"
         )
 
-    try:
-        result, events = await run_dispute_pipeline_realtime(dispute_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline execution failed: {exc}",
-        )
+    async def event_generator():
+        # 实时产生事件，出一条就往前端推一条
+        async for event in run_dispute_pipeline_realtime(dispute_id):
+            # event now contains:
+            # PHASE_STARTED
+            # PHASE_COMPLETED
+            # AGENT_CONVERSATION
+            yield {
+                "event": "pipeline_event",  # 事件类型
+                "data": json.dumps(event),  # 转为 JSON 字符串传输
+            }
 
-    _completed_results[dispute_id] = result
-    return {"result": result, "events": events}
+        # 流结束时，推推送一条完成通知及最终 verdict 结果
+        final_result = get_completed_case(dispute_id)
+        yield {
+            "event": "pipeline_complete",
+            "data": json.dumps({"result": final_result}),
+        }
 
+    return EventSourceResponse(event_generator())
 
 # ---------------------------------------------------------------------------
 # Completed results retrieval
@@ -293,6 +357,57 @@ async def submit_human_review(dispute_id: str, review: HumanReviewRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Human review application failed: {exc}",
+        )
+
+    _completed_results[dispute_id] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Party decision (terminal-user accept / request human review)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/disputes/{dispute_id}/party-decision")
+async def submit_party_decision(dispute_id: str, request: PartyDecisionRequest):
+    """
+    Submit a terminal-user (rider/driver) decision for a FULLY_AUTOMATED case.
+
+    Only cases with resolution_channel=FULLY_AUTOMATED and no prior
+    party_decision are eligible.
+
+    ACCEPT: records the decision, case stays resolved.
+    REQUEST_HUMAN_REVIEW: escalates the case to human review without
+    rolling back any already-issued refund.
+
+    Does not affect the human-review flow — a human reviewer can still
+    review the case afterward via POST /human-review.
+    """
+    valid_decisions = {d.value for d in PartyDecisionType}
+    if request.decision not in valid_decisions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid decision: {request.decision}. "
+                f"Must be one of: {', '.join(sorted(valid_decisions))}"
+            ),
+        )
+
+    try:
+        result = await apply_party_decision(
+            case_id=dispute_id,
+            decision=PartyDecisionType(request.decision),
+            comment=request.comment,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not eligible" in msg or "already received" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=404, detail=msg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Party decision application failed: {exc}",
         )
 
     _completed_results[dispute_id] = result
