@@ -135,21 +135,28 @@ class PhaseEvent:
         label: str,
         data: Dict[str, Any],
         event_type: str = PHASE_COMPLETED,
+        sub_phase: Optional[str] = None,
     ):
         self.phase = phase
         self.label = label
         self.data = data
         self.event_type = event_type
+        # Optional UI sub-stage inside one pipeline phase. ROUND_2 uses:
+        #   INITIAL_AUDIT -> CROSS_EXAM -> FINAL_REPORT
+        self.sub_phase = sub_phase
         self.timestamp = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        event = {
             "event_type": self.event_type,
             "phase": self.phase,
             "label": self.label,
             "data": self.data,
             "timestamp": self.timestamp,
         }
+        if self.sub_phase:
+            event["sub_phase"] = self.sub_phase
+        return event
 
 
 # ----------------------------------------------------------------------
@@ -169,8 +176,9 @@ class AgentConversationEvent(PhaseEvent):
         speaker: str,
         message_type: str,
         data: Dict[str, Any],
+        sub_phase: Optional[str] = None,
     ):
-        super().__init__(phase, "AGENT_CONVERSATION", data)
+        super().__init__(phase, "AGENT_CONVERSATION", data, sub_phase=sub_phase)
         self.speaker = speaker
         self.message_type = message_type
 
@@ -329,6 +337,7 @@ class PipelineEngine:
         target: str,
         response: Any,
         turn: int,
+        sub_phase: Optional[str] = None,
     ) -> AgentConversationEvent:
         """Normalize an agent response into a UI-streamable conversation event."""
         if isinstance(response, dict):
@@ -365,16 +374,23 @@ class PipelineEngine:
             speaker=speaker,
             message_type=message_type,
             data=event_data,
+            sub_phase=sub_phase,
         )
 
     @staticmethod
-    def _phase_started(phase: str, label: str, data: Optional[Dict[str, Any]] = None) -> PhaseEvent:
+    def _phase_started(
+        phase: str,
+        label: str,
+        data: Optional[Dict[str, Any]] = None,
+        sub_phase: Optional[str] = None,
+    ) -> PhaseEvent:
         """Create an explicit phase-start event for the realtime UI."""
         return PhaseEvent(
             phase=phase,
             label=label,
             data={"status": "STARTED", **(data or {})},
             event_type=PhaseEvent.PHASE_STARTED,
+            sub_phase=sub_phase,
         )
 
     # -- Phase 1: INIT_CLAIM -----------------------------------------------
@@ -554,6 +570,7 @@ class PipelineEngine:
         yield self._phase_started(
             State.ROUND_2_PROSECUTOR_AUDIT,
             "检察官开始初始证据审计与欺诈筛查",
+            sub_phase="INITIAL_AUDIT",
         )
 
         initial_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
@@ -567,11 +584,19 @@ class PipelineEngine:
                 "prosecutor_findings": self.ctx.prosecutor_findings,
                 "bonus_modules": self.ctx.bonus_modules,
             },
+            sub_phase="INITIAL_AUDIT",
         )
 
         # ------------------------------------------------------------------
         # Step 2: 质询中 - 基于已核查的证据进行交叉质询 (Cross-Examination)
         # ------------------------------------------------------------------
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "检察官开始交叉质询",
+            sub_phase="CROSS_EXAM",
+        )
+
+        questions_asked = 0
         max_turns = 10
         for turn in range(1, max_turns + 1):
             # 此时 generateQuestion 上下文中已经包含初始的 prosecutor_findings 证据分析
@@ -602,7 +627,9 @@ class PipelineEngine:
                 target,
                 normalized_question,
                 turn,
+                sub_phase="CROSS_EXAM",
             )
+            questions_asked += 1
 
             advocate_generate_response = (
                 rider_generate_response
@@ -628,7 +655,19 @@ class PipelineEngine:
                 "PROSECUTOR",
                 normalized_response,
                 turn,
+                sub_phase="CROSS_EXAM",
             )
+
+        yield PhaseEvent(
+            phase=State.ROUND_2_PROSECUTOR_AUDIT,
+            label=f"交叉质询结束（共 {questions_asked} 个问题）",
+            data={
+                "questions_asked": questions_asked,
+                "targeted_questions": self.ctx.round_2_cross_exam.get("targeted_questions", []),
+                "targeted_responses": self.ctx.round_2_cross_exam.get("targeted_responses", []),
+            },
+            sub_phase="CROSS_EXAM",
+        )
 
         # ------------------------------------------------------------------
         # Step 3: 质询后 - 综合双方说辞与最终证据，生成终审 Prosecutor Report
@@ -638,6 +677,7 @@ class PipelineEngine:
         yield self._phase_started(
             State.ROUND_2_PROSECUTOR_AUDIT,
             "开始第二轮调查",
+            sub_phase="FINAL_REPORT",
         )
 
         final_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
@@ -660,6 +700,7 @@ class PipelineEngine:
                 "bonus_modules": self.ctx.bonus_modules,
                 "prosecutor_findings": self.ctx.prosecutor_findings,
             },
+            sub_phase="FINAL_REPORT",
         )
 
     # -- Phase 4: POLICY_CONSULTATION --------------------------------------
