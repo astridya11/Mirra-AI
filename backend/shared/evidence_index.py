@@ -4,6 +4,10 @@ Shared evidence-index builder.
 Gives every piece of evidence a stable ID that matches how P3's prosecutor
 numbers evidence, so advocates can cite evidence in Round 1 — before the
 prosecutor has run.  The input data is treated as read-only.
+
+Indexed evidence types: GPS telemetry (actual/optimal route + summary),
+APP_EVENT, CHAT_LOG, TRIP-DATA, PAYMENT-DATA, HISTORICAL_PROFILE, IMAGE
+(image_evidence), and RECEIPT (receipt_evidence).
 """
 
 from typing import Any
@@ -23,6 +27,21 @@ def _ts_short(ts: str | None) -> str:
         return str(ts)
 
 
+def _ts_full(ts: str | None) -> str:
+    """Return the full date+time of an ISO timestamp, or the raw value.
+
+    ``"2026-08-30T15:12:00+08:00"`` -> ``"2026-08-30 15:12:00"``.
+    Falls back to the raw string when parsing fails.
+    """
+    if not ts:
+        return "?"
+    try:
+        date_part, time_part = ts.split("T", 1)
+        return f"{date_part} {time_part[:8]}"
+    except (IndexError, AttributeError, ValueError):
+        return str(ts)
+
+
 # --- Main entry point ---------------------------------------------------------
 
 
@@ -34,6 +53,11 @@ def build_evidence_index(data_sources: dict) -> dict[str, dict]:
 
     The input dict is **not** modified — no keys are added to the items.
     Missing sections are silently skipped.
+
+    Indexed sections: gps_telemetry (actual_route, optimal_route,
+    ROUTE-SUMMARY), app_events, chat_communication, trip_data (TRIP-DATA),
+    payment_fare_data (PAYMENT-DATA), historical_profiles (PROFILE-*),
+    image_evidence (IMAGE), and receipt_evidence (RECEIPT).
     """
     index: dict[str, dict] = {}
 
@@ -114,7 +138,7 @@ def build_evidence_index(data_sources: dict) -> dict[str, dict]:
             parts.append(f"pickup {pickup['name']}")
         if dropoff.get("name"):
             parts.append(f"dropoff {dropoff['name']}")
-        for key in ("driver_arrival_time", "cancellation_time", "scheduled_time"):
+        for key in ("driver_arrival_time", "cancellation_time", "scheduled_time", "trip_end_time"):
             val = trip.get(key)
             if val:
                 parts.append(f"{key.replace('_', ' ')} {val}")
@@ -154,6 +178,94 @@ def build_evidence_index(data_sources: dict) -> dict[str, dict]:
                 f"{party}: account age {age} days, {trips} trips, "
                 f"rating {rating}, disputes {d30}/30d {d90}/90d"
             ),
+        }
+
+    # --- Image evidence ---
+    for i, img in enumerate(data_sources.get("image_evidence", [])):
+        if not isinstance(img, dict):
+            continue
+        eid = img.get("image_id") or f"IMG-{i:03d}"
+        parts: list[str] = ["Photo submitted"]
+
+        exif_ts = img.get("exif_timestamp")
+        if exif_ts:
+            parts.append(f"EXIF time {_ts_full(exif_ts)}")
+
+        loc = img.get("exif_gps_location")
+        if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
+            parts.append(f"EXIF GPS {loc['latitude']}, {loc['longitude']}")
+
+        pr = img.get("provider_result")
+        if isinstance(pr, dict):
+            classification = pr.get("stain_damage_classification")
+            severity = pr.get("damage_severity")
+            ai = pr.get("is_ai_generated")
+            ai_conf = pr.get("ai_generated_confidence")
+            provider_bits: list[str] = []
+            if classification or severity:
+                provider_bits.append(
+                    f"provider: {classification or '?'} {severity or '?'}".rstrip()
+                )
+            if ai is not None:
+                provider_bits.append(f"AI-generated {str(ai).lower()}")
+                if ai_conf is not None:
+                    provider_bits[-1] += f" (confidence {ai_conf})"
+            if provider_bits:
+                parts.append(", ".join(provider_bits))
+
+        known = img.get("known_matches")
+        if isinstance(known, dict) and known:
+            case_ids = list(known.values())
+            parts.append(f"image hash listed in known matches: {', '.join(str(c) for c in case_ids)}")
+
+        desc = "; ".join(parts)
+        if len(parts) <= 1:
+            desc = "Photo submitted; no metadata available"
+
+        index[eid] = {
+            "source_type": "IMAGE",
+            "description": desc,
+        }
+
+    # --- Receipt evidence ---
+    for i, rcp in enumerate(data_sources.get("receipt_evidence", [])):
+        if not isinstance(rcp, dict):
+            continue
+        eid = rcp.get("receipt_id") or f"RCP-{i:03d}"
+        parts: list[str] = []
+
+        uploaded = rcp.get("uploaded_at")
+        if uploaded:
+            parts.append(f"Receipt uploaded {_ts_full(uploaded)}")
+        else:
+            parts.append("Receipt uploaded")
+
+        ocr = rcp.get("ocr_result")
+        if isinstance(ocr, dict):
+            ocr_bits: list[str] = []
+            currency = ocr.get("currency")
+            amount = ocr.get("amount")
+            if currency and amount is not None:
+                ocr_bits.append(f"{currency} {amount:.2f}")
+            merchant = ocr.get("merchant_name")
+            if merchant:
+                ocr_bits.append(f"merchant {merchant}")
+            receipt_date = ocr.get("receipt_date")
+            if receipt_date:
+                ocr_bits.append(f"dated {_ts_full(receipt_date)}")
+            conf = ocr.get("ocr_confidence")
+            if conf is not None:
+                ocr_bits.append(f"OCR confidence {conf}")
+            if ocr_bits:
+                parts.append(f"OCR: {', '.join(ocr_bits)}")
+            else:
+                parts.append("OCR result unavailable (receipt could not be read)")
+        else:
+            parts.append("OCR result unavailable (receipt could not be read)")
+
+        index[eid] = {
+            "source_type": "RECEIPT",
+            "description": "; ".join(parts),
         }
 
     return index
