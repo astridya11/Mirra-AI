@@ -10,6 +10,7 @@ import type {
   TripListItem,
   CaseResult,
   HumanReviewRequest,
+  PartyDecisionRequest,
   PipelineCompleteEvent,
   PipelineEvent,
   RawCaseData,
@@ -87,6 +88,27 @@ export async function submitHumanReview(
     body: JSON.stringify(review),
   });
   if (!res.ok) throw new Error(`Failed to submit human review: ${res.status}`);
+  return res.json();
+}
+
+export async function submitPartyDecision(
+  id: string,
+  decision: PartyDecisionRequest
+): Promise<CaseResult> {
+  if (USE_MOCK) {
+    const { mockSubmitPartyDecision } = await import("@/src/mock/cases");
+    return mockSubmitPartyDecision(id, decision);
+  }
+  const res = await fetch(`${API_BASE_URL}/api/disputes/${id}/party-decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(decision),
+  });
+  if (res.status === 404 || res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Cannot submit decision: ${res.status}`);
+  }
+  if (!res.ok) throw new Error(`Failed to submit party decision: ${res.status}`);
   return res.json();
 }
 

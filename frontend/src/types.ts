@@ -318,6 +318,7 @@ export interface ExecutionPayload {
     override_reason?: string;
     modified_action?: RecommendedAction | null;
   };
+  party_decision?: PartyDecision;
   resolved_at: string;
 }
 
@@ -437,4 +438,21 @@ export interface HumanReviewRequest {
   override_reason?: string;
   modified_action?: RecommendedAction | null;
   review_notes?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Party Decision (terminal-user accept / request human review)
+// ---------------------------------------------------------------------------
+
+export type PartyDecisionType = "ACCEPT" | "REQUEST_HUMAN_REVIEW";
+
+export interface PartyDecisionRequest {
+  decision: PartyDecisionType;
+  comment?: string;
+}
+
+export interface PartyDecision {
+  decision: PartyDecisionType;
+  decided_at: string;
+  comment?: string;
 }

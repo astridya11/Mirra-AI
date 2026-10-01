@@ -113,6 +113,13 @@ class HumanReviewDecision(str, Enum):
     REJECTED_AUTO = "REJECTED_AUTO"
 
 
+class PartyDecisionType(str, Enum):
+    """Terminal-user (rider/driver) decision on a FULLY_AUTOMATED case."""
+
+    ACCEPT = "ACCEPT"
+    REQUEST_HUMAN_REVIEW = "REQUEST_HUMAN_REVIEW"
+
+
 # ----------------------------------------------------------------------
 # Phase & Conversation Events
 # ----------------------------------------------------------------------
@@ -1113,6 +1120,125 @@ async def apply_human_review(
     case_data.setdefault("case_metadata", {})
     case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
     case_data["case_metadata"]["updated_at"] = now
+    case_data["judge_verdict"] = judge_verdict
+
+    _save_case(case_data)
+    return case_data
+
+
+# ----------------------------------------------------------------------
+# Party Decision (terminal-user accept / request human review)
+# ----------------------------------------------------------------------
+
+
+async def apply_party_decision(
+    case_id: str,
+    decision: PartyDecisionType,
+    comment: str = "",
+) -> Dict[str, Any]:
+    """
+    Apply a terminal-user (rider/driver) decision to a FULLY_AUTOMATED case.
+
+    Only cases with resolution_channel=FULLY_AUTOMATED and no prior
+    party_decision are eligible. Cases already escalated to human review
+    are not eligible.
+
+    ACCEPT:
+      - Records party_decision in execution_payload.
+      - case_final_status stays AUTO_RESOLVED.
+      - No change to existing transaction_id (refund already issued).
+
+    REQUEST_HUMAN_REVIEW:
+      - Sets party_requested_human=True, is_escalated=True.
+      - Appends escalation reason matching _evaluate_execution_gate wording.
+      - Changes execution_status to PENDING_HUMAN_APPROVAL.
+      - Changes case_final_status to PENDING.
+      - Changes resolution_channel to ESCALATED_HUMAN_REVIEW.
+      - Does NOT roll back any already-issued refund (transaction_id preserved).
+      - Records party_decision in execution_payload.
+
+    Idempotent: calling on an already-decided case raises ValueError (→ 409).
+    Does not affect the apply_human_review flow (human reviewer can still
+    review the case afterward).
+
+    Schema reference: ExecutionPayload.party_decision and
+    EscalationProtocol.party_requested_human.
+    """
+    case_data = _get_completed_case(case_id)
+    if not case_data:
+        raise ValueError(f"No completed result for case {case_id}. Run the pipeline first.")
+
+    judge_verdict = case_data.get("judge_verdict", {})
+    execution_payload = judge_verdict.get("execution_payload", {})
+
+    # Check for prior party_decision
+    if execution_payload.get("party_decision"):
+        raise ValueError(
+            f"Case {case_id} has already received a party decision "
+            f"({execution_payload['party_decision'].get('decision')})."
+        )
+
+    # Only FULLY_AUTOMATED cases are eligible
+    resolution_channel = case_data.get("case_metadata", {}).get("resolution_channel", "")
+    if resolution_channel != "FULLY_AUTOMATED":
+        raise ValueError(
+            f"Case {case_id} is not eligible for party decision "
+            f"(resolution_channel={resolution_channel}). "
+            f"Only FULLY_AUTOMATED cases can receive a party decision."
+        )
+
+    now = datetime.now(_SGT).isoformat()
+    decision_value = decision.value if hasattr(decision, "value") else str(decision)
+
+    party_decision = {
+        "decision": decision_value,
+        "decided_at": now,
+    }
+    if comment:
+        party_decision["comment"] = comment
+
+    execution_payload["party_decision"] = party_decision
+
+    if decision == PartyDecisionType.ACCEPT:
+        # Case stays resolved; no further changes needed
+        execution_payload.setdefault("case_final_status", "AUTO_RESOLVED")
+    else:
+        # REQUEST_HUMAN_REVIEW — escalate to human review
+        execution_payload["execution_status"] = "PENDING_HUMAN_APPROVAL"
+        execution_payload["case_final_status"] = "PENDING"
+        # Preserve existing transaction_id — do NOT roll back refunds
+
+        # Update escalation protocol
+        bonus = case_data.get("bonus_modules", {})
+        esc_proto = bonus.get("escalation_protocol", {})
+        if not esc_proto:
+            esc_proto = {
+                "safety_threat_detected": False,
+                "fraud_risk_level": "LOW",
+                "escalation_reasons": [],
+                "is_escalated": False,
+                "priority_level": "STANDARD",
+            }
+            bonus["escalation_protocol"] = esc_proto
+            case_data["bonus_modules"] = bonus
+
+        esc_proto["party_requested_human"] = True
+        esc_proto["is_escalated"] = True
+        if "escalation_reasons" not in esc_proto or not isinstance(
+            esc_proto["escalation_reasons"], list
+        ):
+            esc_proto["escalation_reasons"] = []
+        esc_proto["escalation_reasons"].append(
+            "当事人不满意自动决策，请求人工审核"
+        )
+        esc_proto["priority_level"] = "HIGH_PRIORITY"
+
+        # Update case metadata
+        case_data.setdefault("case_metadata", {})
+        case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
+
+    case_data["case_metadata"]["updated_at"] = now
+    judge_verdict["execution_payload"] = execution_payload
     case_data["judge_verdict"] = judge_verdict
 
     _save_case(case_data)

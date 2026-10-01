@@ -31,7 +31,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.orchestrator.state_machine import (
     ExecutionRoute,
     HumanReviewDecision,
+    PartyDecisionType,
     apply_human_review,
+    apply_party_decision,
     run_dispute_pipeline_realtime
 )
 
@@ -136,6 +138,14 @@ class HumanReviewRequest(BaseModel):
         description="Modified RecommendedAction if decision is MODIFIED",
     )
     review_notes: str = Field("", description="Additional review notes")
+
+
+class PartyDecisionRequest(BaseModel):
+    decision: str = Field(
+        ...,
+        description="ACCEPT | REQUEST_HUMAN_REVIEW",
+    )
+    comment: str = Field("", description="Optional comment from the party")
 
 
 class RefundRequest(BaseModel):
@@ -347,6 +357,57 @@ async def submit_human_review(dispute_id: str, review: HumanReviewRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Human review application failed: {exc}",
+        )
+
+    _completed_results[dispute_id] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Party decision (terminal-user accept / request human review)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/disputes/{dispute_id}/party-decision")
+async def submit_party_decision(dispute_id: str, request: PartyDecisionRequest):
+    """
+    Submit a terminal-user (rider/driver) decision for a FULLY_AUTOMATED case.
+
+    Only cases with resolution_channel=FULLY_AUTOMATED and no prior
+    party_decision are eligible.
+
+    ACCEPT: records the decision, case stays resolved.
+    REQUEST_HUMAN_REVIEW: escalates the case to human review without
+    rolling back any already-issued refund.
+
+    Does not affect the human-review flow — a human reviewer can still
+    review the case afterward via POST /human-review.
+    """
+    valid_decisions = {d.value for d in PartyDecisionType}
+    if request.decision not in valid_decisions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid decision: {request.decision}. "
+                f"Must be one of: {', '.join(sorted(valid_decisions))}"
+            ),
+        )
+
+    try:
+        result = await apply_party_decision(
+            case_id=dispute_id,
+            decision=PartyDecisionType(request.decision),
+            comment=request.comment,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not eligible" in msg or "already received" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=404, detail=msg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Party decision application failed: {exc}",
         )
 
     _completed_results[dispute_id] = result

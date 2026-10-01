@@ -7,6 +7,8 @@ import type {
   CaseListItem,
   CaseResult,
   HumanReviewRequest,
+  PartyDecisionRequest,
+  PartyDecision,
   RawCaseData,
   TripListItem,
 } from "@/src/types";
@@ -1305,5 +1307,68 @@ export async function mockSubmitHumanReview(
     result.judge_verdict.execution_payload.case_final_status =
       review.approval_decision === "CONFIRMED_AUTO" ? "HUMAN_RESOLVED" : "HUMAN_OVERRIDDEN";
   }
+  return result;
+}
+
+export async function mockSubmitPartyDecision(
+  id: string,
+  request: PartyDecisionRequest
+): Promise<CaseResult> {
+  const result = mockCompletedResults[id];
+  if (!result) throw new Error(`Case ${id} not found`);
+
+  const ep = result.judge_verdict?.execution_payload;
+  if (!ep) throw new Error(`Case ${id} has no execution payload`);
+
+  // Reject if already has a party_decision
+  if (ep.party_decision) {
+    throw new Error(`Case ${id} has already received a party decision`);
+  }
+
+  // Only FULLY_AUTOMATED cases are eligible
+  if (
+    result.case_metadata.resolution_channel !== "FULLY_AUTOMATED" &&
+    ep.execution_status !== "AUTO_EXECUTED"
+  ) {
+    throw new Error(`Case ${id} is not eligible for party decision (not FULLY_AUTOMATED)`);
+  }
+
+  const now = new Date().toISOString();
+  const decision: PartyDecision = {
+    decision: request.decision,
+    decided_at: now,
+    comment: request.comment,
+  };
+
+  ep.party_decision = decision;
+
+  if (request.decision === "ACCEPT") {
+    // Case stays resolved
+    ep.case_final_status = "AUTO_RESOLVED";
+  } else {
+    // REQUEST_HUMAN_REVIEW — escalate
+    ep.execution_status = "PENDING_HUMAN_APPROVAL";
+    ep.case_final_status = "PENDING";
+    result.case_metadata.resolution_channel = "ESCALATED_HUMAN_REVIEW";
+
+    // Update escalation protocol
+    if (!result.bonus_modules) result.bonus_modules = {};
+    if (!result.bonus_modules.escalation_protocol)
+      result.bonus_modules.escalation_protocol = {
+        safety_threat_detected: false,
+        fraud_risk_level: "LOW",
+        escalation_reasons: [],
+        is_escalated: false,
+        priority_level: "STANDARD",
+      };
+    const esc = result.bonus_modules.escalation_protocol;
+    esc.party_requested_human = true;
+    esc.is_escalated = true;
+    if (!esc.escalation_reasons) esc.escalation_reasons = [];
+    esc.escalation_reasons.push("当事人不满意自动决策，请求人工审核");
+    esc.priority_level = "HIGH_PRIORITY";
+  }
+
+  result.case_metadata.updated_at = now;
   return result;
 }
