@@ -1442,7 +1442,7 @@
         },
         "penalty_target": {
           "type": "string",
-          "description": "Which party receives the penalty points.",
+          "description": "Which party receives the penalty.",
           "enum": [
             "RIDER",
             "DRIVER",

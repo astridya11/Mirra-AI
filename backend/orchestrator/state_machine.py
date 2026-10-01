@@ -119,16 +119,32 @@ class HumanReviewDecision(str, Enum):
 
 
 class PhaseEvent:
-    """Captures a single phase transition for event streaming."""
+    """Transport event for a pipeline phase lifecycle transition.
 
-    def __init__(self, phase: str, label: str, data: Dict[str, Any]):
+    ``event_type`` deliberately distinguishes lifecycle events from agent
+    conversation events so the UI does not have to infer ordering from the
+    event label.
+    """
+
+    PHASE_STARTED = "PHASE_STARTED"
+    PHASE_COMPLETED = "PHASE_COMPLETED"
+
+    def __init__(
+        self,
+        phase: str,
+        label: str,
+        data: Dict[str, Any],
+        event_type: str = PHASE_COMPLETED,
+    ):
         self.phase = phase
         self.label = label
         self.data = data
+        self.event_type = event_type
         self.timestamp = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "event_type": self.event_type,
             "phase": self.phase,
             "label": self.label,
             "data": self.data,
@@ -351,6 +367,16 @@ class PipelineEngine:
             data=event_data,
         )
 
+    @staticmethod
+    def _phase_started(phase: str, label: str, data: Optional[Dict[str, Any]] = None) -> PhaseEvent:
+        """Create an explicit phase-start event for the realtime UI."""
+        return PhaseEvent(
+            phase=phase,
+            label=label,
+            data={"status": "STARTED", **(data or {})},
+            event_type=PhaseEvent.PHASE_STARTED,
+        )
+
     # -- Phase 1: INIT_CLAIM -----------------------------------------------
 
     async def _phase_init_claim(self) -> PhaseEvent:
@@ -374,7 +400,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.INIT_CLAIM,
-            label="1. 案件初始化与证据冻结",
+            label="案件初始化与证据冻结完成",
             data={
                 "status": "EVIDENCE_FROZEN",
                 "dispute_type": self.ctx.case_metadata["dispute_type"],
@@ -446,7 +472,7 @@ class PipelineEngine:
         self.ctx.set_state(State.ROUND_2_PROSECUTOR_AUDIT, round_num=2)
         yield PhaseEvent(
             phase=State.ROUND_1_PLEADINGS,
-            label="2. 第一轮辩论（申诉与答辩）",
+            label="第一轮辩论（申诉与答辩）结束",
             data=self.ctx.round_1_statements,
         )
 
@@ -522,15 +548,21 @@ class PipelineEngine:
 
         # ------------------------------------------------------------------
         # Step 1: 质询前 - 执行初始证据审计 (Initial Evidence Audit)
-        # 检察官先运行工具分析 telemetry, EXIF, Chat logs, Fraud score
         # ------------------------------------------------------------------
+        # Emit PHASE_STARTED before any audit work so the UI can render the
+        # 3a phase header before its result arrives.
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "检察官开始初始证据审计与欺诈筛查",
+        )
+
         initial_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
         self.ctx.bonus_modules = initial_audit_result.get("bonus_modules", {})
         self.ctx.prosecutor_findings = initial_audit_result.get("prosecutor_findings", {})
 
         yield PhaseEvent(
             phase=State.ROUND_2_PROSECUTOR_AUDIT,
-            label="3a. 检察官初始证据审计与欺诈筛查",
+            label="检察官结束初始证据审计与欺诈筛查",
             data={
                 "prosecutor_findings": self.ctx.prosecutor_findings,
                 "bonus_modules": self.ctx.bonus_modules,
@@ -601,6 +633,13 @@ class PipelineEngine:
         # ------------------------------------------------------------------
         # Step 3: 质询后 - 综合双方说辞与最终证据，生成终审 Prosecutor Report
         # ------------------------------------------------------------------
+        # The cross-examination conversation is already complete. Start 3b
+        # explicitly before generating the final Prosecutor Report.
+        yield self._phase_started(
+            State.ROUND_2_PROSECUTOR_AUDIT,
+            "开始第二轮调查",
+        )
+
         final_audit_result = await run_prosecutor_audit(self.ctx.to_live_context_dict())
 
         self.ctx.bonus_modules = final_audit_result.get("bonus_modules", {})
@@ -614,7 +653,7 @@ class PipelineEngine:
 
         yield PhaseEvent(
             phase=State.ROUND_2_PROSECUTOR_AUDIT,
-            label="3b. 第二轮调查质询完成与检察官报告(Prosecutor Report)出具",
+            label="第二轮调查完成，检察官报告已出具",
             data={
                 "round_2_cross_exam": self.ctx.round_2_cross_exam,
                 "agent_conversation": self.ctx.agent_conversation,
@@ -674,7 +713,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.POLICY_CONSULTATION,
-            label="4. 平台条款与历史判例检索",
+            label="平台条款与历史判例检索完成",
             data=self.ctx.policy_consultation,
         )
 
@@ -703,7 +742,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.JUDGE_DELIBERATION,
-            label="5. 大模型法官终审裁决",
+            label="大模型法官终审裁决结束",
             data=self.ctx.judge_verdict,
         )
 
@@ -737,7 +776,7 @@ class PipelineEngine:
 
         return PhaseEvent(
             phase=State.EXECUTION_ROUTER,
-            label="6. 执行路由与人工审核分流",
+            label="执行路由与人工审核分流完成",
             data=gate_decision,
         )
 
@@ -850,86 +889,56 @@ class PipelineEngine:
     # -- Real-Time Pipeline Executor ---------------------------------------
 
     async def execute_all_realtime(self) -> AsyncGenerator[PhaseEvent, None]:
-        """Run the full pipeline while yielding each live conversation & phase event."""
+        """Run the full pipeline with explicit lifecycle/conversation events.
+
+        Every UI phase follows this contract:
+
+            PHASE_STARTED
+                -> zero or more AGENT_CONVERSATION events
+                -> PHASE_COMPLETED
+
+        Round 2 additionally exposes its two visible sub-phases (3a/3b) using
+        the same lifecycle contract.
+        """
+        # 1. INIT_CLAIM
+        yield self._phase_started(
+            State.INIT_CLAIM,
+            "正在进行案件初始化与证据冻结",
+        )
         yield await self._phase_init_claim()
 
+        # 2. ROUND_1_PLEADINGS
+        yield self._phase_started(
+            State.ROUND_1_PLEADINGS,
+            "开始第一轮辩论（申诉与答辩）",
+        )
         async for event in self._stream_round_1_pleadings():
             yield event
 
+        # 3a / 3b are emitted by the Round 2 streaming phase itself.
         async for event in self._stream_round_2_prosecutor_audit():
             yield event
 
+        # 4. POLICY_CONSULTATION
+        yield self._phase_started(
+            State.POLICY_CONSULTATION,
+            "正在进行平台条款与历史判例检索",
+        )
         yield await self._phase_policy_consultation()
+
+        # 5. JUDGE_DELIBERATION
+        yield self._phase_started(
+            State.JUDGE_DELIBERATION,
+            "大模型法官终审裁决中",
+        )
         yield await self._phase_judge_deliberation()
+
+        # 6. EXECUTION_ROUTER
+        yield self._phase_started(
+            State.EXECUTION_ROUTER,
+            "正在执行路由与人工审核分流",
+        )
         yield await self._phase_execution_router()
-
-
-# ----------------------------------------------------------------------
-# Helper Functions (used by the deterministic fallback)
-# ----------------------------------------------------------------------
-
-
-def _build_suggested_action(
-    dispute_type: str, policy_values: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Build a RecommendedAction (schema: RecommendedAction) from policy values."""
-    action: Dict[str, Any] = {
-        "action_type": "NO_REFUND",
-        "refund_amount": 0,
-        "cleaning_fee_amount": 0,
-        "currency": "SGD",
-        "penalty_points": 0,
-        "penalty_target": "NONE",
-        "account_action": "NONE",
-    }
-
-    if not policy_values.get("computable", False):
-        action["action_type"] = "ESCALATED_NO_ACTION"
-        return action
-
-    if dispute_type == "ROUTE_DEVIATION":
-        refund = policy_values.get("refund_if_no_valid_reason", 0)
-        if refund and refund > 0:
-            action["action_type"] = "FULL_REFUND"
-            action["refund_amount"] = refund
-
-    elif dispute_type == "NO_SHOW_CHARGE":
-        refund = policy_values.get("refund_if_fee_reversed", 0)
-        if refund and refund > 0:
-            action["action_type"] = "FULL_REFUND"
-            action["refund_amount"] = refund
-
-    elif dispute_type == "CLEANING_FEE":
-        max_chargeable = policy_values.get("max_chargeable")
-        if max_chargeable is not None and max_chargeable > 0:
-            action["action_type"] = "CLEANING_FEE_CHARGE"
-            action["cleaning_fee_amount"] = max_chargeable
-        else:
-            action["action_type"] = "ESCALATED_NO_ACTION"
-
-    return action
-
-
-def _suggest_ruling(
-    dispute_type: str, policy_values: Dict[str, Any]
-) -> str:
-    """Determine a suggested ruling_type from policy values."""
-    if not policy_values.get("computable", False):
-        return "ESCALATED"
-
-    if dispute_type == "ROUTE_DEVIATION":
-        refund = policy_values.get("refund_if_no_valid_reason", 0)
-        return "APPROVED" if refund and refund > 0 else "REJECTED"
-
-    if dispute_type == "NO_SHOW_CHARGE":
-        threshold_met = policy_values.get("threshold_met", False)
-        return "REJECTED" if threshold_met else "APPROVED"
-
-    if dispute_type == "CLEANING_FEE":
-        max_chargeable = policy_values.get("max_chargeable")
-        return "APPROVED" if max_chargeable is not None and max_chargeable > 0 else "ESCALATED"
-
-    return "ESCALATED"
 
 
 # ----------------------------------------------------------------------

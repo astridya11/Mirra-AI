@@ -16,6 +16,7 @@ Schema reference: shared/schemas.json (RydeMultiAgentAutonomousDisputeResolution
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -25,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.orchestrator.state_machine import (
     ExecutionRoute,
@@ -47,6 +49,20 @@ app = FastAPI(
         "JUDGE_DELIBERATION → EXECUTION_ROUTER."
     ),
     version="1.0.0",
+)
+
+# 从环境变量获取允许的域名列表，以逗号分隔；若未配置则使用默认开发环境域名
+raw_origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+)
+allowed_origins = [origin.strip() for origin in raw_origins.split(",")]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 _SGT = timezone(timedelta(hours=8))
@@ -157,6 +173,37 @@ async def health_check():
 # Dispute listing & raw data loading
 # ---------------------------------------------------------------------------
 
+@app.get("/api/trips")
+async def list_trips():
+    """
+    List all available trips by scanning the mock_data directory.
+    """
+    trips: list[dict[str, Any]] = []
+    if not _MOCK_DATA_DIR.exists():
+        return trips
+
+    for file_path in sorted(_MOCK_DATA_DIR.glob("*.json")):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                case_data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        meta = case_data.get("case_metadata", {})
+        data_sources = case_data.get("data_sources", {})
+        case_id = meta.get("case_id", file_path.stem)
+
+        trips.append(
+            {
+                "case_id": case_id,
+                "trip_id": meta.get("trip_id"),
+                "trip_data": data_sources.get("trip_data"),
+                "historical_profiles": data_sources.get("historical_profiles"),
+                "payment_fare_data": data_sources.get("payment_fare_data")
+            }
+        )
+
+    return trips
 
 @app.get("/api/disputes")
 async def list_dispute_cases():
@@ -225,7 +272,10 @@ async def stream_pipeline_realtime(dispute_id: str):
     async def event_generator():
         # 实时产生事件，出一条就往前端推一条
         async for event in run_dispute_pipeline_realtime(dispute_id):
-            # event 是一个 dict，例如: {"phase": "ROUND_1_PLEADINGS", "data": {...}}
+            # event now contains:
+            # PHASE_STARTED
+            # PHASE_COMPLETED
+            # AGENT_CONVERSATION
             yield {
                 "event": "pipeline_event",  # 事件类型
                 "data": json.dumps(event),  # 转为 JSON 字符串传输
