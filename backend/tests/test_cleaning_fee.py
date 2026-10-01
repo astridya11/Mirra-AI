@@ -330,6 +330,141 @@ def test_cleaning_structured_image_evidence_verified(disp003_data):
     assert "available" in result["description"].lower()
 
 
+# ===========================================================================
+# Structured image evidence — deterministic image-check outcomes
+# ===========================================================================
+
+_FORBIDDEN_FABRICATION_TERMS = (
+    "recycled image",
+    "fabricated evidence",
+    "ai-generated",
+    "ai generated",
+    "synthetic image",
+)
+
+
+def _make_full_image(
+    image_id: str = "IMG-001",
+    exif_timestamp: str = "2026-09-25T22:15:00+08:00",
+    lat: float = 1.3508,
+    lng: float = 103.8485,
+    is_ai_generated: bool = False,
+    ai_confidence: float = 0.05,
+    classification: str = "LIQUID_SPILL",
+    severity: str = "MODERATE",
+    image_hash: str | None = "phash:aaaaaaaaaaaaaaaa",
+    known_matches: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build a fully-valid image_evidence entry that can pass _can_emit_exif_analysis."""
+    entry: dict[str, Any] = {
+        "image_id": image_id,
+        "image_url": f"mock://evidence/{image_id}.jpg",
+        "exif_timestamp": exif_timestamp,
+        "exif_gps_location": {"latitude": lat, "longitude": lng},
+        "provider_result": {
+            "is_ai_generated": is_ai_generated,
+            "ai_generated_confidence": ai_confidence,
+            "stain_damage_classification": classification,
+            "damage_severity": severity,
+        },
+    }
+    if image_hash is not None:
+        entry["image_hash"] = image_hash
+    if known_matches is not None:
+        entry["known_matches"] = known_matches
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# DISP-004 → VERIFIED (recycled image), party_relevance DRIVER
+# ---------------------------------------------------------------------------
+def test_disp004_structured_image_recycled_verified(disp004_data):
+    result = check_cleaning_structured_image_evidence(disp004_data)
+    assert result["status"] == "VERIFIED"
+    desc = result["description"]
+    assert "Recycled image detected" in desc
+    assert "DISP-0871" in desc
+    # EXIF is also inconsistent (timestamp 2026-08-30 vs trip 2026-09-25)
+    assert "inconsistent" in desc.lower()
+    assert result["details"]["party_relevance"] == "DRIVER"
+    # evidence_ref IMG-001 with source_type IMAGE
+    ref_ids = [r["evidence_id"] for r in result["evidence_refs"]]
+    assert "IMG-001" in ref_ids
+    img_ref = next(r for r in result["evidence_refs"] if r["evidence_id"] == "IMG-001")
+    assert img_ref["source_type"] == "IMAGE"
+
+
+# ---------------------------------------------------------------------------
+# DISP-004 deepcopy with known_matches removed → DISPUTED (EXIF only)
+# ---------------------------------------------------------------------------
+def test_disp004_structured_image_exif_disputed(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    data["data_sources"]["image_evidence"][0].pop("known_matches", None)
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "DISPUTED"
+    assert result["details"]["party_relevance"] == "DRIVER"
+    desc_lower = result["description"].lower()
+    assert "inconsistent" in desc_lower
+    for forbidden in _FORBIDDEN_FABRICATION_TERMS:
+        assert forbidden not in desc_lower
+
+
+# ---------------------------------------------------------------------------
+# AI-generated image, no known match → VERIFIED containing "AI-generated"
+# ---------------------------------------------------------------------------
+def test_structured_image_ai_generated_verified(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    img = data["data_sources"]["image_evidence"][0]
+    img.pop("known_matches", None)
+    img["provider_result"]["is_ai_generated"] = True
+    img["provider_result"]["ai_generated_confidence"] = 0.92
+    # Fix EXIF so only the AI flag triggers
+    img["exif_timestamp"] = "2026-09-25T22:15:00+08:00"
+    img["exif_gps_location"] = {"latitude": 1.3508, "longitude": 103.8485}
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "VERIFIED"
+    assert "AI-generated image detected" in result["description"]
+    assert "0.92" in result["description"]
+    assert result["details"]["party_relevance"] == "DRIVER"
+
+
+# ---------------------------------------------------------------------------
+# Clean image (EXIF 10 min after trip_completed, GPS at dropoff) → VERIFIED, no issue
+# ---------------------------------------------------------------------------
+def test_structured_image_clean_verified_no_issue(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    # Replace with a single clean image
+    data["data_sources"]["image_evidence"] = [
+        _make_full_image(
+            exif_timestamp="2026-09-25T22:15:00+08:00",  # 10 min after trip_completed (22:05)
+            lat=1.3508,  # dropoff lat
+            lng=103.8485,  # dropoff lng
+            is_ai_generated=False,
+            ai_confidence=0.05,
+            image_hash="phash:cleanimage000001",
+            known_matches=None,
+        )
+    ]
+    # Remove known_matches so no recycled detection
+    data["data_sources"]["image_evidence"][0].pop("known_matches", None)
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "VERIFIED"
+    desc_lower = result["description"].lower()
+    assert "found no issue" in desc_lower
+    for forbidden in _FORBIDDEN_FABRICATION_TERMS:
+        assert forbidden not in desc_lower
+    assert "party_relevance" not in result["details"]
+
+
+# ---------------------------------------------------------------------------
+# DISP-003 → unchanged MISSING fact (same description as before)
+# ---------------------------------------------------------------------------
+def test_disp003_structured_image_missing_unchanged(disp003_data):
+    result = check_cleaning_structured_image_evidence(disp003_data)
+    assert result["status"] == "MISSING"
+    assert "frozen structured evidence record" in result["description"].lower()
+
+
 # ---------------------------------------------------------------------------
 # 24. No claim text + no structured record -> MISSING (no image evidence)
 # ---------------------------------------------------------------------------

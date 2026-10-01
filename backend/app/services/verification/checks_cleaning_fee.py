@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from .checks import _evidence_ref, _is_before, _parse_ts, _seconds_between
-from .image_analysis import extract_images_from_context
+from .image_analysis import analyze_image_evidence_batch, extract_images_from_context
 
 _CLEANING_RELEVANT_TERMS = frozenset(
     {
@@ -704,11 +704,30 @@ def check_cleaning_conflicting_party_accounts(data: dict[str, Any]) -> dict[str,
 
 
 def check_cleaning_structured_image_evidence(data: dict[str, Any]) -> dict[str, Any]:
-    """Whether structured image evidence is available in the frozen record.
+    """Report the outcome of deterministic image checks on structured image evidence.
 
-    Must NOT claim image authenticity or perform EXIF analysis.
+    When valid images exist, runs the same analysis used to build
+    ``bonus_modules.image_exif_analyses`` (EXIF time/location consistency,
+    known-image match, provider AI flag) and states the result as a fact so
+    POL-10 can see it:
+
+    - Any image recycled or AI-generated → VERIFIED, ``party_relevance`` "DRIVER".
+      Description sentences include "Recycled image detected: …" and
+      "AI-generated image detected: …", plus an EXIF-inconsistency sentence
+      if applicable.
+    - Otherwise any image with ``exif_consistent_with_trip`` false → DISPUTED,
+      ``party_relevance`` "DRIVER" (an honest mistake is possible, so this is
+      not a fabrication finding). The description must NOT contain any term
+      matched by POL-10 ("recycled image", "fabricated evidence",
+      "ai-generated", "ai generated", "synthetic image").
+    - Otherwise → VERIFIED with the current text plus " Image checks found no
+      issue." No ``party_relevance``.
+
+    Must NOT conclude intent, who is at fault, or whether the fee is justified.
     """
     ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
     image_evidence = ds.get("image_evidence")
 
     if image_evidence is None:
@@ -756,10 +775,106 @@ def check_cleaning_structured_image_evidence(data: dict[str, Any]) -> dict[str, 
             "details": {"confidence_level": 1.0},
         }
 
+    # Run the deterministic image analysis (same as bonus_modules.image_exif_analyses)
+    analyses = analyze_image_evidence_batch(valid_images, ds)
+
+    # Build one evidence_ref per analysed image
+    evidence_refs: list[dict[str, Any]] = []
+    for analysis in analyses:
+        img_id = analysis.get("image_id", "IMG-???")
+        exif_ts = analysis.get("exif_timestamp", "?")
+        provider = analysis.get("stain_damage_classification", "?")
+        severity = analysis.get("damage_severity")
+        severity_str = f", severity {severity}" if severity else ""
+        evidence_refs.append(
+            _evidence_ref(
+                img_id,
+                "IMAGE",
+                f"EXIF time {exif_ts}, provider classification {provider}{severity_str}",
+            )
+        )
+
+    # Classify each analysed image
+    fabrication_sentences: list[str] = []
+    exif_inconsistent_sentences: list[str] = []
+    fabrication_present = False
+
+    for analysis in analyses:
+        img_id = analysis.get("image_id", "IMG-???")
+
+        recycled = analysis.get("recycled_image_detected") is True
+        ai_generated = analysis.get("is_ai_generated") is True
+        exif_consistent = analysis.get("exif_consistent_with_trip")
+        exif_bad = exif_consistent is False
+
+        if recycled:
+            fabrication_present = True
+            match_case = analysis.get("recycled_image_match_case_id")
+            if match_case:
+                fabrication_sentences.append(
+                    f"Recycled image detected: {img_id} matches prior case {match_case}."
+                )
+            else:
+                fabrication_sentences.append(
+                    f"Recycled image detected: {img_id} matches a prior case."
+                )
+
+        if ai_generated:
+            fabrication_present = True
+            confidence = analysis.get("ai_generated_confidence")
+            if _is_number(confidence):
+                fabrication_sentences.append(
+                    f"AI-generated image detected: {img_id} (provider confidence {confidence:.2f})."
+                )
+            else:
+                fabrication_sentences.append(
+                    f"AI-generated image detected: {img_id}."
+                )
+
+        if exif_bad:
+            exif_inconsistent_sentences.append(
+                f"{img_id} EXIF time/location is inconsistent with the trip record."
+            )
+
+    # Case (a): recycled or AI-generated → VERIFIED, party_relevance DRIVER
+    if fabrication_present:
+        parts = list(fabrication_sentences)
+        # Append EXIF-inconsistency sentences for images that also have fabrication findings
+        parts.extend(exif_inconsistent_sentences)
+        description = " ".join(parts)
+        return {
+            "status": "VERIFIED",
+            "description": description,
+            "evidence_refs": evidence_refs,
+            "details": {
+                "image_count": len(valid_images),
+                "party_relevance": "DRIVER",
+                "confidence_level": 1.0,
+            },
+        }
+
+    # Case (b): EXIF inconsistent (no fabrication) → DISPUTED, party_relevance DRIVER
+    if exif_inconsistent_sentences:
+        description = " ".join(exif_inconsistent_sentences)
+        return {
+            "status": "DISPUTED",
+            "description": description,
+            "evidence_refs": evidence_refs,
+            "details": {
+                "image_count": len(valid_images),
+                "party_relevance": "DRIVER",
+                "confidence_level": 1.0,
+            },
+        }
+
+    # Case (c): no issues → VERIFIED, no party_relevance
     return {
         "status": "VERIFIED",
-        "description": "Structured image evidence is available in the frozen evidence record.",
-        "evidence_refs": [],
+        "description": (
+            "Structured image evidence is available in the frozen evidence record."
+            " Image checks found no issue."
+        ),
+        "evidence_refs": evidence_refs,
         "details": {"image_count": len(valid_images), "confidence_level": 1.0},
     }
 
