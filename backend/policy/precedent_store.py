@@ -379,10 +379,17 @@ def _compute_no_show(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
 def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     """POL-4 using only evidence fields represented by schemas.json.
 
-    The schema does not define a structured cleaning receipt, trip-end timestamp,
-    or a receipt/claim object. Those prerequisites therefore cannot be invented
-    from unrelated fields; when they are absent the policy computation escalates
-    rather than silently treating them as satisfied.
+    schemas.json TripData defines trip_end_time (the drop-off timestamp used for
+    the photo time window) and DataSources defines receipt_evidence
+    (ReceiptEvidenceInput / ReceiptOcrResult) for cleaning-fee receipt amounts.
+
+    The fee is min(receipt_amount, severity_cap) where receipt_amount is the sum
+    of readable receipt ocr_result.amount values.  When receipt_evidence is
+    absent or empty, the old context-based receipt_present flag is used as a
+    fallback (receipt_amount = None, fee = cap).  When receipt_required is true
+    and no readable receipt (and no fallback True) is available, the policy
+    computation is not computable rather than silently treating the prerequisite
+    as satisfied.
     """
     params = clause.get("params", {})
     ds = context.get("data_sources", {}) or {}
@@ -396,26 +403,57 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
     if not dropoff:
         return {"computable": False, "reason": "POL-4 photo location check requires trip_data.dropoff_location"}
 
-    # The master schema has no structured trip-end timestamp or cleaning-receipt
-    # field. Accept an explicitly supplied runtime adapter field only when it is
-    # outside the case schema; otherwise remain non-computable rather than infer.
+    # --- Receipt evidence (shared/schemas.json DataSources.receipt_evidence) --
+    receipts_raw = ds.get("receipt_evidence") or []
+    receipts = [r for r in receipts_raw if isinstance(r, dict)]
+
+    if receipts:
+        readable = []
+        for r in receipts:
+            ocr = r.get("ocr_result")
+            if not isinstance(ocr, dict):
+                continue
+            amount = ocr.get("amount")
+            if isinstance(amount, (int, float)) and math.isfinite(amount) and amount >= 0:
+                readable.append(float(amount))
+        receipt_amount: Optional[float] = sum(readable) if readable else None
+        receipt_present = bool(readable)
+    else:
+        # Fallback: old context-based flag, only when receipt_evidence is absent.
+        fallback_present = context.get("cleaning_receipt_present")
+        if fallback_present is None:
+            fallback_present = (
+                context.get("cleaning_claim", {}).get("receipt_present")
+                if isinstance(context.get("cleaning_claim"), dict)
+                else None
+            )
+        receipt_present = fallback_present is True
+        receipt_amount = None
+
+    if params.get("receipt_required", True) and not receipt_present:
+        if receipts:
+            reason = (
+                "POL-4 requires a readable cleaning receipt "
+                "(receipt_evidence with ocr_result.amount); "
+                "receipt_evidence was provided but the receipt could not be read"
+            )
+        else:
+            reason = (
+                "POL-4 requires a readable cleaning receipt "
+                "(receipt_evidence with ocr_result.amount)"
+            )
+        return {"computable": False, "reason": reason}
+
+    # --- Trip end timestamp (shared/schemas.json TripData.trip_end_time) ------
     trip_end = _parse_dt(
         trip.get("trip_end_time")
         or trip.get("dropoff_time")
         or context.get("trip_end_time")
     )
-    receipt_present = context.get("cleaning_receipt_present")
-    if receipt_present is None:
-        receipt_present = context.get("cleaning_claim", {}).get("receipt_present") if isinstance(context.get("cleaning_claim"), dict) else None
-    if params.get("receipt_required", True) and receipt_present is not True:
-        return {
-            "computable": False,
-            "reason": "POL-4 requires a verified cleaning receipt; schemas.json does not define a structured receipt field",
-        }
     if not trip_end:
         return {
             "computable": False,
-            "reason": "POL-4 photo_window_min_after_trip_end requires a trip-end timestamp; schemas.json TripData does not define one",
+            "reason": "POL-4 photo_window_min_after_trip_end requires trip_data.trip_end_time",
         }
 
     valid = []
@@ -480,11 +518,39 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
             "reason": "No chargeable damage detected in verified image evidence.",
             "confidence": 0.85,
         }
+
+    if isinstance(receipt_amount, (int, float)):
+        fee = min(receipt_amount, cap)
+    else:
+        fee = cap
+    fee = round(fee, 2)
+
+    if fee <= 0:
+        return {
+            "computable": True,
+            "ruling_type": "REJECTED",
+            "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
+            "reason": "No chargeable damage detected in verified image evidence.",
+            "confidence": 0.85,
+        }
+
+    if isinstance(receipt_amount, (int, float)):
+        reason = (
+            f"Verified {severity} damage; fee = min(receipt SGD {receipt_amount:.2f}, "
+            f"{severity} cap SGD {cap:.2f}) = SGD {fee:.2f}. "
+            f"Cleaning fee still requires human confirmation before execution."
+        )
+    else:
+        reason = (
+            f"Verified {severity} damage; fee = {severity} cap SGD {fee:.2f}. "
+            f"Cleaning fee still requires human confirmation before execution."
+        )
+
     return {
         "computable": True,
         "ruling_type": "APPROVED",
-        "action": {"action_type": "CLEANING_FEE_CHARGE", "refund_amount": 0, "cleaning_fee_amount": cap, "currency": "SGD"},
-        "reason": f"Verified {severity} damage; POL-4 severity cap applied. Cleaning fee still requires human confirmation before execution.",
+        "action": {"action_type": "CLEANING_FEE_CHARGE", "refund_amount": 0, "cleaning_fee_amount": fee, "currency": "SGD"},
+        "reason": reason,
         "confidence": 0.9,
     }
 
