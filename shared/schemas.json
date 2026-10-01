@@ -1517,15 +1517,9 @@
           "description": "ISO 4217 currency code.",
           "default": "SGD"
         },
-        "penalty_points": {
-          "type": "integer",
-          "description": "Penalty points assigned to the at-fault party's account (driver or rider).",
-          "minimum": 0,
-          "default": 0
-        },
         "penalty_target": {
           "type": "string",
-          "description": "Which party receives the penalty points.",
+          "description": "Which party receives the penalty.",
           "enum": [
             "RIDER",
             "DRIVER",
