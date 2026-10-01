@@ -83,7 +83,6 @@ _MOCK_LLM_RESPONSE = {
         "refund_amount": 0,
         "cleaning_fee_amount": 0,
         "currency": "SGD",
-        "penalty_points": 0,
         "penalty_target": "NONE",
         "account_action": "NONE",
     },
@@ -385,13 +384,13 @@ async def _run_test4(mock: bool = False) -> None:
 
 
 async def _run_test5(mock: bool = False) -> None:
-    """Test 5: account_action / penalty_target / penalty_points always come
+    """Test 5: account_action / penalty_target always come
     from the policy suggestion, never from the LLM.
 
     (a) Mock LLM returns account_action "ACCOUNT_BAN" while the suggestion
         has "NONE" → verdict must have "NONE".
     (b) Suggestion has account_action "WARNING_ISSUED", penalty_target
-        "DRIVER" → verdict copies both; penalty_points is 0 in both.
+        "DRIVER" → verdict copies both.
     """
     context = _build_context()
 
@@ -426,7 +425,6 @@ async def _run_test5(mock: bool = False) -> None:
     mock_response_a = copy.deepcopy(_MOCK_LLM_RESPONSE)
     mock_response_a["recommended_action"]["account_action"] = "ACCOUNT_BAN"
     mock_response_a["recommended_action"]["penalty_target"] = "DRIVER"
-    mock_response_a["recommended_action"]["penalty_points"] = 10
 
     if mock:
         original = judge_agent.call_llm_json
@@ -463,9 +461,9 @@ async def _run_test5(mock: bool = False) -> None:
         errors.append(
             f"5a: Expected penalty_target == NONE, got {action_a.get('penalty_target')}"
         )
-    if action_a.get("penalty_points") != 0:
+    if "penalty_points" in action_a:
         errors.append(
-            f"5a: Expected penalty_points == 0, got {action_a.get('penalty_points')}"
+            "5a: Expected penalty_points to not be in recommended_action"
         )
 
     if errors:
@@ -477,7 +475,7 @@ async def _run_test5(mock: bool = False) -> None:
         print("\nTEST 5a RESULT: PASS")
         print("  - account_action == NONE (from suggestion, not LLM)")
         print("  - penalty_target == NONE")
-        print("  - penalty_points == 0")
+        print("  - penalty_points not in recommended_action")
 
     # --- Case (b): suggestion has WARNING_ISSUED + DRIVER ---
     context_b = _build_context()
@@ -512,7 +510,6 @@ async def _run_test5(mock: bool = False) -> None:
     mock_response_b = copy.deepcopy(_MOCK_LLM_RESPONSE)
     mock_response_b["recommended_action"]["account_action"] = "ACCOUNT_BAN"
     mock_response_b["recommended_action"]["penalty_target"] = "RIDER"
-    mock_response_b["recommended_action"]["penalty_points"] = 15
 
     if mock:
         original = judge_agent.call_llm_json
@@ -547,9 +544,9 @@ async def _run_test5(mock: bool = False) -> None:
         errors.append(
             f"5b: Expected penalty_target == DRIVER, got {action_b.get('penalty_target')}"
         )
-    if action_b.get("penalty_points") != 0:
+    if "penalty_points" in action_b:
         errors.append(
-            f"5b: Expected penalty_points == 0, got {action_b.get('penalty_points')}"
+            "5b: Expected penalty_points to not be in recommended_action"
         )
 
     if errors:
@@ -561,7 +558,7 @@ async def _run_test5(mock: bool = False) -> None:
         print("\nTEST 5b RESULT: PASS")
         print("  - account_action == WARNING_ISSUED (from suggestion)")
         print("  - penalty_target == DRIVER (from suggestion)")
-        print("  - penalty_points == 0")
+        print("  - penalty_points not in recommended_action")
 
 
 # --- Test 6: different ruling, same action type — no disagreement cap --------
@@ -663,6 +660,114 @@ async def _run_test6(mock: bool = False) -> None:
         print(f"  - confidence_score == {confidence} (> 0.70, not capped)")
 
 
+# --- Test 7: explanation guard for account actions ----------------------------
+
+
+async def _run_test7(mock: bool = False) -> None:
+    """Test 7: suggestion has account_action WARNING_ISSUED, penalty_target
+    DRIVER. The mock LLM's explanation_for_driver says "No penalty will be
+    applied to your account." → the code guard must remove that sentence and
+    append the account-action notice (containing "warning"). The
+    explanation_for_rider must be unchanged.
+    """
+    context = _build_context()
+
+    context["policy_consultation"] = {
+        "suggestion": {
+            "suggestion_id": "SUG-DISP-002-007",
+            "request_id": "REQ-DISP-002-001",
+            "applicable_clauses": [
+                {
+                    "clause_id": "POL-3",
+                    "clause_title": "No-Show Cancellation Charge",
+                    "clause_text_summary": "If a driver arrives and waits for the full no-show threshold while the rider does not board, a cancellation fee may be charged.",
+                    "relevance_summary": "All five no-show conditions verified."
+                }
+            ],
+            "matched_precedents": [],
+            "suggested_ruling_type": "REJECTED",
+            "suggested_recommended_action": {
+                "action_type": "NO_REFUND",
+                "refund_amount": 0,
+                "currency": "SGD",
+                "account_action": "WARNING_ISSUED",
+                "penalty_target": "DRIVER",
+            },
+            "policy_confidence": 0.9,
+            "rationale": "Driver waited the full no-show threshold per POL-3.",
+            "suggested_at": "2026-09-13T09:19:00+08:00"
+        }
+    }
+
+    mock_response = copy.deepcopy(_MOCK_LLM_RESPONSE)
+    mock_response["explanations"]["explanation_for_driver"] = (
+        "We appreciate that you arrived on time, waited patiently, "
+        "and made multiple efforts to contact the rider. Your "
+        "patience and professionalism are noted. The cancellation "
+        "fee of $5.00 is upheld because the full waiting period was "
+        "reached, the system had notified the rider of your arrival, "
+        "and you made contact attempts as required. No penalty will "
+        "be applied to your account. You may appeal or request "
+        "human review within 7 days."
+    )
+
+    # Keep the rider explanation from _MOCK_LLM_RESPONSE for comparison.
+    original_rider = _MOCK_LLM_RESPONSE["explanations"]["explanation_for_rider"]
+
+    if mock:
+        original = judge_agent.call_llm_json
+
+        async def _mock_llm_explanation_guard(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+            return mock_response
+
+        judge_agent.call_llm_json = _mock_llm_explanation_guard
+        print("[MOCK MODE] Using fake LLM response for test 7\n")
+    else:
+        original = None
+
+    try:
+        verdict = await run_judge(context)
+    finally:
+        if original is not None:
+            judge_agent.call_llm_json = original
+
+    print("=" * 60)
+    print("TEST 7 — EXPLANATION GUARD (account action consistency)")
+    print("=" * 60)
+    print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    print("=" * 60)
+
+    explanations = verdict.get("explanations", {})
+    driver_exp = explanations.get("explanation_for_driver", "")
+    rider_exp = explanations.get("explanation_for_rider", "")
+
+    errors: list[str] = []
+
+    if "No penalty" in driver_exp:
+        errors.append(
+            "7: Expected 'No penalty' to be removed from explanation_for_driver"
+        )
+    if "warning" not in driver_exp.lower():
+        errors.append(
+            "7: Expected 'warning' to be present in explanation_for_driver"
+        )
+    if rider_exp != original_rider:
+        errors.append(
+            "7: Expected explanation_for_rider to be unchanged"
+        )
+
+    if errors:
+        print("\nTEST 7 RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 7 RESULT: PASS")
+        print("  - 'No penalty' removed from explanation_for_driver")
+        print("  - 'warning' present in explanation_for_driver")
+        print("  - explanation_for_rider unchanged")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -678,6 +783,8 @@ async def _run_all_tests(mock: bool = False) -> None:
     await _run_test5(mock=mock)
     print()
     await _run_test6(mock=mock)
+    print()
+    await _run_test7(mock=mock)
     print()
     print("=" * 60)
     print("ALL TESTS PASSED")
