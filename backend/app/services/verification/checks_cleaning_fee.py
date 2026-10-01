@@ -194,113 +194,299 @@ def _event_mentions_photo(event: dict[str, Any] | None) -> bool:
     return False
 
 
+def _get_readable_receipts(ds: dict[str, Any]) -> list[tuple[str, float]]:
+    """Return [(receipt_id, amount), ...] for receipts with a readable ocr_result.amount.
+
+    A receipt is readable when it is a dict whose ``ocr_result`` is a dict
+    with a finite numeric ``amount`` >= 0. Non-dict entries are skipped.
+    Mirrors the rule used by precedent_store._compute_cleaning_fee.
+    """
+    raw = ds.get("receipt_evidence")
+    if not isinstance(raw, list):
+        return []
+    result: list[tuple[str, float]] = []
+    for i, rcp in enumerate(raw):
+        if not isinstance(rcp, dict):
+            continue
+        ocr = rcp.get("ocr_result")
+        if not isinstance(ocr, dict):
+            continue
+        amount = ocr.get("amount")
+        if _is_number(amount) and amount >= 0:
+            rid = rcp.get("receipt_id") or f"RCP-{i:03d}"
+            result.append((rid, float(amount)))
+    return result
+
+
+def _get_claim(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the cleaning-fee claim record, or None if no source provides one.
+
+    Tries sources in priority order:
+      a. ``data["dispute_claim"]`` (dict with filed_by / filed_at / description,
+         comes from the UI later). Amount comes from
+         ``data_sources.payment_fare_data.disputed_amount``. Source: ``DISPUTE_CLAIM``.
+      b. Legacy app event ``cleaning_fee_claimed`` (existing
+         _find_cleaning_claim_event / _parse_claim_amount_from_event). Source: ``APP_EVENT``.
+      c. Case record: ``filed_at = case_metadata.created_at``,
+         ``amount = payment_fare_data.disputed_amount``, description None.
+         Source: ``CASE_RECORD``.
+
+    Returns a dict with keys: ``filed_at``, ``amount``, ``description``, ``source``,
+    ``evidence_refs`` (list of evidence ref dicts). Returns None only if no source
+    yields a filed_at or amount.
+    """
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+    payment = ds.get("payment_fare_data")
+    if not isinstance(payment, dict):
+        payment = {}
+    disputed_amount = payment.get("disputed_amount")
+    disputed_currency = payment.get("disputed_amount_currency", "")
+
+    # (a) dispute_claim from the UI
+    dc = data.get("dispute_claim")
+    if isinstance(dc, dict) and (dc.get("filed_at") or _is_number(disputed_amount)):
+        filed_at = dc.get("filed_at")
+        description = dc.get("description")
+        evidence_refs: list[dict[str, Any]] = []
+        if _is_number(disputed_amount):
+            evidence_refs.append(
+                _evidence_ref(
+                    "PAYMENT-DATA",
+                    "PAYMENT_RECORD",
+                    f"disputed amount {disputed_amount} {disputed_currency}".strip(),
+                )
+            )
+        return {
+            "filed_at": filed_at,
+            "amount": float(disputed_amount) if _is_number(disputed_amount) else None,
+            "description": description,
+            "source": "DISPUTE_CLAIM",
+            "evidence_refs": evidence_refs,
+        }
+
+    # (b) legacy app event
+    event = _find_cleaning_claim_event(data)
+    if event is not None:
+        event_amount = _parse_claim_amount_from_event(event)
+        filed_at = event.get("timestamp")
+        if filed_at or event_amount is not None:
+            evidence_refs = [
+                _evidence_ref(
+                    event.get("evidence_id", "EVT-???"),
+                    "APP_EVENT",
+                    f"cleaning_fee_claimed at {filed_at or '?'}: {event.get('details', '')}",
+                )
+            ]
+            return {
+                "filed_at": filed_at,
+                "amount": event_amount,
+                "description": event.get("details"),
+                "source": "APP_EVENT",
+                "evidence_refs": evidence_refs,
+            }
+
+    # (c) case record
+    case_meta = data.get("case_metadata")
+    if isinstance(case_meta, dict):
+        filed_at = case_meta.get("created_at")
+        if filed_at or _is_number(disputed_amount):
+            evidence_refs = []
+            if _is_number(disputed_amount):
+                evidence_refs.append(
+                    _evidence_ref(
+                        "PAYMENT-DATA",
+                        "PAYMENT_RECORD",
+                        f"disputed amount {disputed_amount} {disputed_currency}".strip(),
+                    )
+                )
+            return {
+                "filed_at": filed_at,
+                "amount": float(disputed_amount) if _is_number(disputed_amount) else None,
+                "description": None,
+                "source": "CASE_RECORD",
+                "evidence_refs": evidence_refs,
+            }
+
+    return None
+
+
 def check_cleaning_claim_event_exists(data: dict[str, Any]) -> dict[str, Any]:
-    """Whether a cleaning-fee claim event is recorded in app events.
+    """Whether a cleaning-fee claim is recorded in the case record.
+
+    The claim may come from a ``dispute_claim`` record (UI), a legacy
+    ``cleaning_fee_claimed`` app event, or the case metadata itself.
 
     Must NOT conclude: claim valid, rider responsible, fee justified.
     """
-    event = _find_cleaning_claim_event(data)
-    if event is None:
+    claim = _get_claim(data)
+    if claim is None:
         return {
             "status": "MISSING",
-            "description": "No cleaning-fee claim event is recorded in the app event history.",
+            "description": "No cleaning-fee claim is recorded in the case record.",
             "evidence_refs": [],
             "details": {},
         }
 
-    evidence_refs = [
-        _evidence_ref(
-            event.get("evidence_id", "EVT-???"),
-            "APP_EVENT",
-            f"cleaning_fee_claimed at {event.get('timestamp', '?')}: {event.get('details', '')}",
-        )
-    ]
+    evidence_refs = list(claim.get("evidence_refs", []))
+    filed_at = claim.get("filed_at")
+    amount = claim.get("amount")
+    source = claim.get("source", "CASE_RECORD")
 
-    ts = event.get("timestamp")
-    if not ts or _parse_ts(ts) is None:
+    # Validate timestamp if present
+    if filed_at and _parse_ts(filed_at) is None:
         return {
             "status": "DISPUTED",
             "description": (
-                f"A cleaning-fee claim event is recorded, but its timestamp "
-                f"('{ts}') is malformed and cannot be used for verification."
+                f"A cleaning-fee claim is recorded, but its timestamp "
+                f"('{filed_at}') is malformed and cannot be used for verification."
             ),
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
+    source_label = {
+        "DISPUTE_CLAIM": "dispute claim",
+        "APP_EVENT": "app event history",
+        "CASE_RECORD": "case record",
+    }.get(source, "case record")
+
+    amount_str = f" of SGD {amount:.2f}" if _is_number(amount) else ""
     return {
         "status": "VERIFIED",
-        "description": "A cleaning-fee claim is recorded in the app event history.",
+        "description": (
+            f"Cleaning-fee claim{amount_str} recorded, filed at {filed_at or '?'} "
+            f"({source_label})."
+        ),
         "evidence_refs": evidence_refs,
         "details": {"confidence_level": 1.0},
     }
 
 
 def check_cleaning_claim_amount_consistency(data: dict[str, Any]) -> dict[str, Any]:
-    """Whether the cleaning-fee claim amount matches the disputed amount.
+    """Whether the cleaning-fee claim amount is consistent with supporting evidence.
+
+    For the legacy APP_EVENT source, compares the event amount with the
+    disputed_amount (existing behaviour). For all other sources, compares the
+    claimed amount with the total of readable receipts in
+    ``data_sources.receipt_evidence``.
 
     Must NOT conclude: "$100 is fair" or "$100 is allowed by policy".
     """
-    event = _find_cleaning_claim_event(data)
-    payment = data.get("data_sources", {}).get("payment_fare_data", {})
+    claim = _get_claim(data)
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+    payment = ds.get("payment_fare_data")
     if not isinstance(payment, dict):
         payment = {}
 
-    event_amount = _parse_claim_amount_from_event(event) if event else None
     disputed_amount = payment.get("disputed_amount")
     disputed_currency = payment.get("disputed_amount_currency", "")
 
     evidence_refs: list[dict[str, Any]] = []
-    if event:
-        evidence_refs.append(
-            _evidence_ref(
-                event.get("evidence_id", "EVT-???"),
-                "APP_EVENT",
-                f"cleaning_fee_claimed at {event.get('timestamp', '?')}: {event.get('details', '')}",
-            )
-        )
+    if claim:
+        evidence_refs.extend(claim.get("evidence_refs", []))
 
     if _is_number(disputed_amount):
-        evidence_refs.append(
-            _evidence_ref(
-                "PAYMENT-DATA",
-                "PAYMENT_RECORD",
-                f"disputed amount {disputed_amount} {disputed_currency}".strip(),
+        # Ensure PAYMENT-DATA is referenced (may already be in claim.evidence_refs)
+        if not any(r.get("evidence_id") == "PAYMENT-DATA" for r in evidence_refs):
+            evidence_refs.append(
+                _evidence_ref(
+                    "PAYMENT-DATA",
+                    "PAYMENT_RECORD",
+                    f"disputed amount {disputed_amount} {disputed_currency}".strip(),
+                )
             )
-        )
 
-    if event_amount is None:
+    if claim is None:
         return {
             "status": "MISSING",
-            "description": (
-                "The cleaning-fee claim amount cannot be safely parsed from the claim event."
-            ),
+            "description": "No cleaning-fee claim is recorded to verify the amount against.",
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
-    if not _is_number(disputed_amount):
+    claim_amount = claim.get("amount")
+    source = claim.get("source", "CASE_RECORD")
+
+    if not _is_number(claim_amount):
         return {
             "status": "MISSING",
-            "description": (
-                "The disputed amount in payment data is missing or malformed."
-            ),
+            "description": "The cleaning-fee claim amount cannot be determined.",
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
-    # Use exact float comparison for the real fixture ($100 vs 100.0)
-    if event_amount != disputed_amount:
+    # --- Legacy APP_EVENT path: compare event amount vs disputed_amount ---
+    if source == "APP_EVENT":
+        if not _is_number(disputed_amount):
+            return {
+                "status": "MISSING",
+                "description": "The disputed amount in payment data is missing or malformed.",
+                "evidence_refs": evidence_refs,
+                "details": {"confidence_level": 1.0},
+            }
+
+        if claim_amount != disputed_amount:
+            return {
+                "status": "DISPUTED",
+                "description": (
+                    f"The cleaning-fee claim amount ({claim_amount}) does not match "
+                    f"the recorded disputed amount ({disputed_amount} {disputed_currency})."
+                ),
+                "evidence_refs": evidence_refs,
+                "details": {
+                    "claim_amount": claim_amount,
+                    "disputed_amount": disputed_amount,
+                    "confidence_level": 1.0,
+                },
+            }
+
         return {
-            "status": "DISPUTED",
+            "status": "VERIFIED",
             "description": (
-                f"The cleaning-fee claim amount ({event_amount}) does not match "
-                f"the recorded disputed amount ({disputed_amount} {disputed_currency})."
+                f"The cleaning-fee claim amount is consistent with the recorded disputed amount "
+                f"of {disputed_currency} {disputed_amount:.2f}."
             ),
             "evidence_refs": evidence_refs,
             "details": {
-                "claim_amount": event_amount,
-                "disputed_amount": disputed_amount,
+                "amount": claim_amount,
+                "currency": disputed_currency,
+                "confidence_level": 1.0,
+            },
+        }
+
+    # --- Non-APP_EVENT path: compare claim amount vs receipt total ---
+    readable = _get_readable_receipts(ds)
+    for rid, _ in readable:
+        evidence_refs.append(
+            _evidence_ref(rid, "RECEIPT", f"receipt {rid}")
+        )
+
+    if not readable:
+        return {
+            "status": "MISSING",
+            "description": "No readable receipt is available to check the claimed amount against.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    receipt_total = sum(amt for _, amt in readable)
+    receipt_ids = ", ".join(rid for rid, _ in readable)
+
+    if abs(claim_amount - receipt_total) > 0.01:
+        return {
+            "status": "DISPUTED",
+            "description": (
+                f"Claimed amount SGD {claim_amount:.2f} differs from the receipt total "
+                f"SGD {receipt_total:.2f}."
+            ),
+            "evidence_refs": evidence_refs,
+            "details": {
+                "claim_amount": claim_amount,
+                "receipt_total": receipt_total,
                 "confidence_level": 1.0,
             },
         }
@@ -308,13 +494,13 @@ def check_cleaning_claim_amount_consistency(data: dict[str, Any]) -> dict[str, A
     return {
         "status": "VERIFIED",
         "description": (
-            f"The cleaning-fee claim amount is consistent with the recorded disputed amount "
-            f"of {disputed_currency} {disputed_amount:.2f}."
+            f"Claimed amount SGD {claim_amount:.2f} matches the receipt total "
+            f"SGD {receipt_total:.2f} ({receipt_ids})."
         ),
         "evidence_refs": evidence_refs,
         "details": {
-            "amount": event_amount,
-            "currency": disputed_currency,
+            "amount": claim_amount,
+            "receipt_total": receipt_total,
             "confidence_level": 1.0,
         },
     }
@@ -323,10 +509,13 @@ def check_cleaning_claim_amount_consistency(data: dict[str, Any]) -> dict[str, A
 def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any]:
     """Whether the cleaning-fee claim was submitted after trip completion.
 
+    Uses ``_get_claim()['filed_at']`` instead of a dedicated app event.
     Reports the exact arithmetic delta. Must NOT conclude that any delay is
     suspicious or violates policy.
     """
     ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
     app_events = ds.get("app_events", [])
     if not isinstance(app_events, list):
         app_events = []
@@ -339,7 +528,8 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
         ),
         None,
     )
-    cleaning_event = _find_cleaning_claim_event(data)
+
+    claim = _get_claim(data)
 
     evidence_refs: list[dict[str, Any]] = []
 
@@ -351,39 +541,33 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
                 f"trip_completed at {trip_complete_event.get('timestamp', '?')}",
             )
         )
-    if cleaning_event:
-        evidence_refs.append(
-            _evidence_ref(
-                cleaning_event.get("evidence_id", "EVT-???"),
-                "APP_EVENT",
-                f"cleaning_fee_claimed at {cleaning_event.get('timestamp', '?')}",
-            )
-        )
+    if claim:
+        evidence_refs.extend(claim.get("evidence_refs", []))
 
-    if trip_complete_event is None or cleaning_event is None:
+    if trip_complete_event is None or claim is None:
         missing = []
         if trip_complete_event is None:
             missing.append("trip_completed")
-        if cleaning_event is None:
-            missing.append("cleaning_fee_claimed")
+        if claim is None:
+            missing.append("cleaning-fee claim")
         return {
             "status": "MISSING",
             "description": (
-                f"Cannot calculate claim submission delay: missing {', '.join(missing)} event."
+                f"Cannot calculate claim submission delay: missing {', '.join(missing)}."
             ),
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
     trip_ts = _parse_ts(trip_complete_event.get("timestamp"))
-    claim_ts = _parse_ts(cleaning_event.get("timestamp"))
+    claim_ts = _parse_ts(claim.get("filed_at"))
 
     if trip_ts is None or claim_ts is None:
         malformed = []
         if trip_ts is None:
             malformed.append("trip_completed")
         if claim_ts is None:
-            malformed.append("cleaning_fee_claimed")
+            malformed.append("claim filed_at")
         return {
             "status": "MISSING",
             "description": (
@@ -398,7 +582,7 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
         return {
             "status": "MISSING",
             "description": (
-                "Trip completion and cleaning-fee claim timestamps use incompatible "
+                "Trip completion and claim filed_at timestamps use incompatible "
                 "representations and cannot be compared."
             ),
             "evidence_refs": evidence_refs,
@@ -420,8 +604,8 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
         return {
             "status": "DISPUTED",
             "description": (
-                f"The cleaning-fee claim timestamp ({cleaning_event.get('timestamp')}) "
-                f"is before the trip completion timestamp ({trip_complete_event.get('timestamp')})."
+                f"The cleaning-fee claim was filed at {claim.get('filed_at')}, "
+                f"which is before the trip completion timestamp ({trip_complete_event.get('timestamp')})."
             ),
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
@@ -431,7 +615,7 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
     return {
         "status": "VERIFIED",
         "description": (
-            f"The cleaning-fee claim was submitted {delta_seconds} seconds "
+            f"The cleaning-fee claim was filed {delta_seconds} seconds "
             f"({delta_minutes} minutes) after trip completion."
         ),
         "evidence_refs": evidence_refs,
@@ -581,27 +765,56 @@ def check_cleaning_structured_image_evidence(data: dict[str, Any]) -> dict[str, 
 
 
 def check_cleaning_photo_reference_consistency(data: dict[str, Any]) -> dict[str, Any]:
-    """Whether a photo mention in the claim event is matched by structured image evidence.
+    """Whether a photo reference in the claim is matched by structured image evidence.
+
+    The photo reference comes from the claim description (``dispute_claim.description``
+    or the legacy app event details, using the same positive/negation patterns).
+    When no claim text is available, falls back to whether structured image
+    evidence is present.
 
     Must NOT conclude: no photo was ever taken, driver lied, image was lost,
     image was fraudulent.
     """
-    event = _find_cleaning_claim_event(data)
+    claim = _get_claim(data)
     ds = data.get("data_sources", {})
-    image_evidence = ds.get("image_evidence")
+    if not isinstance(ds, dict):
+        ds = {}
 
-    mentions_photo = _event_mentions_photo(event)
+    claim_description = claim.get("description") if claim else None
     has_structured = len(extract_images_from_context(data)) > 0
 
     evidence_refs: list[dict[str, Any]] = []
-    if event:
-        evidence_refs.append(
-            _evidence_ref(
-                event.get("evidence_id", "EVT-???"),
-                "APP_EVENT",
-                f"cleaning_fee_claimed at {event.get('timestamp', '?')}: {event.get('details', '')}",
-            )
-        )
+    if claim:
+        evidence_refs.extend(claim.get("evidence_refs", []))
+
+    # Determine whether the claim text mentions a photo
+    mentions_photo = False
+    if isinstance(claim_description, str) and claim_description.strip():
+        lower_text = claim_description.lower()
+        for pattern in _PHOTO_NEGATION_PATTERNS:
+            if pattern.search(lower_text):
+                mentions_photo = False
+                break
+        else:
+            for pattern in _PHOTO_POSITIVE_PATTERNS:
+                if pattern.search(lower_text):
+                    mentions_photo = True
+                    break
+    else:
+        # No claim text available — fall back to structured image evidence
+        if has_structured:
+            return {
+                "status": "VERIFIED",
+                "description": "Structured image evidence is present in the frozen record.",
+                "evidence_refs": evidence_refs,
+                "details": {"confidence_level": 1.0},
+            }
+        return {
+            "status": "MISSING",
+            "description": "No structured image evidence is available in the frozen record.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
 
     if mentions_photo and has_structured:
         return {
@@ -619,29 +832,30 @@ def check_cleaning_photo_reference_consistency(data: dict[str, Any]) -> dict[str
             "status": "MISSING",
             "description": (
                 "The cleaning-fee claim references an attached photo, but no structured "
-                "image evidence is available in the frozen evidence record for verification."
+                "image evidence is available in the frozen record for verification."
             ),
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
-    if not mentions_photo and not has_structured:
+    # Claim text present but no photo mention + no structured evidence
+    if not has_structured:
         return {
             "status": "MISSING",
             "description": (
-                "Neither a photo mention in the claim event nor structured image evidence "
+                "Neither a photo reference in the claim nor structured image evidence "
                 "is available in the frozen record."
             ),
             "evidence_refs": evidence_refs,
             "details": {"confidence_level": 1.0},
         }
 
-    # has_structured but no mention in event
+    # has_structured but no mention in claim text
     return {
         "status": "VERIFIED",
         "description": (
             "Structured image evidence is present in the frozen record, though the claim "
-            "event does not explicitly mention an attached photo."
+            "does not explicitly reference an attached photo."
         ),
         "evidence_refs": evidence_refs,
         "details": {"confidence_level": 1.0},
