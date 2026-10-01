@@ -7,14 +7,37 @@ provider result is supplied in the input; they are never invented.
 
 When no analyzable image evidence is present the module returns an empty
 list, preserving current behaviour for cases such as DISP-002 and DISP-003.
+
+Photo-validity rule
+-------------------
+When ``trip_data.trip_end_time`` parses as a timestamp **and**
+``trip_data.dropoff_location`` has valid coordinates, the EXIF time and
+location checks use the POL-4 rule (the same rule used by
+``precedent_store._compute_cleaning_fee``):
+
+* **Time**: 0 <= (exif_timestamp - trip_end_time) <=
+  ``photo_window_min_after_trip_end`` minutes.
+* **Location**: haversine distance from ``exif_gps_location`` to
+  ``dropoff_location`` <= ``photo_location_radius_m`` metres.
+
+Both numbers are read from the POL-4 clause params in
+``ryde_policy_v1.json`` through the existing policy loader
+(``app.services.verification.policy.get_policy_clause``), falling back to
+30 minutes / 500 metres if the params cannot be read.
+
+When ``trip_end_time`` is missing/unparseable or ``dropoff_location`` is
+invalid, the legacy rules (trip-window ±10 min / within 200 m of any route
+point) are used so existing tests continue to pass unchanged.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+
+from .policy import get_policy_clause
 
 
 # ---------------------------------------------------------------------------
@@ -66,12 +89,42 @@ class ImageEvidenceInput:
 # Tolerance constants (technical, not policy thresholds)
 # ---------------------------------------------------------------------------
 
-# EXIF photo timestamp must fall within this many seconds of the relevant
-# trip window (trip start through a reasonable post-trip window).
+# Legacy fallback tolerances used when trip_end_time / dropoff_location are
+# not available.  These are NOT used when the POL-4 rule applies.
 _EXIF_TIMESTAMP_TOLERANCE_SECONDS: int = 600  # 10 minutes
 
-# EXIF GPS must be within this many metres of a relevant trip coordinate.
+# Legacy fallback GPS tolerance.
 _EXIF_GPS_TOLERANCE_METERS: float = 200.0
+
+# POL-4 fallback params when the policy file / clause cannot be read.
+_POL4_FALLBACK_PHOTO_WINDOW_MIN: int = 30
+_POL4_FALLBACK_PHOTO_LOCATION_RADIUS_M: float = 500.0
+
+
+def _get_pol4_photo_params() -> tuple[float, float]:
+    """Return (photo_window_min_after_trip_end, photo_location_radius_m).
+
+    Reads the POL-4 clause params for CLEANING_FEE from
+    ``ryde_policy_v1.json`` via the existing policy loader.  Falls back to
+    30 minutes / 500 metres if the file, clause, or params are missing or
+    malformed.  Never raises.
+    """
+    window = _POL4_FALLBACK_PHOTO_WINDOW_MIN
+    radius = _POL4_FALLBACK_PHOTO_LOCATION_RADIUS_M
+    try:
+        clause = get_policy_clause("CLEANING_FEE")
+        if clause is not None:
+            params = clause.get("params")
+            if isinstance(params, dict):
+                w = params.get("photo_window_min_after_trip_end")
+                r = params.get("photo_location_radius_m")
+                if isinstance(w, (int, float)) and not isinstance(w, bool) and math.isfinite(float(w)):
+                    window = float(w)
+                if isinstance(r, (int, float)) and not isinstance(r, bool) and math.isfinite(float(r)):
+                    radius = float(r)
+    except Exception:
+        pass
+    return window, radius
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +338,36 @@ def _relevant_gps_points(data_sources: dict[str, Any]) -> list[tuple[float, floa
     return points
 
 
+def _trip_end_and_dropoff(
+    data_sources: dict[str, Any],
+) -> tuple[datetime | None, float | None, float | None]:
+    """Return (trip_end_dt, dropoff_lat, dropoff_lng) when the POL-4 rule applies.
+
+    trip_end_dt comes from ``trip_data.trip_end_time``; dropoff coordinates
+    come from ``trip_data.dropoff_location``.  Returns ``(None, None, None)``
+    if any value is missing or invalid, signalling the caller to fall back
+    to the legacy rule.
+    """
+    trip_data = data_sources.get("trip_data", {})
+    if not isinstance(trip_data, dict):
+        return None, None, None
+
+    trip_end = _parse_ts(trip_data.get("trip_end_time"))
+    if trip_end is None:
+        return None, None, None
+
+    dropoff = trip_data.get("dropoff_location")
+    if not isinstance(dropoff, dict):
+        return None, None, None
+
+    lat = dropoff.get("lat")
+    lng = dropoff.get("lng")
+    if not _is_valid_trip_coord(lat) or not _is_valid_trip_coord(lng):
+        return None, None, None
+
+    return trip_end, float(lat), float(lng)
+
+
 # ---------------------------------------------------------------------------
 # Core analysis
 # ---------------------------------------------------------------------------
@@ -293,21 +376,44 @@ def _check_exif_timestamp_consistency(
     exif_ts_str: str,
     data_sources: dict[str, Any],
 ) -> bool | None:
-    """Return True if EXIF timestamp is within trip window + tolerance.
+    """Return True if the EXIF timestamp is consistent with the trip.
 
-    Returns None if the trip window cannot be established or timestamps
-    are unparseable.
+    POL-4 rule (when ``trip_end_time`` and ``dropoff_location`` are available):
+    0 <= (exif_timestamp - trip_end_time) <= ``photo_window_min_after_trip_end``
+    minutes.  The window is read from the POL-4 clause params in
+    ``ryde_policy_v1.json`` via the policy loader, falling back to 30 minutes.
+
+    Legacy rule (fallback): EXIF timestamp must fall within the trip window
+    (scheduled/arrival through latest event/completion) ±10 minutes.
+
+    Returns None if the relevant timestamps cannot be established or are not
+    comparable (e.g. naive vs aware).  Never raises.
     """
     exif_dt = _parse_ts(exif_ts_str)
     if exif_dt is None:
         return None
 
+    # --- POL-4 rule: trip_end_time known ---
+    trip_end, _, _ = _trip_end_and_dropoff(data_sources)
+    if trip_end is not None:
+        photo_window_min, _ = _get_pol4_photo_params()
+        try:
+            delta = exif_dt - trip_end
+        except TypeError:
+            # Naive vs aware — not comparable, cannot determine.
+            return None
+        # timedelta.total_seconds() may raise on naive/aware mixing in rare
+        # edge cases, but the try/except above already guards the subtraction.
+        delta_seconds = delta.total_seconds()
+        if delta_seconds < 0:
+            return False  # photo taken before trip end
+        return delta_seconds <= photo_window_min * 60
+
+    # --- Legacy rule: trip window ± tolerance ---
     earliest, latest = _trip_time_window(data_sources)
     if earliest is None or latest is None:
         return None
 
-    # Extend window by tolerance on both sides
-    from datetime import timedelta
     earliest_allowed = earliest - timedelta(seconds=_EXIF_TIMESTAMP_TOLERANCE_SECONDS)
     latest_allowed = latest + timedelta(seconds=_EXIF_TIMESTAMP_TOLERANCE_SECONDS)
 
@@ -324,10 +430,27 @@ def _check_exif_gps_consistency(
     gps: ExifGpsLocation,
     data_sources: dict[str, Any],
 ) -> bool | None:
-    """Return True if EXIF GPS is within tolerance of any relevant trip coordinate.
+    """Return True if EXIF GPS is within tolerance of the relevant location.
+
+    POL-4 rule (when ``trip_end_time`` and ``dropoff_location`` are available):
+    haversine distance from ``exif_gps_location`` to ``dropoff_location`` <=
+    ``photo_location_radius_m`` metres.  The radius is read from the POL-4
+    clause params in ``ryde_policy_v1.json`` via the policy loader, falling
+    back to 500 metres.
+
+    Legacy rule (fallback): EXIF GPS must be within 200 metres of any relevant
+    trip coordinate (pickup, dropoff, route points).
 
     Returns None if no relevant coordinates exist.
     """
+    # --- POL-4 rule: trip_end_time + dropoff known ---
+    _, dropoff_lat, dropoff_lng = _trip_end_and_dropoff(data_sources)
+    if dropoff_lat is not None and dropoff_lng is not None:
+        _, radius_m = _get_pol4_photo_params()
+        dist = _haversine_m(gps.latitude, gps.longitude, dropoff_lat, dropoff_lng)
+        return dist <= radius_m
+
+    # --- Legacy rule: within tolerance of any route point ---
     points = _relevant_gps_points(data_sources)
     if not points:
         return None
