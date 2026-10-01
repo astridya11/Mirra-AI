@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from backend.shared.advocate_utils import get_claimant
 from backend.shared.llm_client import call_llm_json, LLMError
 
 # Timezone for deliberated_at timestamps.
@@ -33,6 +34,56 @@ _ACTION_KEYS = {
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
+
+def _get_dispute_claim_text(context: dict) -> str:
+    """Return a human-readable representation of the dispute claim for the prompt.
+
+    1. If ``context["dispute_claim"]`` is a dict (UI format with
+       ``filed_by``, ``filed_at``, ``description``), format it as
+       ``"Filed by <FILED_BY> at <filed_at>: <description>"``, omitting
+       missing parts.
+    2. If it is a non-empty string, return it as-is.
+    3. Otherwise, determine the claimant with :func:`get_claimant` (same
+       logic the advocates use) and return that party's round 1
+       ``argument_summary``, prefixed ``"Claimant (<PARTY>) statement: "``.
+    4. If nothing is available, return ``"(no claim statement available)"``.
+    """
+    dispute_claim = context.get("dispute_claim")
+
+    # (1) Dict (UI format)
+    if isinstance(dispute_claim, dict):
+        parts: list[str] = []
+        filed_by = dispute_claim.get("filed_by")
+        filed_at = dispute_claim.get("filed_at")
+        description = dispute_claim.get("description")
+        if filed_by:
+            parts.append(f"Filed by {filed_by}")
+        if filed_at:
+            parts.append(f"at {filed_at}")
+        prefix = " ".join(parts)
+        if prefix:
+            prefix += ": "
+        desc_text = str(description) if description else ""
+        text = prefix + desc_text
+        return text.strip() if text.strip() else "(no claim statement available)"
+
+    # (2) Non-empty string
+    if isinstance(dispute_claim, str) and dispute_claim.strip():
+        return dispute_claim.strip()
+
+    # (3) Fall back to the claimant's round 1 statement
+    round_1 = context.get("round_1_statements", {})
+    claimant = get_claimant(context)
+    if claimant == "DRIVER":
+        stmt = round_1.get("driver_statement", {})
+    else:
+        stmt = round_1.get("rider_statement", {})
+    summary = stmt.get("argument_summary", "")
+    if summary:
+        return f"Claimant ({claimant}) statement: {summary}"
+
+    # (4) Nothing available
+    return "(no claim statement available)"
 
 _SYSTEM_PROMPT = """\
 You are an impartial Judge Agent in a ride-hailing dispute resolution system.
@@ -90,12 +141,7 @@ def _build_user_prompt(context: dict, suggestion: dict) -> str:
     dispute_type = case_meta.get("dispute_type", "UNKNOWN")
 
     # Determine the dispute claim.
-    dispute_claim = context.get("dispute_claim")
-    if not dispute_claim:
-        # Fall back to the round_1 statement of the filing party.
-        round_1 = context.get("round_1_statements", {})
-        rider_stmt = round_1.get("rider_statement", {})
-        dispute_claim = rider_stmt.get("argument_summary", "(no claim statement available)")
+    dispute_claim = _get_dispute_claim_text(context)
 
     prosecutor = context.get("prosecutor_findings", {})
     verified_facts = prosecutor.get("verified_facts", [])

@@ -20,7 +20,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend.agents...` imports work
 
 from backend.agents import judge_agent  # noqa: E402
-from backend.agents.judge_agent import run_judge  # noqa: E402
+from backend.agents.judge_agent import _get_dispute_claim_text, run_judge  # noqa: E402
 
 
 # --- Load mock data + fixture --------------------------------------------------
@@ -768,6 +768,96 @@ async def _run_test7(mock: bool = False) -> None:
         print("  - explanation_for_rider unchanged")
 
 
+# --- Test 8: _get_dispute_claim_text helper ------------------------------------
+
+
+def _run_test8(mock: bool = False) -> None:
+    """Test 8: verify the _get_dispute_claim_text helper.
+
+    (a) dispute_claim dict {filed_by "DRIVER", filed_at "...", description
+        "Vomit on back seat"} → text contains "DRIVER" and "Vomit on back seat".
+    (b) CLEANING_FEE context, no dispute_claim, rider and driver statements
+        present → returns the DRIVER statement text, not the rider's.
+    (c) NO_SHOW_CHARGE context, no dispute_claim → returns the RIDER statement.
+    (d) no dispute_claim and no statements → "(no claim statement available)".
+    """
+    errors: list[str] = []
+
+    # --- (a) dispute_claim dict ---
+    ctx_a = {
+        "case_metadata": {"dispute_type": "CLEANING_FEE"},
+        "dispute_claim": {
+            "filed_by": "DRIVER",
+            "filed_at": "2026-09-25T23:00:00+08:00",
+            "description": "Vomit on back seat",
+        },
+    }
+    text_a = _get_dispute_claim_text(ctx_a)
+    if "DRIVER" not in text_a:
+        errors.append(f"8a: Expected 'DRIVER' in text, got: {text_a}")
+    if "Vomit on back seat" not in text_a:
+        errors.append(f"8a: Expected 'Vomit on back seat' in text, got: {text_a}")
+
+    # --- (b) CLEANING_FEE, no dispute_claim, both statements present ---
+    rider_summary = "I should receive a full refund of the cancellation fee."
+    driver_summary = "I had to clean vomit from the back seat. The cleaning fee is justified."
+    ctx_b = {
+        "case_metadata": {"dispute_type": "CLEANING_FEE"},
+        "round_1_statements": {
+            "rider_statement": {"argument_summary": rider_summary},
+            "driver_statement": {"argument_summary": driver_summary},
+        },
+    }
+    text_b = _get_dispute_claim_text(ctx_b)
+    if driver_summary not in text_b:
+        errors.append(f"8b: Expected DRIVER statement in text, got: {text_b}")
+    if rider_summary in text_b:
+        errors.append(f"8b: Did NOT expect RIDER statement in text, got: {text_b}")
+
+    # --- (c) NO_SHOW_CHARGE, no dispute_claim → RIDER statement ---
+    ctx_c = {
+        "case_metadata": {"dispute_type": "NO_SHOW_CHARGE"},
+        "round_1_statements": {
+            "rider_statement": {"argument_summary": rider_summary},
+            "driver_statement": {"argument_summary": driver_summary},
+        },
+    }
+    text_c = _get_dispute_claim_text(ctx_c)
+    if rider_summary not in text_c:
+        errors.append(f"8c: Expected RIDER statement in text, got: {text_c}")
+    if driver_summary in text_c:
+        errors.append(f"8c: Did NOT expect DRIVER statement in text, got: {text_c}")
+
+    # --- (d) no dispute_claim and no statements ---
+    ctx_d = {
+        "case_metadata": {"dispute_type": "NO_SHOW_CHARGE"},
+    }
+    text_d = _get_dispute_claim_text(ctx_d)
+    if text_d != "(no claim statement available)":
+        errors.append(f"8d: Expected fallback text, got: {text_d}")
+
+    print("=" * 60)
+    print("TEST 8 — _get_dispute_claim_text helper")
+    print("=" * 60)
+    print(f"  8a (dict):            {text_a}")
+    print(f"  8b (CLEANING_FEE):    {text_b}")
+    print(f"  8c (NO_SHOW_CHARGE):  {text_c}")
+    print(f"  8d (no statements):   {text_d}")
+    print("=" * 60)
+
+    if errors:
+        print("\nTEST 8 RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 8 RESULT: PASS")
+        print("  - dict format contains 'DRIVER' and description")
+        print("  - CLEANING_FEE → DRIVER statement (not rider's)")
+        print("  - NO_SHOW_CHARGE → RIDER statement")
+        print("  - no data → '(no claim statement available)'")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -785,6 +875,8 @@ async def _run_all_tests(mock: bool = False) -> None:
     await _run_test6(mock=mock)
     print()
     await _run_test7(mock=mock)
+    print()
+    _run_test8(mock=mock)
     print()
     print("=" * 60)
     print("ALL TESTS PASSED")
