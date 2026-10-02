@@ -119,17 +119,23 @@
       "applies_to": [
         "CLEANING_FEE"
       ],
-      "text": "A driver may claim a cleaning fee from the rider for soiling caused during the trip. The claimable amount is capped by the verified damage severity. The claim requires a photo taken within the photo window after trip end at or near the drop-off location, and a cleaning receipt. Missing photo or receipt, an EXIF timestamp or location inconsistent with the trip, a recycled image, or a suspected AI-generated image must be recorded as missing or contradicted facts. Cleaning fee charges are never executed automatically; they always require human confirmation.",
+      "text": "A driver may claim a cleaning fee from the rider for soiling caused during the trip. The claimable amount is capped by the type of mess as published by Ryde: food residue and liquid spills up to SGD 40; other stains including non-vomit bodily fluids up to SGD 120; vomit up to SGD 200. The fee is the lower of the professional cleaning receipt amount and the applicable cap. A professional cleaning receipt dated within 24 hours after trip end is required. The claim must be filed within 48 hours of trip end. Physical damage is not a cleaning claim and is routed to human review. The photo time and location window (30 minutes after trip end, within 500 metres of drop-off) is MIRRA's own anti-fraud check; a missing photo or receipt, an EXIF timestamp or location inconsistent with the trip, a recycled image, or a suspected AI-generated image must be recorded as missing or contradicted facts. Cleaning fee charges always require human confirmation before execution.",
       "params": {
-        "severity_caps": {
-          "MINOR": 30.0,
-          "MODERATE": 60.0,
-          "SEVERE": 100.0
+        "category_caps": {
+          "FOOD_RESIDUE": 40.0,
+          "LIQUID_SPILL": 40.0,
+          "OTHER": 120.0,
+          "DIRT_MUD": 120.0,
+          "VOMIT": 200.0
         },
+        "not_cleaning_categories": [
+          "PHYSICAL_DAMAGE"
+        ],
         "photo_window_min_after_trip_end": 30,
         "photo_location_radius_m": 500,
         "receipt_required": true,
-        "claim_filing_window_hours": 24,
+        "claim_filing_window_hours": 48,
+        "receipt_window_hours_after_trip_end": 24,
         "always_requires_human": true,
         "fee_charged_to": "RIDER",
         "fee_goes_to": "DRIVER"
@@ -146,7 +152,14 @@
         "generated",
         "dropoff",
         "claim",
-        "charge"
+        "charge",
+        "food",
+        "liquid",
+        "spill",
+        "vomit",
+        "dirt",
+        "mud",
+        "stain"
       ]
     },
     "POL-5": {

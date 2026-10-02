@@ -3,8 +3,11 @@ Standalone test for POL-4 cleaning-fee receipt evidence integration.
 
 Verifies that _compute_cleaning_fee reads receipt amounts from
 data_sources.receipt_evidence (ReceiptEvidenceInput / ReceiptOcrResult)
-and computes fee = min(receipt_amount, severity_cap), with fallback to
+and computes fee = min(receipt_amount, category_cap), with fallback to
 the old context-based receipt_present flag when receipt_evidence is absent.
+
+Also verifies POL-4 category-based caps, not_cleaning_categories rejection,
+receipt-window enforcement, and claim-filing-window enforcement.
 
 Run from backend/:
     python -m tests.test_cleaning_fee_receipt
@@ -112,6 +115,7 @@ def _receipt(
     amount: float | None = 45.0,
     currency: str = "SGD",
     merchant: str = "Sparkle Car Care Pte Ltd",
+    receipt_date: str | None = "2026-09-26T09:30:00+08:00",
 ) -> dict:
     r = {
         "receipt_id": receipt_id,
@@ -119,13 +123,15 @@ def _receipt(
         "uploaded_at": "2026-09-26T10:15:00+08:00",
     }
     if amount is not None:
-        r["ocr_result"] = {
+        ocr = {
             "amount": amount,
             "currency": currency,
             "merchant_name": merchant,
-            "receipt_date": "2026-09-26T09:30:00+08:00",
             "ocr_confidence": 0.93,
         }
+        if receipt_date is not None:
+            ocr["receipt_date"] = receipt_date
+        r["ocr_result"] = ocr
     return r
 
 
@@ -144,20 +150,20 @@ def main() -> None:
 
     try:
         clause = _pol4_clause()
-        caps = clause.get("params", {}).get("severity_caps", {})
-        moderate_cap = float(caps.get("MODERATE", 0))
-        minor_cap = float(caps.get("MINOR", 0))
+        caps = clause.get("params", {}).get("category_caps", {})
+        liquid_cap = float(caps.get("LIQUID_SPILL", 0))
+        vomit_cap = float(caps.get("VOMIT", 0))
 
         # =================================================================
-        # CHECK a: receipt 45, MODERATE (cap 60) -> APPROVED, fee 45
+        # CHECK a: LIQUID_SPILL, receipt 35 -> APPROVED, fee 35 (below cap 40)
         # =================================================================
         print("=" * 70)
-        print("CHECK a: receipt 45, MODERATE (cap 60) -> APPROVED, fee 45")
+        print("CHECK a: LIQUID_SPILL, receipt 35 -> APPROVED, fee 35 (below cap 40)")
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE")],
-            receipt_evidence=[_receipt(amount=45.0)],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=35.0)],
         )
         result = precedent_store._compute_cleaning_fee(clause, ctx)
         check_errors: list[str] = []
@@ -167,8 +173,8 @@ def main() -> None:
         if result.get("ruling_type") != "APPROVED":
             check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
         fee = result.get("action", {}).get("cleaning_fee_amount")
-        if fee != 45.0:
-            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 45.0")
+        if fee != 35.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 35.0")
 
         if check_errors:
             print("\nCHECK a RESULT: FAIL")
@@ -182,15 +188,15 @@ def main() -> None:
             print(f"  - reason: {result['reason']}")
 
         # =================================================================
-        # CHECK b: receipt 80, MODERATE -> APPROVED, fee 60 (capped)
+        # CHECK b: LIQUID_SPILL, receipt 55 -> APPROVED, fee 40 (capped)
         # =================================================================
         print("\n" + "=" * 70)
-        print("CHECK b: receipt 80, MODERATE -> APPROVED, fee 60 (capped)")
+        print("CHECK b: LIQUID_SPILL, receipt 55 -> APPROVED, fee 40 (capped)")
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE")],
-            receipt_evidence=[_receipt(amount=80.0)],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=55.0)],
         )
         result = precedent_store._compute_cleaning_fee(clause, ctx)
         check_errors = []
@@ -200,8 +206,8 @@ def main() -> None:
         if result.get("ruling_type") != "APPROVED":
             check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
         fee = result.get("action", {}).get("cleaning_fee_amount")
-        if fee != 60.0:
-            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 60.0")
+        if fee != 40.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 40.0")
 
         if check_errors:
             print("\nCHECK b RESULT: FAIL")
@@ -215,14 +221,14 @@ def main() -> None:
             print(f"  - reason: {result['reason']}")
 
         # =================================================================
-        # CHECK c: two receipts 20 + 15, MINOR (cap 30) -> fee 30
+        # CHECK c: two receipts 20 + 15, VOMIT -> fee 35
         # =================================================================
         print("\n" + "=" * 70)
-        print("CHECK c: two receipts 20 + 15, MINOR (cap 30) -> fee 30")
+        print("CHECK c: two receipts 20 + 15, VOMIT -> APPROVED, fee 35")
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MINOR")],
+            analyses=[_valid_image_analysis(classification="VOMIT")],
             receipt_evidence=[
                 _receipt(receipt_id="RCP-001", amount=20.0),
                 _receipt(receipt_id="RCP-002", amount=15.0),
@@ -236,8 +242,8 @@ def main() -> None:
         if result.get("ruling_type") != "APPROVED":
             check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
         fee = result.get("action", {}).get("cleaning_fee_amount")
-        if fee != 30.0:
-            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 30.0 (capped)")
+        if fee != 35.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 35.0")
 
         if check_errors:
             print("\nCHECK c RESULT: FAIL")
@@ -258,7 +264,7 @@ def main() -> None:
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE")],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
             receipt_evidence=[_receipt(amount=None)],
         )
         result = precedent_store._compute_cleaning_fee(clause, ctx)
@@ -288,7 +294,7 @@ def main() -> None:
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE")],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
             receipt_evidence=None,  # absent
         )
         result = precedent_store._compute_cleaning_fee(clause, ctx)
@@ -312,14 +318,14 @@ def main() -> None:
 
         # =================================================================
         # CHECK f: no receipt_evidence, context cleaning_receipt_present True
-        #          -> fee = cap (old path still works)
+        #          -> fee = category cap (old path still works)
         # =================================================================
         print("\n" + "=" * 70)
-        print("CHECK f: no receipt_evidence, context fallback True -> fee = cap")
+        print("CHECK f: no receipt_evidence, context fallback True -> fee = LIQUID_SPILL cap")
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE")],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
             receipt_evidence=None,  # absent
             extra={"cleaning_receipt_present": True},
         )
@@ -331,8 +337,8 @@ def main() -> None:
         if result.get("ruling_type") != "APPROVED":
             check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
         fee = result.get("action", {}).get("cleaning_fee_amount")
-        if fee != moderate_cap:
-            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected {moderate_cap} (cap)")
+        if fee != liquid_cap:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected {liquid_cap} (LIQUID_SPILL cap)")
 
         if check_errors:
             print("\nCHECK f RESULT: FAIL")
@@ -353,7 +359,7 @@ def main() -> None:
         print("=" * 70)
 
         ctx = _base_context(
-            analyses=[_valid_image_analysis(severity="MODERATE", recycled=True)],
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL", recycled=True)],
             receipt_evidence=[_receipt(amount=45.0)],
         )
         result = precedent_store._compute_cleaning_fee(clause, ctx)
@@ -435,6 +441,419 @@ def main() -> None:
             errors.extend(check_errors)
         else:
             print("\nCHECK h RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {result['reason']}")
+
+        # =================================================================
+        # CHECK i: PHYSICAL_DAMAGE only -> computable False
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK i: PHYSICAL_DAMAGE only -> computable False")
+        print("=" * 70)
+
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="PHYSICAL_DAMAGE")],
+            receipt_evidence=[_receipt(amount=45.0)],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not False:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected False")
+        reason = result.get("reason", "")
+        if "physical damage is not a cleaning claim" not in reason.lower():
+            check_errors.append(f"reason does not mention physical damage: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK i RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK i RESULT: PASS")
+            print(f"  - computable: False")
+            print(f"  - reason: {reason}")
+
+        # =================================================================
+        # CHECK j: receipt dated 30 h after trip end -> REJECTED (outside 24 h)
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK j: receipt dated 30 h after trip end -> REJECTED (outside 24 h)")
+        print("=" * 70)
+
+        # trip_end is 2026-09-25T22:05:00+08:00
+        # 30 h later = 2026-09-27T04:05:00+08:00
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[
+                _receipt(
+                    amount=35.0,
+                    receipt_date="2026-09-27T04:05:00+08:00",
+                )
+            ],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "REJECTED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected REJECTED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 0")
+        reason = result.get("reason", "")
+        if "within 24 h" not in reason.lower():
+            check_errors.append(f"reason does not mention 24 h window: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK j RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK j RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {reason}")
+
+        # =================================================================
+        # CHECK k: receipt dated before trip end -> REJECTED
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK k: receipt dated before trip end -> REJECTED")
+        print("=" * 70)
+
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[
+                _receipt(
+                    amount=35.0,
+                    receipt_date="2026-09-25T20:00:00+08:00",  # before trip_end 22:05
+                )
+            ],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "REJECTED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected REJECTED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 0")
+        reason = result.get("reason", "")
+        if "within 24 h" not in reason.lower():
+            check_errors.append(f"reason does not mention 24 h window: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK k RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK k RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {reason}")
+
+        # =================================================================
+        # CHECK l: dispute_claim filed_at 50 h after trip end -> REJECTED
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK l: dispute_claim filed_at 50 h after trip end -> REJECTED")
+        print("=" * 70)
+
+        # trip_end is 2026-09-25T22:05:00+08:00
+        # 50 h later = 2026-09-28T00:05:00+08:00
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=35.0)],
+            extra={
+                "dispute_claim": {
+                    "filed_at": "2026-09-28T00:05:00+08:00",
+                }
+            },
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "REJECTED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected REJECTED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 0")
+        reason = result.get("reason", "")
+        if "48 h" not in reason.lower():
+            check_errors.append(f"reason does not mention 48 h window: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK l RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK l RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {reason}")
+
+        # =================================================================
+        # CHECK m: receipt without receipt_date -> counted, reason contains
+        #          "receipt date not available"
+        # =================================================================
+        print("\n" + "=" * 70)
+        print('CHECK m: receipt without receipt_date -> counted, "receipt date not available"')
+        print("=" * 70)
+
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[
+                _receipt(amount=35.0, receipt_date=None),
+            ],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "APPROVED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 35.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 35.0")
+        reason = result.get("reason", "")
+        if "receipt date not available" not in reason.lower():
+            check_errors.append(f"reason does not mention 'receipt date not available': {reason!r}")
+
+        if check_errors:
+            print("\nCHECK m RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK m RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {result['reason']}")
+
+        # =================================================================
+        # CHECK n: two valid images (LIQUID_SPILL + VOMIT), receipt 150
+        #          -> fee 150 (highest cap 200)
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK n: LIQUID_SPILL + VOMIT, receipt 150 -> fee 150 (highest cap 200)")
+        print("=" * 70)
+
+        ctx = _base_context(
+            analyses=[
+                _valid_image_analysis(image_id="IMG-001", classification="LIQUID_SPILL"),
+                _valid_image_analysis(image_id="IMG-002", classification="VOMIT"),
+            ],
+            receipt_evidence=[_receipt(amount=150.0)],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "APPROVED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 150.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 150.0")
+        reason = result.get("reason", "")
+        if "VOMIT" not in reason:
+            check_errors.append(f"reason does not mention VOMIT category: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK n RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK n RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {result['reason']}")
+
+        # =================================================================
+        # CHECK o: no dispute_claim, case_metadata.created_at 2 h after trip
+        #          end, LIQUID_SPILL receipt 35 -> APPROVED 35 (claim check
+        #          runs via created_at and passes)
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK o: no dispute_claim, created_at 2 h after trip -> APPROVED 35")
+        print("=" * 70)
+
+        # trip_end is 2026-09-25T22:05:00+08:00
+        # 2 h later = 2026-09-26T00:05:00+08:00
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=35.0)],
+            extra={
+                "case_metadata": {
+                    "case_id": "DISP-TEST-O",
+                    "dispute_type": "CLEANING_FEE",
+                    "current_state": "POLICY_CONSULTATION",
+                    "current_round": "ROUND_2_CROSS_EXAM",
+                    "resolution_channel": "FULLY_AUTOMATED",
+                    "created_at": "2026-09-26T00:05:00+08:00",
+                    "updated_at": "2026-09-26T00:05:00+08:00",
+                }
+            },
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "APPROVED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 35.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 35.0")
+
+        if check_errors:
+            print("\nCHECK o RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK o RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {result['reason']}")
+
+        # =================================================================
+        # CHECK p: case_metadata.created_at 50 h after trip end, no
+        #          dispute_claim -> REJECTED "Claim filed more than 48 h"
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK p: created_at 50 h after trip, no dispute_claim -> REJECTED")
+        print("=" * 70)
+
+        # trip_end is 2026-09-25T22:05:00+08:00
+        # 50 h later = 2026-09-28T00:05:00+08:00
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=35.0)],
+            extra={
+                "case_metadata": {
+                    "case_id": "DISP-TEST-P",
+                    "dispute_type": "CLEANING_FEE",
+                    "current_state": "POLICY_CONSULTATION",
+                    "current_round": "ROUND_2_CROSS_EXAM",
+                    "resolution_channel": "FULLY_AUTOMATED",
+                    "created_at": "2026-09-28T00:05:00+08:00",
+                    "updated_at": "2026-09-28T00:05:00+08:00",
+                }
+            },
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "REJECTED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected REJECTED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 0")
+        reason = result.get("reason", "")
+        if "48 h" not in reason.lower():
+            check_errors.append(f"reason does not mention 48 h window: {reason!r}")
+
+        if check_errors:
+            print("\nCHECK p RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK p RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {reason}")
+
+        # =================================================================
+        # CHECK q: two receipts: 20 dated 3 h after trip end + 30 dated 30 h
+        #          after -> only 20 counts -> VOMIT fee 20
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK q: receipts 20 (3 h) + 30 (30 h) -> only 20 counts -> VOMIT fee 20")
+        print("=" * 70)
+
+        # trip_end is 2026-09-25T22:05:00+08:00
+        #  3 h later = 2026-09-26T01:05:00+08:00  (within 24 h)
+        # 30 h later = 2026-09-27T04:05:00+08:00  (outside 24 h)
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(classification="VOMIT")],
+            receipt_evidence=[
+                _receipt(receipt_id="RCP-001", amount=20.0, receipt_date="2026-09-26T01:05:00+08:00"),
+                _receipt(receipt_id="RCP-002", amount=30.0, receipt_date="2026-09-27T04:05:00+08:00"),
+            ],
+        )
+        result = precedent_store._compute_cleaning_fee(clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "APPROVED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 20.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 20.0 (only in-window receipt)")
+
+        if check_errors:
+            print("\nCHECK q RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK q RESULT: PASS")
+            print(f"  - ruling_type: {result['ruling_type']}")
+            print(f"  - cleaning_fee_amount: {fee}")
+            print(f"  - reason: {result['reason']}")
+
+        # =================================================================
+        # CHECK r: params without category_caps but with severity_caps
+        #          {"MODERATE": 60} (modified clause copy), MODERATE image,
+        #          receipt 80 -> fee 60 (backward-compatible path)
+        # =================================================================
+        print("\n" + "=" * 70)
+        print("CHECK r: legacy severity_caps {MODERATE:60}, MODERATE, receipt 80 -> fee 60")
+        print("=" * 70)
+
+        legacy_params = {k: v for k, v in clause["params"].items() if k != "category_caps"}
+        legacy_params["severity_caps"] = {"MODERATE": 60.0}
+        legacy_clause = {**clause, "params": legacy_params}
+
+        ctx = _base_context(
+            analyses=[_valid_image_analysis(severity="MODERATE", classification="LIQUID_SPILL")],
+            receipt_evidence=[_receipt(amount=80.0)],
+        )
+        result = precedent_store._compute_cleaning_fee(legacy_clause, ctx)
+        check_errors = []
+
+        if result.get("computable") is not True:
+            check_errors.append(f"computable is {result.get('computable')!r}, expected True")
+        if result.get("ruling_type") != "APPROVED":
+            check_errors.append(f"ruling_type is {result.get('ruling_type')!r}, expected APPROVED")
+        fee = result.get("action", {}).get("cleaning_fee_amount")
+        if fee != 60.0:
+            check_errors.append(f"cleaning_fee_amount is {fee!r}, expected 60.0 (capped via severity_caps)")
+
+        if check_errors:
+            print("\nCHECK r RESULT: FAIL")
+            for e in check_errors:
+                print(f"  - {e}")
+            errors.extend(check_errors)
+        else:
+            print("\nCHECK r RESULT: PASS")
             print(f"  - ruling_type: {result['ruling_type']}")
             print(f"  - cleaning_fee_amount: {fee}")
             print(f"  - reason: {result['reason']}")
