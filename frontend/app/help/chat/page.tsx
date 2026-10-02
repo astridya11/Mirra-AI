@@ -3,17 +3,23 @@
 /**
  * Help / Chat Page
  *
- * Two modes:
- *   1. Default (no from=process): Original issue-submission flow — user
- *      describes their issue, bot confirms, redirects to tribunal.
- *   2. Verdict mode (from=process): After tribunal completes, the user
- *      arrives here. The bot (Ryde AI Support) presents the verdict:
- *        - If ESCALATED_HUMAN_REVIEW: only says case is under human review,
- *          no verdict details shown.
- *        - If FULLY_AUTOMATED: shows a verdict card with the ruling and
- *          recommended action, plus "Accept" and "Not happy, request human
- *          review" buttons. Decision persists to backend via
- *          submitPartyDecision().
+ * A single continuous conversation that combines two phases:
+ *   1. Issue-submission flow — user describes their issue, bot confirms,
+ *      redirects to tribunal.
+ *   2. Verdict flow (from=process) — after the tribunal completes, the user
+ *      returns here. The original issue-submission conversation is preserved
+ *      and the verdict is appended below as a continuation.
+ *
+ * Verdict presentation:
+ *   - If ESCALATED_HUMAN_REVIEW: only says case is under human review,
+ *     no verdict details shown.
+ *   - If FULLY_AUTOMATED: shows a verdict card with the ruling and
+ *     recommended action, plus "Accept" and "Not happy, request human
+ *     review" buttons. Decision persists to backend via
+ *     submitPartyDecision().
+ *
+ * A "View AI Tribunal" link appears above the verdict card and redirects
+ * to /tribunal/[caseId].
  */
 
 import { Suspense, useState, useRef, useEffect, useCallback } from "react";
@@ -103,6 +109,7 @@ interface VerdictCardProps {
 }
 
 function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
+  const router = useRouter();
   const [decision, setDecision] = useState<"ACCEPT" | "REQUEST_HUMAN_REVIEW" | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +169,19 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
             Your case has been reviewed. Here's the outcome:
           </div>
         </div>
+      </div>
+
+      {/* "View AI Tribunal" link above the verdict card */}
+      <div className="ml-9">
+        <button
+          onClick={() => router.push(`/tribunal/${caseId}`)}
+          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+        >
+          View AI Tribunal
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
 
       {/* Verdict card */}
@@ -242,9 +262,22 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
 // Escalated Message Component
 // ==========================================
 
-function EscalatedMessage() {
+function EscalatedMessage({ caseId }: { caseId: string }) {
+  const router = useRouter();
   return (
     <div className="space-y-3 animate-slide-up">
+      {/* "View AI Tribunal" link above the escalated message */}
+      <div className="ml-9">
+        <button
+          onClick={() => router.push(`/tribunal/${caseId}`)}
+          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+        >
+          View AI Tribunal
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
       <div className="flex items-end gap-2 justify-start">
         <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
           <span className="text-[10px] font-bold text-[#E84360]">M</span>
@@ -331,7 +364,7 @@ function ChatContent() {
     },
   ]);
   const [input, setInput] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSubmitted] = useState(fromProcess);
   const [botTyping, setBotTyping] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -341,6 +374,27 @@ function ChatContent() {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [messages, botTyping, verdictResult, decisionMade]);
+
+  // --- Restore issue-submission conversation when returning from tribunal ---
+  useEffect(() => {
+    if (!fromProcess) return;
+    const storedIssue = sessionStorage.getItem(`chat-issue-${caseId}`);
+    if (storedIssue) {
+      setMessages((prev) => {
+        // Avoid duplicates if the effect runs twice
+        if (prev.some((m) => m.sender === "user")) return prev;
+        return [
+          ...prev,
+          { id: `u-restored`, sender: "user" as const, text: storedIssue },
+          {
+            id: `b-restored`,
+            sender: "bot" as const,
+            text: "Dispute Logged — Miora AI Tribunal Session Active. Your case is now being reviewed by our multi-agent AI system. Please wait while the tribunal deliberates...",
+          },
+        ];
+      });
+    }
+  }, [caseId, fromProcess]);
 
   // --- Load verdict result on mount (from=process mode) ---
   useEffect(() => {
@@ -374,6 +428,12 @@ function ChatContent() {
     if (!input.trim() || submitted) return;
     const userMsg = { id: `u${Date.now()}`, sender: "user" as const, text: input };
     setMessages((prev) => [...prev, userMsg]);
+    // Persist the user's issue text so it can be restored when returning from tribunal
+    try {
+      sessionStorage.setItem(`chat-issue-${caseId}`, input);
+    } catch {
+      // sessionStorage unavailable — skip silently
+    }
     setInput("");
     setSubmitted(true);
     setBotTyping(true);
@@ -395,99 +455,12 @@ function ChatContent() {
     }, 3500);
   };
 
-  // --- Render verdict mode ---
-  if (fromProcess) {
-    return (
-      <div className="flex flex-col h-screen bg-white">
-        <IOSHeader
-          title="Ryde AI Support"
-          onBack={() => router.push("/help")}
-          rightAction={
-            <div className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />
-              <span className="text-[12px] text-[#6B7280]">Online</span>
-            </div>
-          }
-        />
+  // --- Unified render: issue-submission flow + verdict (if fromProcess) ---
+  // In fromProcess mode, the issue-submission conversation is preserved and
+  // the verdict is appended below as a continuous conversation. The input bar
+  // is hidden in fromProcess mode (treated as already submitted).
+  const showInput = !submitted && !fromProcess;
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 max-w-[560px] w-full mx-auto">
-          {verdictLoading && (
-            <div className="flex items-end gap-2 justify-start">
-              <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-                <span className="text-[10px] font-bold text-[#E84360]">M</span>
-              </div>
-              <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-3">
-                <TypingDots />
-              </div>
-            </div>
-          )}
-
-          {verdictError && (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="text-[15px] text-[#6B7280] text-center px-8">
-                {verdictError}
-              </div>
-              <button
-                onClick={() => window.location.reload()}
-                className="px-5 py-2.5 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] active:scale-95 transition-transform"
-              >
-                Retry
-              </button>
-            </div>
-          )}
-
-          {verdictResult && !verdictLoading && !verdictError && (
-            <>
-              {isEscalated(verdictResult) ? (
-                <EscalatedMessage />
-              ) : isAutomated(verdictResult) && verdictResult.judge_verdict ? (
-                <VerdictCard
-                  verdict={verdictResult.judge_verdict}
-                  caseId={caseId}
-                  onDecisionChange={setDecisionMade}
-                />
-              ) : (
-                <div className="flex items-end gap-2 justify-start animate-slide-up">
-                  <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-                    <span className="text-[10px] font-bold text-[#E84360]">M</span>
-                  </div>
-                  <div className="max-w-[75%]">
-                    <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
-                      Your case is still being processed. Please check back shortly.
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Secondary "Back to home" after decision */}
-              {decisionMade && (
-                <div className="flex justify-center pt-2 animate-fade-in">
-                  <button
-                    onClick={() => { if (typeof window !== "undefined") window.location.href = "/"; }}
-                    className="text-[14px] font-medium text-[#E84360] active:opacity-60"
-                  >
-                    Back to home
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* No input bar in verdict mode — only a static footer */}
-        <div className="border-t border-gray-100 px-4 py-3 bg-white">
-          <div className="flex items-center justify-center text-[14px] text-[#9CA3AF]">
-            <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            AI-powered dispute resolution
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Render issue submission mode (original) ---
   return (
     <div className="flex flex-col h-screen bg-white">
       <IOSHeader
@@ -496,12 +469,12 @@ function ChatContent() {
         rightAction={
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />
-            <span className="text-[12px] text-[#6B7280]">Online</span>
           </div>
         }
       />
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 max-w-[560px] w-full mx-auto">
+        {/* Issue-submission conversation (always shown) */}
         {messages.map((msg) => (
           <ChatBubble key={msg.id} message={msg} />
         ))}
@@ -516,7 +489,7 @@ function ChatContent() {
           </div>
         )}
 
-        {submitted && !botTyping && (
+        {submitted && !botTyping && !fromProcess && (
           <div className="flex justify-center pt-2">
             <div className="flex items-center gap-2 rounded-full bg-[#FDF1F3] px-4 py-2 animate-fade-in">
               <span className="w-2 h-2 rounded-full bg-[#E84360] animate-pulse-dot" />
@@ -526,11 +499,93 @@ function ChatContent() {
             </div>
           </div>
         )}
+
+        {/* Verdict section (fromProcess mode) — appears below the conversation */}
+        {fromProcess && (
+          <>
+            {verdictLoading && (
+              <div className="flex items-end gap-2 justify-start">
+                <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
+                  <span className="text-[10px] font-bold text-[#E84360]">M</span>
+                </div>
+                <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-3">
+                  <TypingDots />
+                </div>
+              </div>
+            )}
+
+            {verdictError && (
+              <div className="flex flex-col items-center justify-center gap-3 py-8">
+                <div className="text-[15px] text-[#6B7280] text-center px-8">
+                  {verdictError}
+                </div>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="px-5 py-2.5 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] active:scale-95 transition-transform"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {verdictResult && !verdictLoading && !verdictError && (
+              <>
+                {isEscalated(verdictResult) ? (
+                  <EscalatedMessage caseId={caseId} />
+                ) : isAutomated(verdictResult) && verdictResult.judge_verdict ? (
+                  <VerdictCard
+                    verdict={verdictResult.judge_verdict}
+                    caseId={caseId}
+                    onDecisionChange={setDecisionMade}
+                  />
+                ) : (
+                  <>
+                    {/* "View AI Tribunal" link above the still-processing message */}
+                    <div className="ml-9">
+                      <button
+                        onClick={() => router.push(`/tribunal/${caseId}`)}
+                        className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+                      >
+                        View AI Tribunal
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="flex items-end gap-2 justify-start animate-slide-up">
+                      <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
+                        <span className="text-[10px] font-bold text-[#E84360]">M</span>
+                      </div>
+                      <div className="max-w-[75%]">
+                        <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
+                          Your case is still being processed. Please check back shortly.
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Secondary "Back to home" after decision */}
+                {decisionMade && (
+                  <div className="flex justify-center pt-2 animate-fade-in">
+                    <button
+                      onClick={() => { if (typeof window !== "undefined") window.location.href = "/"; }}
+                      className="text-[14px] font-medium text-[#E84360] active:opacity-60"
+                    >
+                      Back to home
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
       </div>
 
-      {!submitted ? (
+      {/* Footer / input bar */}
+      {showInput ? (
         <div className="border-t border-gray-100 px-4 py-3 bg-white">
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2 max-w-[560px] w-full mx-auto">
             <div className="flex-1 flex items-center gap-2 bg-[#F3F4F6] rounded-2xl px-3 py-2">
               <input
                 type="text"
@@ -552,6 +607,15 @@ function ChatContent() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.11A20.45 20.45 0 0021.5 12 20.45 20.45 0 003.27 20.89L5.999 12zm0 0h7.5" />
               </svg>
             </button>
+          </div>
+        </div>
+      ) : fromProcess ? (
+        <div className="border-t border-gray-100 px-4 py-3 bg-white">
+          <div className="flex items-center justify-center text-[14px] text-[#9CA3AF]">
+            <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            AI-powered dispute resolution
           </div>
         </div>
       ) : (
