@@ -919,6 +919,11 @@
         },
         "cancellation_reason": {
           "type": "string"
+        },
+        "trip_end_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the trip was completed (drop-off). Used by POL-4 for the photo time window."
         }
       },
       "additionalProperties": false
@@ -1028,6 +1033,69 @@
       },
       "additionalProperties": false
     },
+    "ReceiptOcrResult": {
+      "title": "ReceiptOcrResult",
+      "description": "Structured OCR output from reading a submitted receipt image.  These fields are NEVER inferred from chat text or trip data.",
+      "type": "object",
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "description": "Monetary amount read from the receipt by OCR.",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code read from the receipt.",
+          "default": "SGD"
+        },
+        "merchant_name": {
+          "type": "string",
+          "description": "Merchant or vendor name printed on the receipt, if legible."
+        },
+        "receipt_date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Date printed on the receipt, normalized to ISO-8601 by the OCR adapter."
+        },
+        "ocr_confidence": {
+          "type": "number",
+          "description": "Confidence score (0.0-1.0) for the overall OCR read result.",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ReceiptEvidenceInput": {
+      "title": "ReceiptEvidenceInput",
+      "description": "A single receipt submitted as evidence.  The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.",
+      "type": "object",
+      "required": ["receipt_id", "receipt_url"],
+      "properties": {
+        "receipt_id": {
+          "type": "string",
+          "description": "Unique identifier for the submitted receipt (e.g., 'RCP-001')."
+        },
+        "receipt_url": {
+          "type": "string",
+          "description": "URL or storage path to the receipt image."
+        },
+        "uploaded_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when the receipt was uploaded."
+        },
+        "ocr_result": {
+          "$ref": "#/$defs/ReceiptOcrResult",
+          "description": "Structured OCR result.  Omitted when the receipt could not be read."
+        }
+      },
+      "additionalProperties": false
+    },
     "DataSources": {
       "title": "DataSources",
       "description": "Container for all collected telemetry, communication, payment, and historical data sources. All data is collected and frozen at INIT_CLAIM; no new evidence is requested or introduced during the agent debate.",
@@ -1071,6 +1139,15 @@
           "description": "Optional structured image evidence submitted for this case.  Omitted or empty when no images are available.",
           "items": {
             "$ref": "#/$defs/ImageEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
+        },
+        "receipt_evidence": {
+          "type": "array",
+          "description": "Optional cleaning receipts submitted for this case.  Omitted or empty when no receipt is available.",
+          "items": {
+            "$ref": "#/$defs/ReceiptEvidenceInput"
           },
           "minItems": 0,
           "default": []

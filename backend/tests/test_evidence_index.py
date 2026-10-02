@@ -130,7 +130,7 @@ def _test_disp001_route_summary() -> None:
 def _test_other_cases() -> None:
     errors: list[str] = []
 
-    for case_id in ("DISP-001", "DISP-003"):
+    for case_id in ("DISP-001", "DISP-003", "DISP-004"):
         raw = _load_json(_MOCK_DIR / f"{case_id}.json")
         try:
             index = build_evidence_index(raw["data_sources"])
@@ -141,14 +141,86 @@ def _test_other_cases() -> None:
             errors.append(f"{case_id}: expected > 0 items, got 0")
 
     if errors:
-        print("\nTEST 2 (DISP-001 + DISP-003) RESULT: FAIL")
+        print("\nTEST 2 (DISP-001 + DISP-003 + DISP-004) RESULT: FAIL")
         for e in errors:
             print(f"  - {e}")
         sys.exit(1)
     else:
-        print("\nTEST 2 (DISP-001 + DISP-003) RESULT: PASS")
+        print("\nTEST 2 (DISP-001 + DISP-003 + DISP-004) RESULT: PASS")
         print("  - DISP-001: index built without errors, > 0 items")
         print("  - DISP-003: index built without errors, > 0 items")
+        print("  - DISP-004: index built without errors, > 0 items")
+
+
+# ---------------------------------------------------------------------------
+# Test 4: DISP-004 image, receipt, trip_end_time, no cleaning_fee_claimed ----
+# ---------------------------------------------------------------------------
+
+
+def _test_disp004() -> None:
+    raw = _load_json(_MOCK_DIR / "DISP-004.json")
+    data_sources = raw["data_sources"]
+    snapshot = copy.deepcopy(data_sources)
+
+    index = build_evidence_index(data_sources)
+
+    errors: list[str] = []
+
+    # IMG-001 exists, source_type IMAGE, description contains date and
+    # known-matches case id, and does NOT contain "recycled".
+    img001 = index.get("IMG-001")
+    if img001 is None:
+        errors.append("Expected 'IMG-001' in index, not found")
+    else:
+        if img001.get("source_type") != "IMAGE":
+            errors.append(f"IMG-001 source_type is {img001.get('source_type')!r}, expected IMAGE")
+        desc = img001.get("description", "")
+        if "2026-08-30" not in desc:
+            errors.append(f"Expected '2026-08-30' in IMG-001 description, got: {desc}")
+        if "DISP-0871" not in desc:
+            errors.append(f"Expected 'DISP-0871' in IMG-001 description, got: {desc}")
+        if "recycled" in desc.lower():
+            errors.append(f"IMG-001 description must not contain 'recycled', got: {desc}")
+
+    # RCP-001 exists, source_type RECEIPT, description contains "60.00".
+    rcp001 = index.get("RCP-001")
+    if rcp001 is None:
+        errors.append("Expected 'RCP-001' in index, not found")
+    else:
+        if rcp001.get("source_type") != "RECEIPT":
+            errors.append(f"RCP-001 source_type is {rcp001.get('source_type')!r}, expected RECEIPT")
+        desc = rcp001.get("description", "")
+        if "60.00" not in desc:
+            errors.append(f"Expected '60.00' in RCP-001 description, got: {desc}")
+
+    # TRIP-DATA description contains "trip end time".
+    trip_data = index.get("TRIP-DATA")
+    if trip_data is None:
+        errors.append("Expected 'TRIP-DATA' in index, not found")
+    elif "trip end time" not in trip_data.get("description", "").lower():
+        errors.append(f"Expected 'trip end time' in TRIP-DATA description, got: {trip_data.get('description')}")
+
+    # No "cleaning_fee_claimed" event anywhere in the index.
+    for eid, entry in index.items():
+        if "cleaning_fee_claimed" in entry.get("description", "").lower():
+            errors.append(f"Found 'cleaning_fee_claimed' in index entry {eid}: {entry['description']}")
+
+    # Input must be unchanged.
+    if data_sources != snapshot:
+        errors.append("data_sources was modified by build_evidence_index (should be read-only)")
+
+    if errors:
+        print("\nTEST 4 (DISP-004) RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 4 (DISP-004) RESULT: PASS")
+        print("  - IMG-001: source_type IMAGE, contains '2026-08-30' and 'DISP-0871', no 'recycled'")
+        print(f"  - RCP-001: source_type RECEIPT, contains '60.00'")
+        print("  - TRIP-DATA contains 'trip end time'")
+        print("  - no 'cleaning_fee_claimed' event in index")
+        print("  - data_sources unchanged")
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +230,7 @@ def main() -> None:
     _test_disp002()
     _test_disp001_route_summary()
     _test_other_cases()
+    _test_disp004()
     print("\nALL TESTS PASSED")
 
 

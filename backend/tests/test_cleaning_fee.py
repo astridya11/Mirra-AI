@@ -20,6 +20,7 @@ import pytest
 
 from app.services.verification.checks_cleaning_fee import (
     _event_mentions_photo,
+    _get_claim,
     _parse_claim_amount_from_event,
     check_cleaning_claim_amount_consistency,
     check_cleaning_claim_event_exists,
@@ -53,6 +54,11 @@ def disp002_data():
 @pytest.fixture
 def disp003_data():
     return normalize_evidence(load_case_data("DISP-003"))
+
+
+@pytest.fixture
+def disp004_data():
+    return normalize_evidence(load_case_data("DISP-004"))
 
 
 def _all_facts(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -92,16 +98,18 @@ def test_disp003_report_has_no_route_noise(disp003_data):
 
 
 # ---------------------------------------------------------------------------
-# 4. Cleaning claim event -> VERIFIED
+# 4. Cleaning claim recorded -> VERIFIED (case record source)
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_event_verified(disp003_data):
     result = check_cleaning_claim_event_exists(disp003_data)
     assert result["status"] == "VERIFIED"
-    assert "cleaning-fee claim is recorded" in result["description"].lower()
+    assert "cleaning-fee claim" in result["description"].lower()
+    assert "100.00" in result["description"]
+    assert "case record" in result["description"].lower()
 
 
 # ---------------------------------------------------------------------------
-# 5. Missing claim event -> MISSING
+# 5. Missing claim -> MISSING (no source yields filed_at or amount)
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_event_missing():
     data = {"data_sources": {"app_events": []}}
@@ -125,23 +133,31 @@ def test_cleaning_claim_event_malformed_timestamp():
 
 
 # ---------------------------------------------------------------------------
-# 7. Current $100 claim matches PAYMENT-DATA -> VERIFIED
+# 7. Claim amount matches receipt total -> VERIFIED
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_amount_consistency_verified(disp003_data):
-    result = check_cleaning_claim_amount_consistency(disp003_data)
+    data = copy.deepcopy(disp003_data)
+    data["data_sources"]["receipt_evidence"] = [
+        {"receipt_id": "RCP-001", "ocr_result": {"amount": 100.0, "currency": "SGD"}}
+    ]
+    result = check_cleaning_claim_amount_consistency(data)
     assert result["status"] == "VERIFIED"
-    assert "100" in result["description"]
-    assert "consistent" in result["description"].lower()
+    assert "100.00" in result["description"]
+    assert "matches" in result["description"].lower()
 
 
 # ---------------------------------------------------------------------------
-# 8. Amount mismatch -> DISPUTED
+# 8. Amount mismatch (claim vs receipt total) -> DISPUTED
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_amount_mismatch(disp003_data):
     data = copy.deepcopy(disp003_data)
-    data["data_sources"]["payment_fare_data"]["disputed_amount"] = 50.0
+    data["data_sources"]["receipt_evidence"] = [
+        {"receipt_id": "RCP-001", "ocr_result": {"amount": 50.0, "currency": "SGD"}}
+    ]
     result = check_cleaning_claim_amount_consistency(data)
     assert result["status"] == "DISPUTED"
+    assert "100.00" in result["description"]
+    assert "50.00" in result["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -168,23 +184,22 @@ def test_cleaning_claim_amount_rejects_non_finite(disp003_data, bad_value):
 
 
 # ---------------------------------------------------------------------------
-# 11. Claim delay = 5100 sec / 85 min
+# 11. Claim delay = 47700 sec / 795 min (created_at vs trip_completed)
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_delay_verified(disp003_data):
     result = check_cleaning_claim_submission_delay(disp003_data)
     assert result["status"] == "VERIFIED"
-    assert result["details"]["delta_seconds"] == 5100
-    assert result["details"]["delta_minutes"] == 85
+    assert result["details"]["delta_seconds"] == 47700
+    assert result["details"]["delta_minutes"] == 795
 
 
 # ---------------------------------------------------------------------------
-# 12. Claim before trip completion -> DISPUTED
+# 12. Claim filed before trip completion -> DISPUTED
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_before_trip_completion(disp003_data):
     data = copy.deepcopy(disp003_data)
-    # Swap timestamps so claim is before completion
-    data["data_sources"]["app_events"][0]["timestamp"] = "2026-09-22T04:10:00+08:00"
-    data["data_sources"]["app_events"][1]["timestamp"] = "2026-09-22T02:45:00+08:00"
+    # Set created_at before trip_completed (02:45)
+    data["case_metadata"]["created_at"] = "2026-09-22T02:10:00+08:00"
     result = check_cleaning_claim_submission_delay(data)
     assert result["status"] == "DISPUTED"
 
@@ -194,7 +209,7 @@ def test_cleaning_claim_before_trip_completion(disp003_data):
 # ---------------------------------------------------------------------------
 def test_cleaning_claim_delay_malformed_timestamps(disp003_data):
     data = copy.deepcopy(disp003_data)
-    data["data_sources"]["app_events"][0]["timestamp"] = "bad"
+    data["case_metadata"]["created_at"] = "bad"
     result = check_cleaning_claim_submission_delay(data)
     assert result["status"] == "MISSING"
 
@@ -315,13 +330,147 @@ def test_cleaning_structured_image_evidence_verified(disp003_data):
     assert "available" in result["description"].lower()
 
 
+# ===========================================================================
+# Structured image evidence — deterministic image-check outcomes
+# ===========================================================================
+
+_FORBIDDEN_FABRICATION_TERMS = (
+    "recycled image",
+    "fabricated evidence",
+    "ai-generated",
+    "ai generated",
+    "synthetic image",
+)
+
+
+def _make_full_image(
+    image_id: str = "IMG-001",
+    exif_timestamp: str = "2026-09-25T22:15:00+08:00",
+    lat: float = 1.3508,
+    lng: float = 103.8485,
+    is_ai_generated: bool = False,
+    ai_confidence: float = 0.05,
+    classification: str = "LIQUID_SPILL",
+    severity: str = "MODERATE",
+    image_hash: str | None = "phash:aaaaaaaaaaaaaaaa",
+    known_matches: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build a fully-valid image_evidence entry that can pass _can_emit_exif_analysis."""
+    entry: dict[str, Any] = {
+        "image_id": image_id,
+        "image_url": f"mock://evidence/{image_id}.jpg",
+        "exif_timestamp": exif_timestamp,
+        "exif_gps_location": {"latitude": lat, "longitude": lng},
+        "provider_result": {
+            "is_ai_generated": is_ai_generated,
+            "ai_generated_confidence": ai_confidence,
+            "stain_damage_classification": classification,
+            "damage_severity": severity,
+        },
+    }
+    if image_hash is not None:
+        entry["image_hash"] = image_hash
+    if known_matches is not None:
+        entry["known_matches"] = known_matches
+    return entry
+
+
 # ---------------------------------------------------------------------------
-# 24. App event mentions photo + no structured record -> MISSING photo consistency
+# DISP-004 → VERIFIED (recycled image), party_relevance DRIVER
+# ---------------------------------------------------------------------------
+def test_disp004_structured_image_recycled_verified(disp004_data):
+    result = check_cleaning_structured_image_evidence(disp004_data)
+    assert result["status"] == "VERIFIED"
+    desc = result["description"]
+    assert "Recycled image detected" in desc
+    assert "DISP-0871" in desc
+    # EXIF is also inconsistent (timestamp 2026-08-30 vs trip 2026-09-25)
+    assert "inconsistent" in desc.lower()
+    assert result["details"]["party_relevance"] == "DRIVER"
+    # evidence_ref IMG-001 with source_type IMAGE
+    ref_ids = [r["evidence_id"] for r in result["evidence_refs"]]
+    assert "IMG-001" in ref_ids
+    img_ref = next(r for r in result["evidence_refs"] if r["evidence_id"] == "IMG-001")
+    assert img_ref["source_type"] == "IMAGE"
+
+
+# ---------------------------------------------------------------------------
+# DISP-004 deepcopy with known_matches removed → DISPUTED (EXIF only)
+# ---------------------------------------------------------------------------
+def test_disp004_structured_image_exif_disputed(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    data["data_sources"]["image_evidence"][0].pop("known_matches", None)
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "DISPUTED"
+    assert result["details"]["party_relevance"] == "DRIVER"
+    desc_lower = result["description"].lower()
+    assert "inconsistent" in desc_lower
+    for forbidden in _FORBIDDEN_FABRICATION_TERMS:
+        assert forbidden not in desc_lower
+
+
+# ---------------------------------------------------------------------------
+# AI-generated image, no known match → VERIFIED containing "AI-generated"
+# ---------------------------------------------------------------------------
+def test_structured_image_ai_generated_verified(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    img = data["data_sources"]["image_evidence"][0]
+    img.pop("known_matches", None)
+    img["provider_result"]["is_ai_generated"] = True
+    img["provider_result"]["ai_generated_confidence"] = 0.92
+    # Fix EXIF so only the AI flag triggers
+    img["exif_timestamp"] = "2026-09-25T22:15:00+08:00"
+    img["exif_gps_location"] = {"latitude": 1.3508, "longitude": 103.8485}
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "VERIFIED"
+    assert "AI-generated image detected" in result["description"]
+    assert "0.92" in result["description"]
+    assert result["details"]["party_relevance"] == "DRIVER"
+
+
+# ---------------------------------------------------------------------------
+# Clean image (EXIF 10 min after trip_completed, GPS at dropoff) → VERIFIED, no issue
+# ---------------------------------------------------------------------------
+def test_structured_image_clean_verified_no_issue(disp004_data):
+    data = copy.deepcopy(disp004_data)
+    # Replace with a single clean image
+    data["data_sources"]["image_evidence"] = [
+        _make_full_image(
+            exif_timestamp="2026-09-25T22:15:00+08:00",  # 10 min after trip_completed (22:05)
+            lat=1.3508,  # dropoff lat
+            lng=103.8485,  # dropoff lng
+            is_ai_generated=False,
+            ai_confidence=0.05,
+            image_hash="phash:cleanimage000001",
+            known_matches=None,
+        )
+    ]
+    # Remove known_matches so no recycled detection
+    data["data_sources"]["image_evidence"][0].pop("known_matches", None)
+    result = check_cleaning_structured_image_evidence(data)
+    assert result["status"] == "VERIFIED"
+    desc_lower = result["description"].lower()
+    assert "found no issue" in desc_lower
+    for forbidden in _FORBIDDEN_FABRICATION_TERMS:
+        assert forbidden not in desc_lower
+    assert "party_relevance" not in result["details"]
+
+
+# ---------------------------------------------------------------------------
+# DISP-003 → unchanged MISSING fact (same description as before)
+# ---------------------------------------------------------------------------
+def test_disp003_structured_image_missing_unchanged(disp003_data):
+    result = check_cleaning_structured_image_evidence(disp003_data)
+    assert result["status"] == "MISSING"
+    assert "frozen structured evidence record" in result["description"].lower()
+
+
+# ---------------------------------------------------------------------------
+# 24. No claim text + no structured record -> MISSING (no image evidence)
 # ---------------------------------------------------------------------------
 def test_cleaning_photo_reference_missing(disp003_data):
     result = check_cleaning_photo_reference_consistency(disp003_data)
     assert result["status"] == "MISSING"
-    assert "references an attached photo" in result["description"].lower()
     assert "no structured image evidence" in result["description"].lower()
 
 
@@ -635,6 +784,61 @@ def test_photo_mention_negative(details):
 def test_photo_mention_ambiguous_unrelated():
     event = {"details": "We discussed the photo policy."}
     assert _event_mentions_photo(event) is False
+
+
+# ===========================================================================
+# _get_claim source-priority and receipt-consistency tests
+# ===========================================================================
+
+def test_dispute_claim_source_used_when_present(disp003_data):
+    """When data['dispute_claim'] is present, _get_claim uses it as the source."""
+    data = copy.deepcopy(disp003_data)
+    data["dispute_claim"] = {
+        "filed_by": "DRIVER",
+        "filed_at": "2026-09-22T03:00:00+08:00",
+        "description": "Driver filed a cleaning fee claim with 1 photo attached.",
+    }
+    claim = _get_claim(data)
+    assert claim is not None
+    assert claim["source"] == "DISPUTE_CLAIM"
+    assert claim["filed_at"] == "2026-09-22T03:00:00+08:00"
+    assert claim["amount"] == 100.0  # from disputed_amount
+    assert claim["description"] == "Driver filed a cleaning fee claim with 1 photo attached."
+
+
+def test_disp004_amount_check_verified(disp004_data):
+    """DISP-004: disputed_amount 60 matches receipt total 60 -> VERIFIED."""
+    result = check_cleaning_claim_amount_consistency(disp004_data)
+    assert result["status"] == "VERIFIED"
+    assert "60.00" in result["description"]
+    assert "matches" in result["description"].lower()
+    assert "RCP-001" in result["description"]
+
+
+def test_disp003_amount_check_missing_no_receipt(disp003_data):
+    """DISP-003: no receipt_evidence -> MISSING (no readable receipt)."""
+    result = check_cleaning_claim_amount_consistency(disp003_data)
+    assert result["status"] == "MISSING"
+    assert "no readable receipt" in result["description"].lower()
+
+
+def test_legacy_app_event_still_works(disp003_data):
+    """Adding a cleaning_fee_claimed app event to a deepcopy uses the APP_EVENT path."""
+    data = copy.deepcopy(disp003_data)
+    data["data_sources"]["app_events"].append({
+        "event_type": "cleaning_fee_claimed",
+        "timestamp": "2026-09-22T04:10:00+08:00",
+        "details": "Driver submitted cleaning fee claim of $100.",
+    })
+    claim = _get_claim(data)
+    assert claim is not None
+    assert claim["source"] == "APP_EVENT"
+    assert claim["amount"] == 100.0
+
+    # Amount consistency: APP_EVENT path compares event amount vs disputed_amount
+    result = check_cleaning_claim_amount_consistency(data)
+    assert result["status"] == "VERIFIED"
+    assert "100.00" in result["description"]
 
 
 # ===========================================================================

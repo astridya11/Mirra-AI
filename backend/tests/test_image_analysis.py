@@ -22,6 +22,7 @@ def _make_context(
     scheduled_time: str | None = None,
     arrival_time: str | None = None,
     cancellation_time: str | None = None,
+    trip_end_time: str | None = None,
     pickup_lat: float = 1.0,
     pickup_lng: float = 103.0,
     dropoff_lat: float = 1.1,
@@ -35,6 +36,7 @@ def _make_context(
                 "scheduled_time": scheduled_time,
                 "driver_arrival_time": arrival_time,
                 "cancellation_time": cancellation_time,
+                "trip_end_time": trip_end_time,
                 "pickup_location": {"lat": pickup_lat, "lng": pickup_lng},
                 "dropoff_location": {"lat": dropoff_lat, "lng": dropoff_lng},
             },
@@ -711,3 +713,126 @@ def test_shared_schema_accepts_optional_image_evidence():
     assert gps["properties"]["latitude"]["maximum"] == 90
     assert gps["properties"]["longitude"]["minimum"] == -180
     assert gps["properties"]["longitude"]["maximum"] == 180
+
+
+# ===========================================================================
+# 38. POL-4 photo-validity rule (trip_end_time + dropoff_location known)
+# ===========================================================================
+
+_TRIP_END = "2026-09-25T22:05:00+08:00"
+_DROPOFF_LAT = 1.3508
+_DROPOFF_LNG = 103.8485
+
+
+def _make_pol4_context(**overrides):
+    """Build a context where the POL-4 rule applies (trip_end_time + dropoff known)."""
+    defaults = {
+        "trip_end_time": _TRIP_END,
+        "dropoff_lat": _DROPOFF_LAT,
+        "dropoff_lng": _DROPOFF_LNG,
+    }
+    defaults.update(overrides)
+    return _make_context(**defaults)
+
+
+def _make_pol4_image(exif_ts: str, lat: float, lng: float, **kw):
+    """Build a fully-valid image with the given EXIF timestamp and GPS."""
+    return _make_valid_image(
+        exif_timestamp=exif_ts,
+        exif_gps_location=ExifGpsLocation(latitude=lat, longitude=lng),
+        **kw,
+    )
+
+
+# 38a. Photo 20 min after trip end at the dropoff → True (failed under old rule)
+def test_pol4_photo_20min_after_trip_end_at_dropoff_consistent():
+    img = _make_pol4_image(
+        exif_ts="2026-09-25T22:25:00+08:00",  # 20 min after 22:05
+        lat=_DROPOFF_LAT,
+        lng=_DROPOFF_LNG,
+    )
+    ctx = _make_pol4_context()
+    result = analyze_image_evidence(img, ctx["data_sources"])
+    assert result is not None
+    assert result.get("exif_consistent_with_trip") is True
+
+
+# 38b. Photo 40 min after trip end at the dropoff → False (exceeds 30 min window)
+def test_pol4_photo_40min_after_trip_end_inconsistent():
+    img = _make_pol4_image(
+        exif_ts="2026-09-25T22:45:00+08:00",  # 40 min after 22:05
+        lat=_DROPOFF_LAT,
+        lng=_DROPOFF_LNG,
+    )
+    ctx = _make_pol4_context()
+    result = analyze_image_evidence(img, ctx["data_sources"])
+    assert result is not None
+    assert result.get("exif_consistent_with_trip") is False
+
+
+# 38c. Photo 5 min before trip end at the dropoff → False
+def test_pol4_photo_before_trip_end_inconsistent():
+    img = _make_pol4_image(
+        exif_ts="2026-09-25T22:00:00+08:00",  # 5 min before 22:05
+        lat=_DROPOFF_LAT,
+        lng=_DROPOFF_LNG,
+    )
+    ctx = _make_pol4_context()
+    result = analyze_image_evidence(img, ctx["data_sources"])
+    assert result is not None
+    assert result.get("exif_consistent_with_trip") is False
+
+
+# 38d. Photo 10 min after trip end but 800 m from the dropoff → False
+def test_pol4_photo_10min_after_trip_end_far_from_dropoff_inconsistent():
+    # Bishan dropoff ~1.3508, 103.8485.  Move ~800m south.
+    img = _make_pol4_image(
+        exif_ts="2026-09-25T22:15:00+08:00",  # 10 min after 22:05
+        lat=_DROPOFF_LAT - 0.0072,  # ~800m south
+        lng=_DROPOFF_LNG,
+    )
+    ctx = _make_pol4_context()
+    result = analyze_image_evidence(img, ctx["data_sources"])
+    assert result is not None
+    assert result.get("exif_consistent_with_trip") is False
+
+
+# 38e. No trip_end_time → old rule still applied (same result as existing case)
+def test_pol4_no_trip_end_time_uses_legacy_rule():
+    """When trip_end_time is missing, the legacy ±10 min / 200 m rule applies.
+
+    This mirrors test_exif_timestamp_within_tolerance_consistent: EXIF 1 min
+    after arrival, 7 min before cancellation, GPS at pickup.  Under the legacy
+    rule this is consistent.  Under the POL-4 rule it would be None (no
+    trip_end_time), so the fallback must be the legacy rule.
+    """
+    img = _make_valid_image(exif_timestamp="2026-09-13T08:44:00+08:00")
+    ctx = _make_context(
+        scheduled_time="2026-09-13T08:45:00+08:00",
+        arrival_time="2026-09-13T08:43:00+08:00",
+        cancellation_time="2026-09-13T08:51:00+08:00",
+        pickup_lat=1.2847,
+        pickup_lng=103.8382,
+    )
+    result = analyze_image_evidence(img, ctx["data_sources"])
+    assert result is not None
+    assert result.get("exif_consistent_with_trip") is True
+
+
+# 38f. DISP-004 mock file → still False (2026-08-30, Tampines)
+def test_pol4_disp004_mock_still_inconsistent():
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+
+    from app.services.verification.ingestion import load_case_data, normalize_evidence
+
+    data = normalize_evidence(load_case_data("DISP-004"))
+    images = extract_images_from_context(data)
+    assert len(images) == 1
+    analyses = analyze_image_evidence_batch(images, data["data_sources"])
+    assert len(analyses) == 1
+    assert analyses[0].get("exif_consistent_with_trip") is False

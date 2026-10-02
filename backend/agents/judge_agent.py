@@ -10,9 +10,11 @@ which is added later by the execution gate).
 """
 
 import json
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from backend.shared.advocate_utils import get_claimant
 from backend.shared.llm_client import call_llm_json, LLMError
 
 # Timezone for deliberated_at timestamps.
@@ -24,7 +26,6 @@ _ACTION_KEYS = {
     "refund_amount",
     "cleaning_fee_amount",
     "currency",
-    "penalty_points",
     "penalty_target",
     "account_action",
 }
@@ -33,6 +34,56 @@ _ACTION_KEYS = {
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
+
+def _get_dispute_claim_text(context: dict) -> str:
+    """Return a human-readable representation of the dispute claim for the prompt.
+
+    1. If ``context["dispute_claim"]`` is a dict (UI format with
+       ``filed_by``, ``filed_at``, ``description``), format it as
+       ``"Filed by <FILED_BY> at <filed_at>: <description>"``, omitting
+       missing parts.
+    2. If it is a non-empty string, return it as-is.
+    3. Otherwise, determine the claimant with :func:`get_claimant` (same
+       logic the advocates use) and return that party's round 1
+       ``argument_summary``, prefixed ``"Claimant (<PARTY>) statement: "``.
+    4. If nothing is available, return ``"(no claim statement available)"``.
+    """
+    dispute_claim = context.get("dispute_claim")
+
+    # (1) Dict (UI format)
+    if isinstance(dispute_claim, dict):
+        parts: list[str] = []
+        filed_by = dispute_claim.get("filed_by")
+        filed_at = dispute_claim.get("filed_at")
+        description = dispute_claim.get("description")
+        if filed_by:
+            parts.append(f"Filed by {filed_by}")
+        if filed_at:
+            parts.append(f"at {filed_at}")
+        prefix = " ".join(parts)
+        if prefix:
+            prefix += ": "
+        desc_text = str(description) if description else ""
+        text = prefix + desc_text
+        return text.strip() if text.strip() else "(no claim statement available)"
+
+    # (2) Non-empty string
+    if isinstance(dispute_claim, str) and dispute_claim.strip():
+        return dispute_claim.strip()
+
+    # (3) Fall back to the claimant's round 1 statement
+    round_1 = context.get("round_1_statements", {})
+    claimant = get_claimant(context)
+    if claimant == "DRIVER":
+        stmt = round_1.get("driver_statement", {})
+    else:
+        stmt = round_1.get("rider_statement", {})
+    summary = stmt.get("argument_summary", "")
+    if summary:
+        return f"Claimant ({claimant}) statement: {summary}"
+
+    # (4) Nothing available
+    return "(no claim statement available)"
 
 _SYSTEM_PROMPT = """\
 You are an impartial Judge Agent in a ride-hailing dispute resolution system.
@@ -66,6 +117,11 @@ RIGID RULES:
       "the driver notified you."
    e. Mention that they can appeal or request human review within 7 days. \
       Do NOT cite the clause ID for this.
+   f. If the account action is not NONE, the explanation for the affected \
+      party must state it plainly and neutrally (e.g. a warning has been \
+      recorded) and that it needs human confirmation. Never say there is no \
+      penalty or no account action when there is one. If it is NONE, do not \
+      mention account actions.
 7. Return JSON only, with exactly these top-level keys:
    ruling_type, confidence_score, reasoning_summary, \
    verified_fact_references, policy_clauses_applied, precedent_references, \
@@ -73,9 +129,9 @@ RIGID RULES:
 
    recommended_action must have exactly these keys:
    action_type, refund_amount, cleaning_fee_amount, currency, \
-   penalty_points, penalty_target, account_action.
-   account_action, penalty_target and penalty_points are set by the system \
-   from the policy suggestion; output NONE, NONE, 0.
+   penalty_target, account_action.
+   account_action and penalty_target are set by the system \
+   from the policy suggestion; output NONE, NONE.
 """
 
 
@@ -85,12 +141,7 @@ def _build_user_prompt(context: dict, suggestion: dict) -> str:
     dispute_type = case_meta.get("dispute_type", "UNKNOWN")
 
     # Determine the dispute claim.
-    dispute_claim = context.get("dispute_claim")
-    if not dispute_claim:
-        # Fall back to the round_1 statement of the filing party.
-        round_1 = context.get("round_1_statements", {})
-        rider_stmt = round_1.get("rider_statement", {})
-        dispute_claim = rider_stmt.get("argument_summary", "(no claim statement available)")
+    dispute_claim = _get_dispute_claim_text(context)
 
     prosecutor = context.get("prosecutor_findings", {})
     verified_facts = prosecutor.get("verified_facts", [])
@@ -134,6 +185,8 @@ def _build_user_prompt(context: dict, suggestion: dict) -> str:
     suggested_refund = suggested_action.get("refund_amount", 0)
     suggested_cleaning = suggested_action.get("cleaning_fee_amount", 0)
     suggested_currency = suggested_action.get("currency", "SGD")
+    suggested_account_action = suggested_action.get("account_action", "NONE")
+    suggested_penalty_target = suggested_action.get("penalty_target", "NONE")
     policy_confidence = suggestion.get("policy_confidence", 0)
     rationale = suggestion.get("rationale", "")
 
@@ -162,6 +215,7 @@ Suggested Ruling: {suggested_ruling}
 Suggested Action: {suggested_action_type}
 Suggested Refund Amount: {suggested_refund} {suggested_currency}
 Suggested Cleaning Fee Amount: {suggested_cleaning} {suggested_currency}
+Account action (decided by policy POL-10, not by you): {suggested_account_action} for {suggested_penalty_target}
 Policy Confidence: {policy_confidence}
 Rationale: {rationale}
 
@@ -184,7 +238,7 @@ Based ONLY on the verified facts above, determine:
 - ruling_type (APPROVED, PARTIAL_REFUND, REJECTED, or ESCALATED)
 - confidence_score (0.0-1.0)
 - recommended_action with action_type, refund_amount, cleaning_fee_amount, \
-currency, penalty_points, penalty_target, account_action
+currency, penalty_target, account_action
 - explanations for both rider and driver
 
 If you disagree with the Policy Consultant's suggestion, explain why in \
@@ -215,7 +269,6 @@ def _sanitize_action(raw_action: dict) -> dict:
     # Optional keys with defaults.
     if "cleaning_fee_amount" in raw_action:
         action["cleaning_fee_amount"] = raw_action["cleaning_fee_amount"]
-    action["penalty_points"] = raw_action.get("penalty_points", 0)
     action["penalty_target"] = raw_action.get("penalty_target", "NONE")
     action["account_action"] = raw_action.get("account_action", "NONE")
     return action
@@ -307,7 +360,6 @@ def _post_process(
     # An account action always goes to human review via the execution gate.
     action["account_action"] = suggested_action.get("account_action", "NONE")
     action["penalty_target"] = suggested_action.get("penalty_target", "NONE")
-    action["penalty_points"] = 0
 
     # --- 3. Keep only clauses and precedents from the suggestion ---
     raw_clauses = raw.get("policy_clauses_applied", [])
@@ -338,8 +390,7 @@ def _post_process(
 
     # --- 6. Account-action / penalty handling ---
     # account_action and penalty_target are copied from the policy suggestion
-    # (POL-10, computed by code); penalty_points is always 0 (penalty points
-    # were removed from the policy).
+    # (POL-10, computed by code); penalty_points was removed from the policy.
     # (Already set in section 2c above, regardless of ruling.)
 
     # --- 7. Build final verdict ---
@@ -408,7 +459,6 @@ def _safe_verdict(error_msg: str, reason: str = "llm_failure") -> dict:
             "refund_amount": 0,
             "cleaning_fee_amount": 0,
             "currency": "SGD",
-            "penalty_points": 0,
             "penalty_target": "NONE",
             "account_action": "NONE",
         },
@@ -465,4 +515,66 @@ async def run_judge(context: dict) -> dict:
         suggestion=suggestion,
         prosecutor=prosecutor,
     )
+
+    # --- Explanation guard: ensure account-action consistency ---
+    _enforce_account_action_explanation(verdict, suggestion)
     return verdict
+
+
+def _enforce_account_action_explanation(verdict: dict, suggestion: dict) -> None:
+    """Ensure the affected party's explanation mentions the account action.
+
+    Called after _post_process. If account_action != NONE, removes any
+    sentence claiming "no penalty" / "no action will be taken against your
+    account" from the affected party's explanation, and appends a plain
+    account-action notice if none of the keywords (warning, suspension, ban)
+    are present.
+    """
+    suggested_action = suggestion.get("suggested_recommended_action", {})
+    account_action = suggested_action.get("account_action", "NONE")
+    if account_action == "NONE":
+        return
+
+    penalty_target = suggested_action.get("penalty_target", "NONE")
+    explanations = verdict.get("explanations", {})
+    if penalty_target == "RIDER":
+        key = "explanation_for_rider"
+    elif penalty_target == "DRIVER":
+        key = "explanation_for_driver"
+    else:
+        return
+
+    text = explanations.get(key, "")
+    if not text:
+        return
+
+    # Remove sentences containing "no penalty" or
+    # "no action will be taken against your account".
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    filtered = [
+        s for s in sentences
+        if "no penalty" not in s.lower()
+        and "no action will be taken against your account" not in s.lower()
+    ]
+    cleaned = " ".join(filtered).strip()
+
+    # Map account_action to a human-readable label.
+    _ACTION_LABELS = {
+        "WARNING_ISSUED": "warning",
+        "TEMPORARY_SUSPENSION": "temporary suspension",
+        "ACCOUNT_BAN": "account ban",
+    }
+    label = _ACTION_LABELS.get(account_action, "account action")
+
+    # Check if the text already mentions the action keyword.
+    lowered = cleaned.lower()
+    if not any(kw in lowered for kw in ("warning", "suspension", "ban")):
+        cleaned = (
+            cleaned
+            + " Separately, under our account-action policy a "
+            + label
+            + " has been recommended for your account; this requires "
+            "human confirmation before it takes effect."
+        )
+
+    explanations[key] = cleaned

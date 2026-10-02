@@ -14,7 +14,7 @@ _CASE_ID_PATTERN = re.compile(r"^[A-Z]+-\d{3}$")
 # here too. A user-created Case row sharing an ID with a demo fixture still only
 # resolves to that fixture if the ID is in this set; DB existence alone is not
 # sufficient (see load_case_data).
-_ALLOWED_DEMO_FIXTURES: frozenset[str] = frozenset({"DISP-001", "DISP-002", "DISP-003"})
+_ALLOWED_DEMO_FIXTURES: frozenset[str] = frozenset({"DISP-001", "DISP-002", "DISP-003", "DISP-004"})
 
 
 class FixtureAccessError(Exception):

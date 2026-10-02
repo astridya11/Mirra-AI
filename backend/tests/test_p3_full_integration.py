@@ -116,23 +116,24 @@ def test_disp003_full_pipeline():
     assert data["case_metadata"]["dispute_type"] == "CLEANING_FEE"
 
     report = generate_prosecutor_report(data)
-    assert len(report["verified_facts"]) == 4
+    assert len(report["verified_facts"]) == 3
     assert len(report["disputed_facts"]) == 0
-    assert len(report["missing_facts"]) == 2
+    assert len(report["missing_facts"]) == 3
     assert report["prosecutor_summary"] == (
         "Prosecutor audit completed for cleaning fee dispute. "
-        "4 of 6 evidentiary checks verified. 2 item(s) missing or unresolved."
+        "3 of 6 evidentiary checks verified. 3 item(s) missing or unresolved."
     )
 
     verified_text = " ".join(f["description"] for f in report["verified_facts"]).lower()
-    assert "cleaning-fee claim is recorded" in verified_text
+    assert "cleaning-fee claim" in verified_text
     assert "100.00" in verified_text
-    assert "5100 seconds" in verified_text and "85 minutes" in verified_text
+    assert "47700 seconds" in verified_text and "795 minutes" in verified_text
     assert "conflicting party accounts" in verified_text
 
     missing_text = " ".join(f["description"] for f in report["missing_facts"]).lower()
     assert "does not contain verifiable image evidence" in missing_text
-    assert "references an attached photo" in missing_text and "no structured" in missing_text
+    assert "no structured image evidence" in missing_text
+    assert "no readable receipt" in missing_text
 
     result = asyncio.run(run_prosecutor_audit(copy.deepcopy(data)))
     assert result["bonus_modules"]["image_exif_analyses"] == []
