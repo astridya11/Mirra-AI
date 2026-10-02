@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Help / Select-trip Page
+ */
+
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
@@ -49,6 +53,16 @@ function SelectTripContent() {
     };
   }, []);
 
+  // Pass caseId, tripId AND the selected issue on to the chat page.
+  const goToChat = (trip: TripListItem) => {
+    const query = new URLSearchParams({
+      caseId: String(trip.case_id),
+      tripId: String(trip.trip_id),
+      issue,
+    });
+    router.push(`/help/chat?${query.toString()}`);
+  };
+
   return (
     <div className="min-h-screen bg-white">
       <IOSHeader
@@ -93,11 +107,7 @@ function SelectTripContent() {
             return (
               <button
                 key={trip.trip_id}
-                onClick={() =>
-                  router.push(
-                    `/help/chat?caseId=${trip.case_id}&tripId=${trip.trip_id}`
-                  )
-                }
+                onClick={() => goToChat(trip)}
                 className="w-full text-left rounded-xl border border-gray-200 p-4 active:bg-gray-50 transition-colors"
               >
                 <div className="flex items-start justify-between mb-2">
