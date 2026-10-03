@@ -1,3 +1,4 @@
+from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -5,6 +6,9 @@ from app.api.deps import ensure_case_party, get_current_party_id
 from app.db.session import get_db
 from app.models.case import Case
 from app.schemas.case import CaseCreate, CaseRead
+from app.db import user_repo
+from app.auth.dependencies import RequireRole, get_current_user
+from app.schemas import PartyRole, UserAccount
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -39,10 +43,45 @@ def list_my_cases(
 def get_case(
     case_id: str,
     db: Session = Depends(get_db),
-    party_id: str = Depends(get_current_party_id),
+    current_user: UserAccount = Depends(get_current_user),
 ) -> Case:
     case = db.get(Case, case_id)
     if case is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found")
-    ensure_case_party(case, party_id)
+
+    # SUPPORT team can view any case
+    if current_user.party == PartyRole.SUPPORT:
+        return case
+
+    # RIDER and DRIVER can only view cases they are associated with
+    ensure_case_party(case, current_user.party_id)
     return case
+
+@router.post("/{case_id}/escalate")
+def escalate_case(
+    case_id: str,
+    support_user: UserAccount = Depends(get_current_user)
+):
+    return {
+        "case_id": case_id,
+        "status": "ESCALATED_HUMAN_REVIEW",
+        "escalated_by": support_user.party_id,
+    }
+
+
+@router.get("/{case_id}/user-context")
+def get_user_context(
+    case_id: str,
+):
+    """Prepares sanitized historical profiles (no passwords) for agent deliberation context."""
+    rider = user_repo.get_by_party_id("R-1092")
+    driver = user_repo.get_by_party_id("D-5541")
+
+    context = {
+        "case_id": case_id,
+        "historical_profiles": [
+            user_repo.to_historical_profile(rider).model_dump() if rider else None,
+            user_repo.to_historical_profile(driver).model_dump() if driver else None,
+        ],
+    }
+    return context

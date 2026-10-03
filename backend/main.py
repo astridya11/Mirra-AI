@@ -28,6 +28,8 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import auth, cases
+
 from backend.orchestrator.state_machine import (
     ExecutionRoute,
     HumanReviewDecision,
@@ -66,6 +68,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register Routers
+app.include_router(auth.router)
+app.include_router(cases.router)
 
 _SGT = timezone(timedelta(hours=8))
 _BACKEND_DIR = Path(__file__).resolve().parent
