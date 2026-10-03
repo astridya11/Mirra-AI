@@ -86,6 +86,7 @@
       "required": [
         "case_id",
         "dispute_type",
+        "dispute_claim_description",
         "current_state",
         "current_round",
         "resolution_channel",
@@ -106,6 +107,10 @@
             "SAFETY_ALERT",
             "NO_SHOW_CHARGE"
           ]
+        },
+        "dispute_claim_description": {
+          "type": "string",
+          "description": "Description of the dispute claim submitted by the party."
         },
         "current_state": {
           "type": "string",

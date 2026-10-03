@@ -42,6 +42,7 @@ export type HumanReviewDecision = "CONFIRMED_AUTO" | "MODIFIED" | "OVERRIDDEN" |
 export interface CaseMetadata {
   case_id: string;
   dispute_type: DisputeType;
+  dispute_claim_description: string;
   current_state: PipelineState;
   current_round: 1 | 2;
   resolution_channel: ResolutionChannel;
