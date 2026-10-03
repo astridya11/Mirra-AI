@@ -7,92 +7,71 @@
 import { useParams, useRouter } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { IOSListItem } from "@/src/components/IOSListItem";
+import { useAuth } from "@/src/context/AuthContext";
 
 interface Topic {
   id: string;
   title: string;
-  issues: string[];
+  riderIssues: string[];
+  driverIssues: string[];
 }
 
 const topics: Record<string, Topic> = {
   popular: {
     id: "popular",
     title: "Popular Topics",
-    issues: [
+    riderIssues: [
       "How do I report a lost item?",
       "Refund processing times",
       "Driver rating and feedback",
       "Payment method not working",
       "Cancel a booking",
     ],
-  },
-  experience: {
-    id: "experience",
-    title: "Ryde Experience",
-    issues: [
-      "Track Your Ryde Trips With Apple Live Activity Feature",
-      "Driver profile did not match on app",
-      "I lost my item.",
-      "Driver completed the trip without picking me up",
-      "Report issue with pick-up & drop-off location / Route Deviation",
+    driverIssues: [
+      "Fares and payout delays",
+      "Passenger no-show policy",
+      "Toll fee reimbursements",
+      "Report passenger behavior",
     ],
   },
   safety: {
     id: "safety",
     title: "Safety & Emergency",
-    issues: [
+    riderIssues: [
       "Report unsafe driving behavior",
       "Emergency assistance during trip",
       "Harassment or inappropriate conduct",
-      "Accident during trip",
+    ],
+    driverIssues: [
+      "Report aggressive passenger",
+      "Vehicle emergency assistance",
+      "Safety policy violation report",
     ],
   },
   fares: {
     id: "fares",
-    title: "Fares and Charges",
-    issues: [
+    title: "Fares & Payouts",
+    riderIssues: [
       "Why was I charged a cancellation fee?",
       "Surge pricing explanation",
       "Toll charges on my trip",
-      "Promo code not applied",
     ],
-  },
-  "ryde-plus": {
-    id: "ryde-plus",
-    title: "Ryde+ Subscription",
-    issues: [
-      "Ryde+ benefits and perks",
-      "Manage subscription",
-      "Ryde+ free cancellation",
+    driverIssues: [
+      "Weekly payout breakdown",
+      "Incentives and bonus calculation",
+      "Fare adjustment request",
     ],
-  },
-  cashbacks: {
-    id: "cashbacks",
-    title: "Ryde Cashbacks & Bonus",
-    issues: ["Cashback not received", "Bonus ride credits", "Referral rewards"],
-  },
-  booking: {
-    id: "booking",
-    title: "Booking a Ryde",
-    issues: ["How to book in advance", "RydePOOL sharing", "Schedule recurring trips"],
-  },
-  account: {
-    id: "account",
-    title: "Ryde Account & Privacy",
-    issues: ["Update phone number", "Delete account", "Privacy settings", "Verify identity"],
-  },
-  business: {
-    id: "business",
-    title: "Ryde for Business",
-    issues: ["Corporate billing", "Team management", "Expense reports"],
   },
 };
 
 export default function TopicPage() {
   const params = useParams();
   const router = useRouter();
+  const { user } = useAuth();
   const topicId = params.topicId as string;
-  const topic = topics[topicId] || topics.experience;
+  const topic = topics[topicId] || topics.popular;
+
+  const issues = user?.party === "DRIVER" ? topic.driverIssues : topic.riderIssues;
 
   return (
     <div className="min-h-screen bg-white">
@@ -103,12 +82,12 @@ export default function TopicPage() {
       </div>
 
       <div>
-        {topic.issues.map((issue, idx) => (
+        {issues.map((issue, idx) => (
           <IOSListItem
             key={idx}
             title={issue}
             onClick={() => router.push(`/help/select-trip?issue=${encodeURIComponent(issue)}`)}
-            showDivider={idx < topic.issues.length - 1}
+            showDivider={idx < issues.length - 1}
           />
         ))}
       </div>

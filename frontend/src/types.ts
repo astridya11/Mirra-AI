@@ -499,6 +499,7 @@ export interface CaseResult {
   case_metadata: CaseMetadata;
   dispute_claim?: DisputeClaim;
   data_sources?: DataSources;
+  user_account?: UserAccount;
   round_1_statements?: {
     rider_statement?: AgentStatement;
     driver_statement?: AgentStatement;
@@ -578,8 +579,9 @@ export interface CaseListItem {
 
 export interface RawCaseData {
   case_metadata: CaseMetadata;
-  dispute_claim?: DisputeClaim;
+  dispute_claim: DisputeClaim;
   data_sources: DataSources;
+  user_account?: UserAccount;
 }
 
 // ---------------------------------------------------------------------------
@@ -610,4 +612,31 @@ export interface PartyDecision {
   decision: PartyDecisionType;
   decided_at: string;
   comment?: string;
+}
+
+export type UserRole = "RIDER" | "DRIVER" | "SUPPORT";
+
+/**
+ * User account schema stored in users.json for backend authentication and historical profile mapping.
+ */
+export interface UserAccount {
+  party: UserRole;
+  /**
+   * Primary key / unique ID (e.g., R-1092, D-5541, S-0001).
+   */
+  party_id: string;
+  name: string;
+  email: string;
+  /**
+   * Hashed password string (or plaintext in development).
+   */
+  password: string;
+  account_age_days: number;
+  total_trips: number;
+  avg_rating: number;
+  risk_score: number;
+  dispute_history_30d: number;
+  dispute_history_90d: number;
+  bad_faith_flag: boolean;
+  bad_faith_reason?: string;
 }

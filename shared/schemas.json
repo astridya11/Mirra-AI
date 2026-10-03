@@ -6,6 +6,7 @@
   "type": "object",
   "required": [
     "case_metadata",
+    "dispute_claim",
     "data_sources",
     "round_1_statements",
     "round_2_cross_exam",
@@ -71,6 +72,9 @@
     },
     "agent_conversation": {
       "$ref": "#/$defs/AgentConversation"
+    },
+    "user_account": {
+      "$ref": "#/$defs/UserAccount"
     }
   },
   "additionalProperties": false,
@@ -2070,6 +2074,80 @@
     "AgentConversation": {
       "type": "array",
       "items": {"$ref": "#/$defs/AgentConversationMessage"}
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "User account schema stored in users.json for backend authentication and historical profile mapping.",
+      "type": "object",
+      "required": [
+        "party",
+        "party_id",
+        "name",
+        "email",
+        "password",
+        "account_age_days",
+        "total_trips",
+        "avg_rating",
+        "risk_score",
+        "dispute_history_30d",
+        "dispute_history_90d",
+        "bad_faith_flag"
+      ],
+      "properties": {
+        "party": {
+          "type": "string",
+          "enum": ["RIDER", "DRIVER", "SUPPORT"]
+        },
+        "party_id": {
+          "type": "string",
+          "description": "Primary key / unique ID (e.g., R-1092, D-5541, S-0001)."
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "password": {
+          "type": "string",
+          "description": "Hashed password string (or plaintext in development)."
+        },
+        "account_age_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_trips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "avg_rating": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 5.0
+        },
+        "risk_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "dispute_history_30d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dispute_history_90d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bad_faith_flag": {
+          "type": "boolean",
+          "default": false
+        },
+        "bad_faith_reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
