@@ -18,6 +18,9 @@
     "case_metadata": {
       "$ref": "#/$defs/CaseMetadata"
     },
+    "dispute_claim": {
+      "$ref": "#/$defs/DisputeClaim"
+    },
     "data_sources": {
       "$ref": "#/$defs/DataSources"
     },
@@ -147,6 +150,75 @@
         "updated_at": {
           "type": "string",
           "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DisputeClaim": {
+      "title": "DisputeClaim",
+      "description": "Contains details of the initial dispute claim submitted by a party, including any attached image or receipt evidence.",
+      "type": "object",
+      "required": [
+        "case_id",
+        "trip_id",
+        "dispute_type",
+        "description",
+        "filed_by",
+        "filed_at"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "description": "Unique identifier for the dispute case."
+        },
+        "trip_id": {
+          "type": "string",
+          "description": "Reference identifier for the trip associated with this dispute claim."
+        },
+        "dispute_type": {
+          "type": "string",
+          "description": "Category of the dispute claim.",
+          "enum": [
+            "ROUTE_DEVIATION",
+            "CLEANING_FEE",
+            "SAFETY_ALERT",
+            "NO_SHOW_CHARGE"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the dispute claim submitted by the party."
+        },
+        "filed_by": {
+          "type": "string",
+          "description": "Party who filed the dispute claim.",
+          "enum": [
+            "RIDER",
+            "DRIVER"
+          ]
+        },
+        "filed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when the dispute claim was filed."
+        },
+        "image_evidence": {
+          "type": "array",
+          "description": "Optional structured image evidence submitted for this case. Omitted or empty when no images are available.",
+          "items": {
+            "$ref": "#/$defs/ImageEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
+        },
+        "receipt_evidence": {
+          "type": "array",
+          "description": "Optional cleaning receipts submitted for this case. Omitted or empty when no receipt is available.",
+          "items": {
+            "$ref": "#/$defs/ReceiptEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
         }
       },
       "additionalProperties": false
@@ -930,7 +1002,7 @@
     },
     "ImageExifGpsLocation": {
       "title": "ImageExifGpsLocation",
-      "description": "GPS coordinates extracted from image EXIF metadata.  Unlike GPSCoordinate, this does not require a timestamp.",
+      "description": "GPS coordinates extracted from image EXIF metadata. Unlike GPSCoordinate, this does not require a timestamp.",
       "type": "object",
       "required": ["latitude", "longitude"],
       "properties": {
@@ -951,7 +1023,7 @@
     },
     "ProviderImageResult": {
       "title": "ProviderImageResult",
-      "description": "Visual-analysis output from an actual model / vision provider.  These fields are NEVER inferred from chat text or trip data.",
+      "description": "Visual-analysis output from an actual model / vision provider. These fields are NEVER inferred from chat text or trip data.",
       "type": "object",
       "required": [
         "is_ai_generated",
@@ -996,7 +1068,7 @@
     },
     "ImageEvidenceInput": {
       "title": "ImageEvidenceInput",
-      "description": "A single image submitted as evidence.  The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.",
+      "description": "A single image submitted as evidence. The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.",
       "type": "object",
       "required": ["image_id", "image_url"],
       "properties": {
@@ -1035,7 +1107,7 @@
     },
     "ReceiptOcrResult": {
       "title": "ReceiptOcrResult",
-      "description": "Structured OCR output from reading a submitted receipt image.  These fields are NEVER inferred from chat text or trip data.",
+      "description": "Structured OCR output from reading a submitted receipt image. These fields are NEVER inferred from chat text or trip data.",
       "type": "object",
       "required": [
         "amount",
@@ -1072,7 +1144,7 @@
     },
     "ReceiptEvidenceInput": {
       "title": "ReceiptEvidenceInput",
-      "description": "A single receipt submitted as evidence.  The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.",
+      "description": "A single receipt submitted as evidence. The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.",
       "type": "object",
       "required": ["receipt_id", "receipt_url"],
       "properties": {
@@ -1091,7 +1163,7 @@
         },
         "ocr_result": {
           "$ref": "#/$defs/ReceiptOcrResult",
-          "description": "Structured OCR result.  Omitted when the receipt could not be read."
+          "description": "Structured OCR result. Omitted when the receipt could not be read."
         }
       },
       "additionalProperties": false
@@ -1133,24 +1205,6 @@
             "$ref": "#/$defs/HistoricalProfile"
           },
           "minItems": 1
-        },
-        "image_evidence": {
-          "type": "array",
-          "description": "Optional structured image evidence submitted for this case.  Omitted or empty when no images are available.",
-          "items": {
-            "$ref": "#/$defs/ImageEvidenceInput"
-          },
-          "minItems": 0,
-          "default": []
-        },
-        "receipt_evidence": {
-          "type": "array",
-          "description": "Optional cleaning receipts submitted for this case.  Omitted or empty when no receipt is available.",
-          "items": {
-            "$ref": "#/$defs/ReceiptEvidenceInput"
-          },
-          "minItems": 0,
-          "default": []
         }
       },
       "additionalProperties": false

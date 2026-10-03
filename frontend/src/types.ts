@@ -76,6 +76,10 @@ export interface TripData {
   cancellation_time?: string;
   cancellation_fee?: number;
   cancellation_reason?: string;
+  /**
+   * Time the trip was completed (drop-off). Used by POL-4 for the photo time window.
+   */
+  trip_end_time?: string;
 }
 
 export interface AppEvent {
@@ -128,6 +132,155 @@ export interface HistoricalProfile {
   dispute_history_90d: number;
   bad_faith_flag: boolean;
   bad_faith_reason?: string;
+}
+
+/**
+ * Contains details of the initial dispute claim submitted by a party, including any attached image or receipt evidence.
+ */
+export interface DisputeClaim {
+  /**
+   * Unique identifier for the dispute case.
+   */
+  case_id: string;
+  /**
+   * Reference identifier for the trip associated with this dispute claim.
+   */
+  trip_id: string;
+  /**
+   * Category of the dispute claim.
+   */
+  dispute_type: "ROUTE_DEVIATION" | "CLEANING_FEE" | "SAFETY_ALERT" | "NO_SHOW_CHARGE";
+  /**
+   * Description of the dispute claim submitted by the party.
+   */
+  description: string;
+  /**
+   * Party who filed the dispute claim.
+   */
+  filed_by: "RIDER" | "DRIVER";
+  /**
+   * ISO 8601 timestamp of when the dispute claim was filed.
+   */
+  filed_at: string;
+  /**
+   * Optional structured image evidence submitted for this case. Omitted or empty when no images are available.
+   *
+   * @minItems 0
+   */
+  image_evidence?: ImageEvidenceInput[];
+  /**
+   * Optional cleaning receipts submitted for this case. Omitted or empty when no receipt is available.
+   *
+   * @minItems 0
+   */
+  receipt_evidence?: ReceiptEvidenceInput[];
+}
+/**
+ * A single image submitted as evidence.  The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.
+ */
+export interface ImageEvidenceInput {
+  /**
+   * Unique identifier for the submitted image (e.g., 'IMG-001').
+   */
+  image_id: string;
+  /**
+   * URL or storage path to the image.
+   */
+  image_url: string;
+  /**
+   * EXIF-embedded timestamp of when the photo was taken, normalized to ISO-8601 by the provider adapter.
+   */
+  exif_timestamp?: string;
+  exif_gps_location?: ImageExifGpsLocation;
+  provider_result?: ProviderImageResult;
+  /**
+   * Perceptual or cryptographic hash of the image for recycled-image detection.
+   */
+  image_hash?: string;
+  /**
+   * Optional corpus mapping image_hash to a prior case_id for recycled-image comparison.
+   */
+  known_matches?: {
+    [k: string]: string;
+  };
+}
+/**
+ * GPS coordinates extracted from image EXIF metadata.  Unlike GPSCoordinate, this does not require a timestamp.
+ */
+export interface ImageExifGpsLocation {
+  /**
+   * Latitude in decimal degrees.
+   */
+  latitude: number;
+  /**
+   * Longitude in decimal degrees.
+   */
+  longitude: number;
+}
+/**
+ * Visual-analysis output from an actual model / vision provider.  These fields are NEVER inferred from chat text or trip data.
+ */
+export interface ProviderImageResult {
+  /**
+   * Whether the image is detected as AI-generated (synthetic/fabricated).
+   */
+  is_ai_generated: boolean;
+  /**
+   * Confidence score (0.0-1.0) for the AI-generated detection result.
+   */
+  ai_generated_confidence: number;
+  /**
+   * Classification of the stain or damage type detected in the image.
+   */
+  stain_damage_classification:
+    "LIQUID_SPILL" | "VOMIT" | "FOOD_RESIDUE" | "PHYSICAL_DAMAGE" | "DIRT_MUD" | "NO_DAMAGE_DETECTED" | "OTHER";
+  /**
+   * Estimated severity of the detected damage.
+   */
+  damage_severity?: "MINOR" | "MODERATE" | "SEVERE";
+}
+/**
+ * A single receipt submitted as evidence.  The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.
+ */
+export interface ReceiptEvidenceInput {
+  /**
+   * Unique identifier for the submitted receipt (e.g., 'RCP-001').
+   */
+  receipt_id: string;
+  /**
+   * URL or storage path to the receipt image.
+   */
+  receipt_url: string;
+  /**
+   * ISO 8601 timestamp of when the receipt was uploaded.
+   */
+  uploaded_at?: string;
+  ocr_result?: ReceiptOcrResult;
+}
+/**
+ * Structured OCR result.  Omitted when the receipt could not be read.
+ */
+export interface ReceiptOcrResult {
+  /**
+   * Monetary amount read from the receipt by OCR.
+   */
+  amount: number;
+  /**
+   * ISO 4217 currency code read from the receipt.
+   */
+  currency: string;
+  /**
+   * Merchant or vendor name printed on the receipt, if legible.
+   */
+  merchant_name?: string;
+  /**
+   * Date printed on the receipt, normalized to ISO-8601 by the OCR adapter.
+   */
+  receipt_date?: string;
+  /**
+   * Confidence score (0.0-1.0) for the overall OCR read result.
+   */
+  ocr_confidence?: number;
 }
 
 export interface DataSources {
@@ -344,6 +497,7 @@ export interface JudgeVerdict {
 
 export interface CaseResult {
   case_metadata: CaseMetadata;
+  dispute_claim?: DisputeClaim;
   data_sources?: DataSources;
   round_1_statements?: {
     rider_statement?: AgentStatement;
@@ -424,6 +578,7 @@ export interface CaseListItem {
 
 export interface RawCaseData {
   case_metadata: CaseMetadata;
+  dispute_claim?: DisputeClaim;
   data_sources: DataSources;
 }
 

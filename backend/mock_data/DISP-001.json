@@ -12,6 +12,14 @@
     "created_at": "2026-09-22T14:10:00+08:00",
     "updated_at": "2026-09-22T14:10:00+08:00"
   },
+  "dispute_claim": {
+    "case_id": "DISP-001",
+    "trip_id": "TRIP-2026-08112",
+    "dispute_type": "ROUTE_DEVIATION",
+    "description": "The driver took a detour and I was charged an extra fee. I want the money back.",
+    "filed_by": "RIDER",
+    "filed_at": "2026-09-22T14:10:00+08:00"
+  },
   "data_sources": {
     "trip_data": {
       "trip_id": "TRIP-2026-08112",

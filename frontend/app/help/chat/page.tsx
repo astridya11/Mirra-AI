@@ -20,6 +20,14 @@
  *
  * A "View AI Tribunal" link appears above the verdict card and redirects
  * to /tribunal/[caseId].
+ *
+ * Evidence collection (cleaning-fee claims):
+ *   The selected issue is received via the `issue` query param. If it is a
+ *   cleaning-fee claim (see isCleaningFeeIssue), then after the user describes
+ *   the issue the bot asks for (1) a photo of the car's condition and
+ *   (2) a cleaning receipt, each with an "Upload" button. Only after both are
+ *   collected does the flow continue to the AI Tribunal as usual.
+ *   Files are only held in memory for now (no upload API yet).
  */
 
 import { Suspense, useState, useRef, useEffect, useCallback } from "react";
@@ -28,6 +36,49 @@ import { IOSHeader } from "@/src/components/IOSHeader";
 import { TypingDots } from "@/src/components/TypingDots";
 import { getCompletedResult, submitPartyDecision } from "@/src/lib/api";
 import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
+
+// ==========================================
+// Issue helpers
+// ==========================================
+
+/**
+ * Patterns that identify a "claim cleaning fee" issue from the selected issue
+ * text. Matching is case-insensitive. Extend this list (or replace the check
+ * with an issue id once issues are role-based) as new wordings are added.
+ */
+const CLEANING_FEE_ISSUE_PATTERNS: RegExp[] = [
+  /clean(ing|-?up)?[\s-]*(fee|charge|cost|surcharge)/i, // "cleaning fee", "clean-up charge"
+  /(fee|charge|claim).{0,30}\bclean/i,                 // "claim fee for cleaning"
+  /\b(vomit|vomited|soiled|stain(ed)?|spill(ed)?)\b/i,  // typical mess descriptions
+  /\b(messy|mess in (the )?(car|vehicle)|dirty (car|vehicle|seat))\b/i,
+];
+
+function isCleaningFeeIssue(issue: string): boolean {
+  const text = issue.trim();
+  if (!text) return false;
+  return CLEANING_FEE_ISSUE_PATTERNS.some((re) => re.test(text));
+}
+
+type EvidenceStep = "PHOTO" | "RECEIPT";
+
+const EVIDENCE_COPY: Record<
+  EvidenceStep,
+  { prompt: string; button: string; hint: string; userCaption: string }
+> = {
+  PHOTO: {
+    prompt:
+      "Thanks for the details. To support your cleaning fee claim, please upload a photo showing the mess in the car.",
+    button: "Upload photo",
+    hint: "Take a clear photo or choose one from your library",
+    userCaption: "Photo of the car condition",
+  },
+  RECEIPT: {
+    prompt: "Got it, thank you. Now please upload your cleaning receipt.",
+    button: "Upload receipt",
+    hint: "Make sure the amount and date are readable",
+    userCaption: "Cleaning receipt",
+  },
+};
 
 // ==========================================
 // Verdict helpers
@@ -314,8 +365,13 @@ function EscalatedMessage({ caseId }: { caseId: string }) {
 // Chat Bubble (existing component, kept for issue submission mode)
 // ==========================================
 
-function ChatBubble({ message }: { message: { sender: "bot" | "user"; text: string } }) {
+function ChatBubble({
+  message,
+}: {
+  message: { sender: "bot" | "user"; text: string; imageUrl?: string };
+}) {
   const isBot = message.sender === "bot";
+  const hasImage = Boolean(message.imageUrl);
   return (
     <div className={`flex items-end gap-2 ${isBot ? "justify-start" : "justify-end"} animate-slide-up`}>
       {isBot && (
@@ -324,13 +380,23 @@ function ChatBubble({ message }: { message: { sender: "bot" | "user"; text: stri
         </div>
       )}
       <div
-        className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-relaxed ${
+        className={`max-w-[75%] ${hasImage ? "p-1.5" : "px-4 py-2.5"} text-[15px] leading-relaxed ${
           isBot
             ? "bg-[#F3F4F6] text-[#111827] rounded-2xl rounded-tl-sm"
             : "bg-[#E84360] text-white rounded-2xl rounded-tr-sm"
         }`}
       >
-        {message.text}
+        {hasImage && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={message.imageUrl}
+            alt={message.text || "Uploaded evidence"}
+            className="w-full max-h-56 rounded-xl object-cover"
+          />
+        )}
+        {message.text && (
+          <div className={hasImage ? "px-2 pt-1.5 pb-1 text-[13px]" : ""}>{message.text}</div>
+        )}
       </div>
     </div>
   );
@@ -346,6 +412,8 @@ function ChatContent() {
   const caseId = searchParams.get("caseId") || "DISP-001";
   const tripId = searchParams.get("tripId") || "TRIP-2026-08112";
   const fromProcess = searchParams.get("from") === "process";
+  const issue = searchParams.get("issue") || "";
+  const needsCleaningEvidence = isCleaningFeeIssue(issue);
 
   // --- Verdict mode state ---
   const [verdictResult, setVerdictResult] = useState<CaseResult | null>(null);
@@ -355,7 +423,7 @@ function ChatContent() {
 
   // --- Issue submission mode state ---
   const [messages, setMessages] = useState<
-    { id: string; sender: "bot" | "user"; text: string }[]
+    { id: string; sender: "bot" | "user"; text: string; imageUrl?: string }[]
   >([
     {
       id: "m1",
@@ -364,8 +432,39 @@ function ChatContent() {
     },
   ]);
   const [input, setInput] = useState("");
+  // descriptionSent: the user's one-message description has been sent.
+  // submitted: the flow is complete and the tribunal is being launched.
+  const [descriptionSent, setDescriptionSent] = useState(fromProcess);
   const [submitted, setSubmitted] = useState(fromProcess);
   const [botTyping, setBotTyping] = useState(false);
+
+  // --- Evidence collection state (cleaning-fee claims) ---
+  // evidenceStep is the step currently being collected (null = not in this flow).
+  // awaitingUpload is true only once the bot has asked, so the button is enabled.
+  const [evidenceStep, setEvidenceStep] = useState<EvidenceStep | null>(null);
+  const [awaitingUpload, setAwaitingUpload] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const evidenceRef = useRef<{ photo: File | null; receipt: File | null }>({
+    photo: null,
+    receipt: null,
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const objectUrlsRef = useRef<string[]>([]);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const later = useCallback((fn: () => void, ms: number) => {
+    timersRef.current.push(setTimeout(fn, ms));
+  }, []);
+
+  // Clear pending timers and release preview URLs on unmount.
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+      objectUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+      objectUrlsRef.current = [];
+    };
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -423,22 +522,12 @@ function ChatContent() {
     return () => { cancelled = true; };
   }, [caseId, fromProcess]);
 
-  // --- Issue submission handler (non-verdict mode) ---
-  const handleSend = () => {
-    if (!input.trim() || submitted) return;
-    const userMsg = { id: `u${Date.now()}`, sender: "user" as const, text: input };
-    setMessages((prev) => [...prev, userMsg]);
-    // Persist the user's issue text so it can be restored when returning from tribunal
-    try {
-      sessionStorage.setItem(`chat-issue-${caseId}`, input);
-    } catch {
-      // sessionStorage unavailable — skip silently
-    }
-    setInput("");
+  // --- Launch the AI Tribunal (unchanged behaviour) ---
+  const launchTribunal = () => {
     setSubmitted(true);
     setBotTyping(true);
 
-    setTimeout(() => {
+    later(() => {
       setBotTyping(false);
       setMessages((prev) => [
         ...prev,
@@ -450,16 +539,110 @@ function ChatContent() {
       ]);
     }, 1500);
 
-    setTimeout(() => {
+    later(() => {
       router.push(`/tribunal/${caseId}`);
     }, 3500);
+  };
+
+  // --- Issue submission handler (non-verdict mode) ---
+  const handleSend = () => {
+    if (!input.trim() || descriptionSent) return;
+    const userMsg = { id: `u${Date.now()}`, sender: "user" as const, text: input };
+    setMessages((prev) => [...prev, userMsg]);
+    // Persist the user's issue text so it can be restored when returning from tribunal
+    try {
+      sessionStorage.setItem(`chat-issue-${caseId}`, input);
+    } catch {
+      // sessionStorage unavailable — skip silently
+    }
+    setInput("");
+    setDescriptionSent(true);
+
+    if (needsCleaningEvidence) {
+      // Cleaning-fee claim: collect photo + receipt before launching the tribunal.
+      setEvidenceStep("PHOTO");
+      setAwaitingUpload(false);
+      setBotTyping(true);
+      later(() => {
+        setBotTyping(false);
+        setMessages((prev) => [
+          ...prev,
+          { id: `b-photo-${Date.now()}`, sender: "bot", text: EVIDENCE_COPY.PHOTO.prompt },
+        ]);
+        setAwaitingUpload(true);
+      }, 1200);
+      return;
+    }
+
+    launchTribunal();
+  };
+
+  // --- Evidence upload handlers (files are kept in memory only) ---
+  const handlePickFile = () => {
+    if (!awaitingUpload) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again
+    if (!file || !evidenceStep || !awaitingUpload) return;
+
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Please choose an image file.");
+      return;
+    }
+    setUploadError(null);
+
+    const step = evidenceStep;
+    const url = URL.createObjectURL(file);
+    objectUrlsRef.current.push(url);
+    evidenceRef.current[step === "PHOTO" ? "photo" : "receipt"] = file;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `u-${step.toLowerCase()}-${Date.now()}`,
+        sender: "user",
+        text: EVIDENCE_COPY[step].userCaption,
+        imageUrl: url,
+      },
+    ]);
+    setAwaitingUpload(false);
+    setBotTyping(true);
+
+    if (step === "PHOTO") {
+      later(() => {
+        setBotTyping(false);
+        setMessages((prev) => [
+          ...prev,
+          { id: `b-receipt-${Date.now()}`, sender: "bot", text: EVIDENCE_COPY.RECEIPT.prompt },
+        ]);
+        setEvidenceStep("RECEIPT");
+        setAwaitingUpload(true);
+      }, 1000);
+    } else {
+      later(() => {
+        setBotTyping(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `b-evidence-done-${Date.now()}`,
+            sender: "bot",
+            text: "Thank you, I've received your photo and receipt. Passing everything to our AI Tribunal now.",
+          },
+        ]);
+        launchTribunal();
+      }, 1000);
+    }
   };
 
   // --- Unified render: issue-submission flow + verdict (if fromProcess) ---
   // In fromProcess mode, the issue-submission conversation is preserved and
   // the verdict is appended below as a continuous conversation. The input bar
   // is hidden in fromProcess mode (treated as already submitted).
-  const showInput = !submitted && !fromProcess;
+  const showInput = !descriptionSent && !fromProcess;
+  const showUploadBar = !fromProcess && !submitted && evidenceStep !== null;
 
   return (
     <div className="flex flex-col h-screen bg-white">
@@ -616,6 +799,33 @@ function ChatContent() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             AI-powered dispute resolution
+          </div>
+        </div>
+      ) : showUploadBar && evidenceStep ? (
+        <div className="border-t border-gray-100 px-4 py-3 bg-white">
+          <div className="max-w-[560px] w-full mx-auto space-y-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileSelected}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={handlePickFile}
+              disabled={!awaitingUpload}
+              className="w-full h-12 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:bg-gray-200 disabled:text-gray-400"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h1.5l1.2-2h8.6l1.2 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <circle cx="12" cy="13" r="3.5" />
+              </svg>
+              {EVIDENCE_COPY[evidenceStep].button}
+            </button>
+            <p className={`text-center text-[12px] ${uploadError ? "text-[#E84360]" : "text-[#9CA3AF]"}`}>
+              {uploadError ?? EVIDENCE_COPY[evidenceStep].hint}
+            </p>
           </div>
         </div>
       ) : (

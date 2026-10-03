@@ -12,6 +12,49 @@
     "created_at": "2026-09-25T23:00:00+08:00",
     "updated_at": "2026-09-25T23:00:00+08:00"
   },
+  "dispute_claim": {
+    "case_id": "DISP-004",
+    "trip_id": "TRIP-2026-09104",
+    "dispute_type": "CLEANING_FEE",
+    "description": "The rider caused a mess in my vehicle and i want to request a cleaning fee.",
+    "filed_by": "DRIVER",
+    "filed_at": "2026-09-25T23:00:00+08:00",
+    "image_evidence": [
+      {
+        "image_id": "IMG-001",
+        "image_url": "mock://evidence/DISP-004/IMG-001.jpg",
+        "exif_timestamp": "2026-08-30T15:12:00+08:00",
+        "exif_gps_location": {
+          "latitude": 1.3496,
+          "longitude": 103.9568
+        },
+        "image_hash": "phash:c3d4e5f6a7b8c9d0",
+        "known_matches": {
+          "phash:c3d4e5f6a7b8c9d0": "DISP-0871"
+        },
+        "provider_result": {
+          "is_ai_generated": false,
+          "ai_generated_confidence": 0.05,
+          "stain_damage_classification": "LIQUID_SPILL",
+          "damage_severity": "MODERATE"
+        }
+      }
+    ],
+    "receipt_evidence": [
+      {
+        "receipt_id": "RCP-001",
+        "receipt_url": "mock://evidence/DISP-004/RCP-001.jpg",
+        "uploaded_at": "2026-09-26T10:15:00+08:00",
+        "ocr_result": {
+          "amount": 60.0,
+          "currency": "SGD",
+          "merchant_name": "Sparkle Car Care Pte Ltd",
+          "receipt_date": "2026-09-26T09:30:00+08:00",
+          "ocr_confidence": 0.93
+        }
+      }
+    ]
+  },
   "data_sources": {
     "trip_data": {
       "trip_id": "TRIP-2026-09104",
@@ -125,41 +168,6 @@
         "dispute_history_30d": 0,
         "dispute_history_90d": 0,
         "bad_faith_flag": false
-      }
-    ],
-    "image_evidence": [
-      {
-        "image_id": "IMG-001",
-        "image_url": "mock://evidence/DISP-004/IMG-001.jpg",
-        "exif_timestamp": "2026-08-30T15:12:00+08:00",
-        "exif_gps_location": {
-          "latitude": 1.3496,
-          "longitude": 103.9568
-        },
-        "image_hash": "phash:c3d4e5f6a7b8c9d0",
-        "known_matches": {
-          "phash:c3d4e5f6a7b8c9d0": "DISP-0871"
-        },
-        "provider_result": {
-          "is_ai_generated": false,
-          "ai_generated_confidence": 0.05,
-          "stain_damage_classification": "LIQUID_SPILL",
-          "damage_severity": "MODERATE"
-        }
-      }
-    ],
-    "receipt_evidence": [
-      {
-        "receipt_id": "RCP-001",
-        "receipt_url": "mock://evidence/DISP-004/RCP-001.jpg",
-        "uploaded_at": "2026-09-26T10:15:00+08:00",
-        "ocr_result": {
-          "amount": 60.0,
-          "currency": "SGD",
-          "merchant_name": "Sparkle Car Care Pte Ltd",
-          "receipt_date": "2026-09-26T09:30:00+08:00",
-          "ocr_confidence": 0.93
-        }
       }
     ]
   }
