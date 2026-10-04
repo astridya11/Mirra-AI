@@ -120,7 +120,7 @@ export default function Home() {
           {/* Pickup location */}
           <button className="w-full flex items-center gap-3 py-3 border-b border-gray-100">
             <div className="w-2.5 h-2.5 rounded-full bg-[#0D9488] flex-shrink-0" />
-            <span className="flex-1 text-left text-[15px] text-[#111827]">Marina Bay Sands</span>
+            <span className="flex-1 text-left text-[14px] text-[#111827]">Marina Bay Sands</span>
             <svg className="w-4 h-4 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
@@ -128,7 +128,7 @@ export default function Home() {
           {/* Dropoff location */}
           <button className="w-full flex items-center gap-3 py-3 border-b border-gray-100">
             <div className="w-2.5 h-2.5 rounded-full bg-[#E84360] flex-shrink-0" />
-            <span className="flex-1 text-left text-[15px] text-[#111827]">Jewel Changi Airport</span>
+            <span className="flex-1 text-left text-[14px] text-[#111827]">Jewel Changi Airport</span>
             <svg className="w-4 h-4 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
@@ -138,16 +138,18 @@ export default function Home() {
           <div className="flex items-center justify-between py-3">
             <div>
               <p className="text-[13px] text-[#6B7280]">Estimated Fare</p>
-              <p className="text-[22px] font-bold text-[#111827]">$24.50 <span className="text-[14px] font-normal text-[#6B7280]">SGD</span></p>
+              <p className="text-[18px] font-bold text-[#111827]">$24.50 <span className="text-[14px] font-normal text-[#6B7280]">SGD</span></p>
             </div>
             <div className="text-right">
               <p className="text-[13px] text-[#6B7280]">ETA</p>
-              <p className="text-[15px] font-semibold text-[#111827]">18 min</p>
+              <p className="text-[14px] font-semibold text-[#111827]">18 min</p>
             </div>
           </div>
 
           {/* Book button */}
-          <button className="w-full py-3.5 rounded-xl bg-[#E84360] text-white text-[17px] font-semibold active:bg-[#DE3557] transition-colors">
+          <button 
+            className="w-full rounded-md bg-[#E84360] px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
+          >
             Book Ryde
           </button>
         </div>

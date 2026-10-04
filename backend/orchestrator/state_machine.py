@@ -217,9 +217,15 @@ class CaseContext:
         self.raw_case_data = case_data
 
         meta = case_data.get("case_metadata", {})
+        # Frozen claim as filed (description, filed_by, image/receipt evidence)
+        self.dispute_claim: Dict[str, Any] = case_data.get("dispute_claim") or {}
         self.case_metadata: Dict[str, Any] = {
             "case_id": case_id,
             "dispute_type": meta.get("dispute_type", "UNKNOWN"),
+            "dispute_claim_description": (
+                meta.get("dispute_claim_description")
+                or self.dispute_claim.get("description", "")
+            ),
             "current_state": State.INIT_CLAIM,
             "current_round": 1,
             "resolution_channel": meta.get("resolution_channel", "FULLY_AUTOMATED"),
@@ -256,6 +262,7 @@ class CaseContext:
         """Assemble the full schema-compliant result dict."""
         return {
             "case_metadata": self.case_metadata,
+            "dispute_claim": self.dispute_claim,
             "data_sources": self.data_sources,
             "round_1_statements": self.round_1_statements,
             "round_2_cross_exam": self.round_2_cross_exam,
@@ -278,6 +285,7 @@ class CaseContext:
         """
         return {
             "case_metadata": self.case_metadata,
+            "dispute_claim": self.dispute_claim,
             "data_sources": self.data_sources,
             "round_1_statements": self.round_1_statements,
             "round_2_cross_exam": self.round_2_cross_exam,
@@ -298,17 +306,25 @@ class CaseContext:
 # ----------------------------------------------------------------------
 
 
+# Cases live in backend/disputes/{case_id}.json (created by POST
+# /api/v1/create-dispute, trip evidence from backend/data/trips/). Pipeline
+# results are merged back into that same file by backend.main.save_case.
+
+
 def _get_case(case_id: str) -> Optional[Dict[str, Any]]:
+    """Load the dispute case file (raw case, plus results if already run)."""
     from backend.main import get_case
     return get_case(case_id)
 
 
 def _save_case(result: Dict[str, Any]) -> None:
+    """Merge a pipeline/review result into the dispute case file."""
     from backend.main import save_case
     save_case(result)
 
 
 def _get_completed_case(case_id: str) -> Optional[Dict[str, Any]]:
+    """Load the case file only if the pipeline has completed for it."""
     from backend.main import get_completed_case
     return get_completed_case(case_id)
 
@@ -406,7 +422,7 @@ class PipelineEngine:
         """
         Phase 1: Case ingestion & evidence freezing.
 
-        Loads the raw case dataset and freezes data_sources. All evidence
+        Loads the dispute case file (backend/disputes/) and freezes data_sources. All evidence
         (telemetry, chat, payment, profiles) is collected and frozen here;
         no new evidence is requested or introduced during the agent debate.
         """
@@ -414,10 +430,27 @@ class PipelineEngine:
         if not case_data:
             raise ValueError(f"Case {self.case_id} not found in database.")
 
+        # Results are now stored in the case file itself, so a re-run would
+        # overwrite them. Re-running an auto-resolved case is allowed, but never
+        # wipe out a decision a human reviewer or a party has already recorded.
+        existing_payload = (case_data.get("judge_verdict") or {}).get("execution_payload") or {}
+        if existing_payload.get("human_confirmation_details") or existing_payload.get("party_decision"):
+            raise ValueError(
+                f"Case {self.case_id} already has a recorded human/party decision; "
+                "re-running the pipeline would overwrite it."
+            )
+
+        if not case_data.get("data_sources"):
+            raise ValueError(
+                f"Case {self.case_id} has no data_sources; "
+                "the trip evidence was not attached when the case was created."
+            )
+
         self.ctx = CaseContext(self.case_id, case_data)
 
-        # Freeze data_sources from raw case data (schema: DataSources)
-        self.ctx.data_sources = case_data.get("data_sources", {})
+        # Freeze data_sources and dispute_claim from the case file
+        self.ctx.data_sources = case_data["data_sources"]
+        self.ctx.dispute_claim = case_data["dispute_claim"]
 
         self.ctx.set_state(State.ROUND_1_PLEADINGS, round_num=1)
 
@@ -1023,7 +1056,8 @@ async def apply_human_review(
 
     Schema reference: HumanConfirmationDetails and PolicyKnowledgeBaseUpdate.
 
-    Reads the completed pipeline result (not raw mock_data); the pipeline must be run first.
+    Reads the completed pipeline result from the dispute case file; the pipeline must be run first.
+    The updated result is saved back into the same case file.
     """
     case_data = _get_completed_case(case_id)
     if not case_data:

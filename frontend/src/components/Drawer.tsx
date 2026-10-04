@@ -28,10 +28,10 @@ function MenuItem({ icon, label, onClick, showDivider = true }: MenuItemProps) {
       <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-gray-100 flex-shrink-0">
         {icon}
       </div>
-      <span className="flex-1 text-left text-[17px] text-[#111827]">{label}</span>
-      <svg className="w-5 h-5 text-[#C7C7CC]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <span className="flex-1 text-left text-[14px] text-[#111827]">{label}</span>
+      {/* <svg className="w-4 h-4 text-[#C7C7CC]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-      </svg>
+      </svg> */}
     </button>
   );
 }
@@ -75,7 +75,7 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
               {user ? user.name.charAt(0) : "A"}
             </div>
             <div>
-              <p className="text-white text-[19px] font-bold">{user ? user.name : "Guest"}</p>
+              <p className="text-white text-[15px] font-bold">{user ? user.name : "Guest"}</p>
               <p className="text-white/80 text-[14px] flex items-center gap-1">
                 <svg className="w-3.5 h-3.5" fill="#FFD700" viewBox="0 0 24 24">
                   <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.854.606l-4.782-2.863a.562.562 0 00-.568 0L9.027 21.3a.562.562 0 01-.854-.606l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
@@ -132,7 +132,7 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
         <div className="px-5 py-4 border-t border-gray-100">
           <button
             onClick={handleLogout}
-            className="w-full py-2.5 rounded-lg bg-red-50 text-[15px] font-semibold text-[#E84360] hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
+            className="w-full py-2.5 rounded-lg bg-[#E84360] text-[14px] font-semibold text-white hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
           >
             {user ? "Log Out" : "Log In"}
           </button>

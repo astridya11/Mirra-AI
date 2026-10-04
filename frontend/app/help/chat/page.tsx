@@ -402,17 +402,50 @@ function ChatContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Convert caseId to React state to maintain updates across lifecycle renders
-  const [caseId, setCaseId] = useState<string>("");
-
-  const tripId = searchParams.get("tripId") || "TRIP-2026-08112";
+  // Read query params
+  const paramCaseId = searchParams.get("caseId") || "";
+  const paramTripId = searchParams.get("tripId") || "";
+  const fromProcess = searchParams.get("from") === "process";
+  const issueType = searchParams.get("issueType") || "";
   const driverId = searchParams.get("driverId") || "";
   const riderId = searchParams.get("riderId") || "";
   const filedBy = searchParams.get("filedBy") || "";
-  const fromProcess = searchParams.get("from") === "process";
-  const issueType = searchParams.get("issueType") || "";
-  const needsCleaningEvidence = isCleaningFeeIssue(issueType);
 
+  // Initialize caseId immediately from URL or fallback to sessionStorage
+  const [caseId, setCaseId] = useState<string>(() => {
+    if (paramCaseId) return paramCaseId;
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("latest-case-id") || "";
+    }
+    return "";
+  });
+
+  const [tripId, setTripId] = useState<string>(() => {
+    if (paramTripId) return paramTripId;
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("latest-trip-id") || "";
+    }
+    return "";
+  });
+
+
+  // Keep caseId and tripId synchronized when searchParams load
+  useEffect(() => {
+    if (paramCaseId) {
+      setCaseId(paramCaseId);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("latest-case-id", paramCaseId);
+      }
+    }
+    if (paramTripId) {
+      setTripId(paramTripId);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("latest-trip-id", paramTripId);
+      }
+    }
+  }, [paramCaseId, paramTripId]);
+
+  const needsCleaningEvidence = isCleaningFeeIssue(issueType);
   const [disputeClaimDescription, setDisputeClaimDescription] = useState<string>("");
 
   // --- Verdict mode state ---
@@ -478,11 +511,16 @@ function ChatContent() {
   // --- Restore issue-submission conversation when returning from tribunal ---
   useEffect(() => {
     if (!fromProcess) return;
-    const storedIssue = sessionStorage.getItem(`chat-issue-${tripId}`);
-    const storedCaseId = sessionStorage.getItem(`case-id-${tripId}`);
 
-    if (storedCaseId) {
-      setCaseId(storedCaseId);
+    let storedIssue = "";
+    if (caseId) {
+      storedIssue = sessionStorage.getItem(`chat-issue-${caseId}`) || "";
+    }
+    if (!storedIssue && tripId) {
+      storedIssue = sessionStorage.getItem(`chat-issue-${tripId}`) || "";
+    }
+    if (!storedIssue) {
+      storedIssue = sessionStorage.getItem("latest-chat-issue") || "";
     }
 
     if (storedIssue) {
@@ -500,7 +538,7 @@ function ChatContent() {
         ];
       });
     }
-  }, [tripId, fromProcess]);
+  }, [caseId, tripId, fromProcess]);
 
   // --- Load verdict result on mount (from=process mode) ---
   useEffect(() => {
@@ -509,24 +547,30 @@ function ChatContent() {
 
     (async () => {
       try {
+        setVerdictLoading(true);
         const result = await getCompletedResult(caseId);
         if (cancelled) return;
+
         if (!result) {
           setVerdictError("No result found for this case.");
           setVerdictLoading(false);
           return;
         }
+
         setVerdictResult(result);
         setVerdictLoading(false);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
+          console.error("Error fetching verdict result:", err);
           setVerdictError("Could not load the result. Please try again.");
           setVerdictLoading(false);
         }
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [caseId, fromProcess]);
 
   // --- Launch AI Tribunal and post payload ---
@@ -569,10 +613,12 @@ function ChatContent() {
     }
 
     // Construct full payload
+    const claimText = customDescription || disputeClaimDescription;
+
     const formData: CreateDisputePayload = {
       trip_id: tripId,
       dispute_type: issueType,
-      dispute_claim_description: customDescription || disputeClaimDescription,
+      dispute_claim_description: claimText,
       filed_by: filedBy,
       rider_id: riderId,
       driver_id: driverId,
@@ -582,14 +628,19 @@ function ChatContent() {
 
     try {
       const result = await createDispute(formData);
-      console.log("Created Dispute Case ID:", result.case_id);
+      const newCaseId = result.case_id;
 
-      // Persist case ID in React State and Session Storage
-      setCaseId(result.case_id);
-      sessionStorage.setItem(`case-id-${tripId}`, result.case_id);
+      setCaseId(newCaseId);
+
+      // Store issue history under multiple key fallbacks
+      sessionStorage.setItem("latest-case-id", newCaseId);
+      sessionStorage.setItem("latest-chat-issue", claimText);
+      sessionStorage.setItem(`case-id-${tripId}`, newCaseId);
+      sessionStorage.setItem(`chat-issue-${tripId}`, claimText);
+      sessionStorage.setItem(`chat-issue-${newCaseId}`, claimText);
 
       later(() => {
-        router.push(`/tribunal/${result.case_id}`);
+        router.push(`/tribunal/${newCaseId}`);
       }, 3500);
     } catch (error) {
       console.error("Error creating dispute:", error);
@@ -607,9 +658,10 @@ function ChatContent() {
     setDisputeClaimDescription(currentInput);
 
     try {
+      sessionStorage.setItem("latest-chat-issue", currentInput);
       sessionStorage.setItem(`chat-issue-${tripId}`, currentInput);
     } catch {
-      // Ignore sessionStorage issues
+      // Ignore session storage errors
     }
 
     setInput("");
