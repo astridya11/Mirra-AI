@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -104,8 +104,13 @@ def _now_iso() -> str:
     return datetime.now(_SGT).isoformat()
 
 # Path setup relative to backend directory
-DATA_DIR = Path(__file__).resolve().parent / "data"
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 TRIPS_DIR = DATA_DIR / "trips"
+DISPUTES_DIR = BASE_DIR / "disputes"
+
+# Ensure target directory exists
+DISPUTES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +158,15 @@ def get_completed_case(case_id: str) -> dict[str, Any] | None:
 # Pydantic request models
 # ---------------------------------------------------------------------------
 
+class CreateDisputeRequest(BaseModel):
+    trip_id: str
+    dispute_type: str
+    dispute_claim_description: str
+    filed_by: str  # party_id (e.g., "R-1092" or "D-5541")
+    rider_id: str
+    driver_id: str
+    image_evidence: List[str] = []
+    receipt_evidence: List[str] = []
 
 class HumanReviewRequest(BaseModel):
     reviewer_id: str = Field(..., description="Unique ID of the human reviewer")
@@ -209,7 +223,7 @@ async def health_check():
 
 
 # ---------------------------------------------------------------------------
-# Dispute listing & raw data loading
+# Dispute creation, listing & raw data loading
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/30-days-trips/{party_id}")
@@ -259,6 +273,87 @@ async def list_past_30_days_trips(party_id: str):
         "party_id": party_id,
         "total_trips": len(results),
         "trips": results
+    }
+
+def generate_next_case_id() -> str:
+    """Scans backend/disputes directory and generates sequential IDs like DISP-001, DISP-002."""
+    existing_files = list(DISPUTES_DIR.glob("DISP-*.json"))
+    max_num = 0
+    for f in existing_files:
+        try:
+            # Extract number from filename DISP-001.json
+            num = int(f.stem.split("-")[1])
+            if num > max_num:
+                max_num = num
+        except (IndexError, ValueError):
+            continue
+    return f"DISP-{max_num + 1:03d}"
+
+
+@app.post("/api/v1/create-dispute", status_code=201)
+async def create_dispute_case(payload: CreateDisputeRequest):
+    # 1. Generate unique case ID
+    case_id = generate_next_case_id()
+    filed_at = datetime.now(timezone.utc).isoformat()
+
+    # 2. Fetch trip data source from backend/data/trips/{trip_id}.json
+    trip_file_path = TRIPS_DIR / f"{payload.trip_id}.json"
+    if not trip_file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trip record {payload.trip_id} not found",
+        )
+
+    try:
+        with open(trip_file_path, "r", encoding="utf-8") as tf:
+            trip_json_data = json.load(tf)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read trip source file: {str(e)}",
+        )
+
+    # 3. Construct the 3 structured JSON blocks
+    dispute_payload = {
+        "case_metadata": {
+            "case_id": case_id,
+            "dispute_type": payload.dispute_type,
+            "dispute_claim_description": payload.dispute_claim_description,
+            "trip_id": payload.trip_id,
+            "rider_id": payload.rider_id,
+            "driver_id": payload.driver_id,
+            "created_at": filed_at,
+            "updated_at": filed_at,
+        },
+        "dispute_claim": {
+            "case_id": case_id,
+            "trip_id": payload.trip_id,
+            "dispute_type": payload.dispute_type,
+            "description": payload.dispute_claim_description,
+            "filed_by": payload.filed_by,
+            "filed_at": filed_at,
+            "image_evidence": payload.image_evidence,
+            "receipt_evidence": payload.receipt_evidence,
+        },
+        "data_sources": trip_json_data,
+    }
+
+    # 4. Save JSON file as backend/disputes/{case_id}.json
+    file_path = DISPUTES_DIR / f"{case_id}.json"
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(dispute_payload, f, indent=2)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save dispute file: {str(e)}",
+        )
+
+    return {
+        "message": "Dispute case created successfully",
+        "case_id": case_id,
+        "file_path": str(file_path),
+        "data": dispute_payload,
     }
 
 @app.get("/api/disputes")

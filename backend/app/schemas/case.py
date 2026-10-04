@@ -8,6 +8,7 @@ from app.models.case import CaseState, DisputeType, ResolutionChannel
 class CaseCreate(BaseModel):
     case_id: str
     dispute_type: DisputeType
+    dispute_claim_description: str
     trip_id: str | None = None
     rider_id: str
     driver_id: str
@@ -18,6 +19,7 @@ class CaseRead(BaseModel):
 
     case_id: str
     dispute_type: DisputeType
+    dispute_claim_description: str
     current_state: CaseState
     current_round: int
     resolution_channel: ResolutionChannel | None

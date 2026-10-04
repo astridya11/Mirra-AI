@@ -16,7 +16,7 @@ function SelectTripContent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
-  const issue_type = searchParams.get("issue_type") || "Issue Type";
+  const issueType = searchParams.get("issueType") || "Issue Type";
 
   const [pastTrips, setPastTrips] = useState<Past30DaysTripListItem>();
   const [loading, setLoading] = useState(true);
@@ -57,10 +57,15 @@ function SelectTripContent() {
   }, []);
 
   // Pass caseId, tripId AND the selected issue on to the chat page.
-  const goToChat = (tripId: string) => {
+  const goToChat = (tripId: string, driverId: string, riderId: string) => {
+    const filedBy = user!.party;
+    
     const query = new URLSearchParams({
       tripId,
-      issue_type,
+      driverId,
+      riderId,
+      filedBy,
+      issueType,
     });
     router.push(`/help/chat?${query.toString()}`);
   };
@@ -105,27 +110,28 @@ function SelectTripContent() {
           !error &&
           pastTrips!.trips.map((trip) => {
             const driver = trip.historical_profiles[1];
+            const rider = trip.historical_profiles[0];
 
             return (
               <button
                 key={trip.trip_id}
-                onClick={() => goToChat(trip.trip_id)}
+                onClick={() => goToChat(trip.trip_id, driver.party_id!, rider.party_id!)}
                 className="w-full text-left rounded-xl border border-gray-200 p-4 active:bg-gray-50 transition-colors"
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <p className="text-[13px] text-[#6B7280]">
+                    <p className="text-[12px] text-[#6B7280]">
                       {trip.trip_data?.scheduled_time ?? "Unknown time"}
                     </p>
 
-                    <p className="text-[16px] font-semibold text-[#111827] mt-1">
+                    <p className="text-[14px] font-semibold text-[#111827] mt-1">
                       {trip.trip_data?.pickup_location?.name ?? "Unknown pickup"}
                       {" → "}
                       {trip.trip_data?.dropoff_location?.name ?? "Unknown dropoff"}
                     </p>
                   </div>
 
-                  <p className="text-[17px] font-bold text-[#111827]">
+                  <p className="text-[15px] font-bold text-[#111827]">
                     $
                     {trip.payment_fare_data.original_fare.total_fare.toFixed(
                       2

@@ -152,7 +152,7 @@ export default function TopicPage() {
   const handleSelectIssue = (issue: IssueItem) => {
     // Pass the issue_type to the next step
     router.push(
-      `/help/select-trip?issue_type=${encodeURIComponent(issue.issue_type)}`
+      `/help/select-trip?issueType=${encodeURIComponent(issue.issue_type)}`
     );
   };
 

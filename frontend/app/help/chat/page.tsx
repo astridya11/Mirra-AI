@@ -34,7 +34,7 @@ import { Suspense, useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { TypingDots } from "@/src/components/TypingDots";
-import { getCompletedResult, submitPartyDecision } from "@/src/lib/api";
+import { createDispute, CreateDisputePayload, getCompletedResult, submitPartyDecision } from "@/src/lib/api";
 import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
 
 // ==========================================
@@ -42,21 +42,13 @@ import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
 // ==========================================
 
 /**
- * Patterns that identify a "claim cleaning fee" issue from the selected issue
- * text. Matching is case-insensitive. Extend this list (or replace the check
- * with an issue id once issues are role-based) as new wordings are added.
+ * Identify a "claim cleaning fee" issue from the selected issueType.
  */
-const CLEANING_FEE_ISSUE_PATTERNS: RegExp[] = [
-  /clean(ing|-?up)?[\s-]*(fee|charge|cost|surcharge)/i, // "cleaning fee", "clean-up charge"
-  /(fee|charge|claim).{0,30}\bclean/i,                 // "claim fee for cleaning"
-  /\b(vomit|vomited|soiled|stain(ed)?|spill(ed)?)\b/i,  // typical mess descriptions
-  /\b(messy|mess in (the )?(car|vehicle)|dirty (car|vehicle|seat))\b/i,
-];
 
-function isCleaningFeeIssue(issue: string): boolean {
-  const text = issue.trim();
+function isCleaningFeeIssue(issueType: string): boolean {
+  const text = issueType.trim();
   if (!text) return false;
-  return CLEANING_FEE_ISSUE_PATTERNS.some((re) => re.test(text));
+  return text === "CLEANING_FEE" || text === "cleaning_fee";
 }
 
 type EvidenceStep = "PHOTO" | "RECEIPT";
@@ -78,6 +70,16 @@ const EVIDENCE_COPY: Record<
     hint: "Make sure the amount and date are readable",
     userCaption: "Cleaning receipt",
   },
+};
+
+// Helper: Convert File object to Base64 String for JSON transmission
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
 };
 
 // ==========================================
@@ -216,7 +218,7 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
           <span className="text-[10px] font-bold text-[#E84360]">M</span>
         </div>
         <div className="max-w-[75%]">
-          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
+          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[14px] leading-5 text-[#111827]">
             Your case has been reviewed. Here's the outcome:
           </div>
         </div>
@@ -226,7 +228,7 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
       <div className="ml-9">
         <button
           onClick={() => router.push(`/tribunal/${caseId}`)}
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+          className="inline-flex items-center gap-1 text-[12px] font-normal text-slate-700 active:opacity-60 transition-opacity"
         >
           View AI Tribunal
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -236,7 +238,7 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
       </div>
 
       {/* Verdict card */}
-      <div className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 space-y-3 animate-slide-up ml-9">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3 animate-slide-up ml-9">
         {/* Summary line */}
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-[#FDF1F3] flex items-center justify-center">
@@ -245,15 +247,15 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
               <circle cx="12" cy="12" r="9" />
             </svg>
           </div>
-          <span className="text-[16px] font-semibold text-[#111827]">{summary}</span>
+          <span className="text-[14px] font-semibold text-[#111827]">{summary}</span>
         </div>
 
         {/* Action */}
-        <p className="text-[14px] text-[#6B7280] leading-relaxed">{actionText}</p>
+        <p className="text-[14px] text-[#6B7280] leading-5">{actionText}</p>
 
         {/* Explanation */}
         {explanation && (
-          <p className="text-[13px] text-[#9CA3AF] leading-relaxed">{explanation}</p>
+          <p className="text-[12px] text-[#9CA3AF] leading-5">{explanation}</p>
         )}
 
         {/* Error */}
@@ -267,16 +269,16 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
             <button
               onClick={handleAccept}
               disabled={submitting}
-              className="flex-1 h-11 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] active:scale-95 transition-transform disabled:opacity-50"
+              className="flex-1 h-10 rounded-md bg-[#E84360] text-white font-normal text-[13px] active:scale-95 transition-transform disabled:opacity-50"
             >
               {submitting ? "…" : "Accept"}
             </button>
             <button
               onClick={handleReject}
               disabled={submitting}
-              className="flex-1 h-11 rounded-2xl bg-[#F3F4F6] text-[#111827] font-semibold text-[15px] active:scale-95 transition-transform disabled:opacity-50"
+              className="flex-1 h-10 rounded-md bg-[#F3F4F6] text-[#111827] font-normal text-[13px] active:scale-95 transition-transform disabled:opacity-50"
             >
-              {submitting ? "…" : "Not happy, request human review"}
+              {submitting ? "…" : "Decline"}
             </button>
           </div>
         )}
@@ -284,12 +286,12 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
         {/* Post-decision confirmation */}
         {decision === "ACCEPT" && (
           <div className="pt-1">
-            <div className="flex items-center gap-2 rounded-2xl bg-[#F0FDFA] px-4 py-2.5">
+            <div className="flex items-center gap-2 rounded-md bg-[#F0FDFA] px-4 py-2.5">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 13l4 4L19 7" />
               </svg>
-              <span className="text-[14px] font-medium text-[#0D9488]">
-                Thank you. Your case is now closed.
+              <span className="text-[12px] font-normal text-[#0D9488]">
+                Your case is now closed.
               </span>
             </div>
           </div>
@@ -321,7 +323,7 @@ function EscalatedMessage({ caseId }: { caseId: string }) {
       <div className="ml-9">
         <button
           onClick={() => router.push(`/tribunal/${caseId}`)}
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+          className="inline-flex items-center gap-1 text-[12px] font-normal text-slate-700 active:opacity-60 transition-opacity"
         >
           View AI Tribunal
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -334,18 +336,8 @@ function EscalatedMessage({ caseId }: { caseId: string }) {
           <span className="text-[10px] font-bold text-[#E84360]">M</span>
         </div>
         <div className="max-w-[75%]">
-          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
-            Your case has been escalated to our human review team. They'll examine the details carefully and get back to you as soon as possible.
-          </div>
-        </div>
-      </div>
-      <div className="flex items-end gap-2 justify-start">
-        <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-          <span className="text-[10px] font-bold text-[#E84360]">M</span>
-        </div>
-        <div className="max-w-[75%]">
-          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
-            We'll notify you via the app and email once there's an update. Thank you for your patience.
+          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[14px] leading-5 text-[#111827]">
+            Your case has been escalated to our human review team. They'll examine the details carefully and get back to you via email as soon as possible.
           </div>
         </div>
       </div>
@@ -362,7 +354,7 @@ function EscalatedMessage({ caseId }: { caseId: string }) {
 }
 
 // ==========================================
-// Chat Bubble (existing component, kept for issue submission mode)
+// Chat Bubble Component
 // ==========================================
 
 function ChatBubble({
@@ -380,7 +372,7 @@ function ChatBubble({
         </div>
       )}
       <div
-        className={`max-w-[75%] ${hasImage ? "p-1.5" : "px-4 py-2.5"} text-[15px] leading-relaxed ${
+        className={`max-w-[75%] ${hasImage ? "p-1.5" : "px-4 py-2.5"} text-[14px] leading-5 ${
           isBot
             ? "bg-[#F3F4F6] text-[#111827] rounded-2xl rounded-tl-sm"
             : "bg-[#E84360] text-white rounded-2xl rounded-tr-sm"
@@ -409,11 +401,19 @@ function ChatBubble({
 function ChatContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const caseId = searchParams.get("caseId") || "DISP-001";
+
+  // Convert caseId to React state to maintain updates across lifecycle renders
+  const [caseId, setCaseId] = useState<string>("");
+
   const tripId = searchParams.get("tripId") || "TRIP-2026-08112";
+  const driverId = searchParams.get("driverId") || "";
+  const riderId = searchParams.get("riderId") || "";
+  const filedBy = searchParams.get("filedBy") || "";
   const fromProcess = searchParams.get("from") === "process";
-  const issue = searchParams.get("issue") || "";
-  const needsCleaningEvidence = isCleaningFeeIssue(issue);
+  const issueType = searchParams.get("issueType") || "";
+  const needsCleaningEvidence = isCleaningFeeIssue(issueType);
+
+  const [disputeClaimDescription, setDisputeClaimDescription] = useState<string>("");
 
   // --- Verdict mode state ---
   const [verdictResult, setVerdictResult] = useState<CaseResult | null>(null);
@@ -444,6 +444,7 @@ function ChatContent() {
   const [evidenceStep, setEvidenceStep] = useState<EvidenceStep | null>(null);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
   const evidenceRef = useRef<{ photo: File | null; receipt: File | null }>({
     photo: null,
     receipt: null,
@@ -477,7 +478,13 @@ function ChatContent() {
   // --- Restore issue-submission conversation when returning from tribunal ---
   useEffect(() => {
     if (!fromProcess) return;
-    const storedIssue = sessionStorage.getItem(`chat-issue-${caseId}`);
+    const storedIssue = sessionStorage.getItem(`chat-issue-${tripId}`);
+    const storedCaseId = sessionStorage.getItem(`case-id-${tripId}`);
+
+    if (storedCaseId) {
+      setCaseId(storedCaseId);
+    }
+
     if (storedIssue) {
       setMessages((prev) => {
         // Avoid duplicates if the effect runs twice
@@ -488,12 +495,12 @@ function ChatContent() {
           {
             id: `b-restored`,
             sender: "bot" as const,
-            text: "Dispute Logged — Miora AI Tribunal Session Active. Your case is now being reviewed by our multi-agent AI system. Please wait while the tribunal deliberates...",
+            text: "Dispute Logged. Your case is now being reviewed by our multi-agent AI system. Please wait while the tribunal deliberates.",
           },
         ];
       });
     }
-  }, [caseId, fromProcess]);
+  }, [tripId, fromProcess]);
 
   // --- Load verdict result on mount (from=process mode) ---
   useEffect(() => {
@@ -522,8 +529,8 @@ function ChatContent() {
     return () => { cancelled = true; };
   }, [caseId, fromProcess]);
 
-  // --- Launch the AI Tribunal (unchanged behaviour) ---
-  const launchTribunal = () => {
+  // --- Launch AI Tribunal and post payload ---
+  const launchTribunal = async (customDescription?: string) => {
     setSubmitted(true);
     setBotTyping(true);
 
@@ -534,27 +541,77 @@ function ChatContent() {
         {
           id: `b${Date.now()}`,
           sender: "bot",
-          text: "Dispute Logged — Miora AI Tribunal Session Active. Your case is now being reviewed by our multi-agent AI system. Please wait while the tribunal deliberates...",
+          text: "Dispute Logged. Your case is now being reviewed by our multi-agent AI system. Please wait while the tribunal deliberates.",
         },
       ]);
     }, 1500);
 
-    later(() => {
-      router.push(`/tribunal/${caseId}`);
-    }, 3500);
+    // Convert evidence files to Base64 arrays
+    const imageEvidence: string[] = [];
+    const receiptEvidence: string[] = [];
+
+    if (evidenceRef.current.photo) {
+      try {
+        const photoBase64 = await fileToBase64(evidenceRef.current.photo);
+        imageEvidence.push(photoBase64);
+      } catch (e) {
+        console.error("Failed to convert photo file:", e);
+      }
+    }
+
+    if (evidenceRef.current.receipt) {
+      try {
+        const receiptBase64 = await fileToBase64(evidenceRef.current.receipt);
+        receiptEvidence.push(receiptBase64);
+      } catch (e) {
+        console.error("Failed to convert receipt file:", e);
+      }
+    }
+
+    // Construct full payload
+    const formData: CreateDisputePayload = {
+      trip_id: tripId,
+      dispute_type: issueType,
+      dispute_claim_description: customDescription || disputeClaimDescription,
+      filed_by: filedBy,
+      rider_id: riderId,
+      driver_id: driverId,
+      image_evidence: imageEvidence,
+      receipt_evidence: receiptEvidence,
+    };
+
+    try {
+      const result = await createDispute(formData);
+      console.log("Created Dispute Case ID:", result.case_id);
+
+      // Persist case ID in React State and Session Storage
+      setCaseId(result.case_id);
+      sessionStorage.setItem(`case-id-${tripId}`, result.case_id);
+
+      later(() => {
+        router.push(`/tribunal/${result.case_id}`);
+      }, 3500);
+    } catch (error) {
+      console.error("Error creating dispute:", error);
+      setBotTyping(false);
+    }
   };
 
   // --- Issue submission handler (non-verdict mode) ---
   const handleSend = () => {
     if (!input.trim() || descriptionSent) return;
-    const userMsg = { id: `u${Date.now()}`, sender: "user" as const, text: input };
+    const currentInput = input;
+    const userMsg = { id: `u${Date.now()}`, sender: "user" as const, text: currentInput };
+
     setMessages((prev) => [...prev, userMsg]);
-    // Persist the user's issue text so it can be restored when returning from tribunal
+    setDisputeClaimDescription(currentInput);
+
     try {
-      sessionStorage.setItem(`chat-issue-${caseId}`, input);
+      sessionStorage.setItem(`chat-issue-${tripId}`, currentInput);
     } catch {
-      // sessionStorage unavailable — skip silently
+      // Ignore sessionStorage issues
     }
+
     setInput("");
     setDescriptionSent(true);
 
@@ -574,10 +631,10 @@ function ChatContent() {
       return;
     }
 
-    launchTribunal();
+    launchTribunal(currentInput);
   };
 
-  // --- Evidence upload handlers (files are kept in memory only) ---
+  // --- Evidence Upload Pickers ---
   const handlePickFile = () => {
     if (!awaitingUpload) return;
     fileInputRef.current?.click();
@@ -585,7 +642,7 @@ function ChatContent() {
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow picking the same file again
+    e.target.value = "";
     if (!file || !evidenceStep || !awaitingUpload) return;
 
     if (!file.type.startsWith("image/")) {
@@ -597,7 +654,13 @@ function ChatContent() {
     const step = evidenceStep;
     const url = URL.createObjectURL(file);
     objectUrlsRef.current.push(url);
-    evidenceRef.current[step === "PHOTO" ? "photo" : "receipt"] = file;
+
+    // Save File reference inside mutable ref
+    if (step === "PHOTO") {
+      evidenceRef.current.photo = file;
+    } else {
+      evidenceRef.current.receipt = file;
+    }
 
     setMessages((prev) => [
       ...prev,
@@ -676,7 +739,7 @@ function ChatContent() {
           <div className="flex justify-center pt-2">
             <div className="flex items-center gap-2 rounded-full bg-[#FDF1F3] px-4 py-2 animate-fade-in">
               <span className="w-2 h-2 rounded-full bg-[#E84360] animate-pulse-dot" />
-              <span className="text-[13px] font-semibold text-[#E84360]">
+              <span className="text-[12px] font-normal text-[#E84360]">
                 Dispute Logged — Miora AI Tribunal Session Active
               </span>
             </div>
@@ -699,12 +762,12 @@ function ChatContent() {
 
             {verdictError && (
               <div className="flex flex-col items-center justify-center gap-3 py-8">
-                <div className="text-[15px] text-[#6B7280] text-center px-8">
+                <div className="text-[14px] text-[#6B7280] text-center px-8">
                   {verdictError}
                 </div>
                 <button
                   onClick={() => window.location.reload()}
-                  className="px-5 py-2.5 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] active:scale-95 transition-transform"
+                  className="px-5 py-2.5 rounded-2xl bg-[#E84360] text-white font-semibold text-[13px] active:scale-95 transition-transform"
                 >
                   Retry
                 </button>
@@ -727,7 +790,7 @@ function ChatContent() {
                     <div className="ml-9">
                       <button
                         onClick={() => router.push(`/tribunal/${caseId}`)}
-                        className="inline-flex items-center gap-1 text-[13px] font-medium text-[#E84360] active:opacity-60 transition-opacity"
+                        className="inline-flex items-center gap-1 text-[12px] font-normal text-slate-700 active:opacity-60 transition-opacity"
                       >
                         View AI Tribunal
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -740,7 +803,7 @@ function ChatContent() {
                         <span className="text-[10px] font-bold text-[#E84360]">M</span>
                       </div>
                       <div className="max-w-[75%]">
-                        <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
+                        <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[14px] leading-5 text-[#111827]">
                           Your case is still being processed. Please check back shortly.
                         </div>
                       </div>
@@ -778,7 +841,7 @@ function ChatContent() {
                   if (e.key === "Enter") handleSend();
                 }}
                 placeholder="Type your message..."
-                className="flex-1 bg-transparent text-[15px] text-[#111827] placeholder:text-[#9CA3AF] outline-none"
+                className="flex-1 bg-transparent text-[14px] text-[#111827] placeholder:text-[#9CA3AF] outline-none"
               />
             </div>
             <button
@@ -794,7 +857,7 @@ function ChatContent() {
         </div>
       ) : fromProcess ? (
         <div className="border-t border-gray-100 px-4 py-3 bg-white">
-          <div className="flex items-center justify-center text-[14px] text-[#9CA3AF]">
+          <div className="flex items-center justify-center text-[12px] text-[#9CA3AF] font-normal">
             <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -815,7 +878,7 @@ function ChatContent() {
               type="button"
               onClick={handlePickFile}
               disabled={!awaitingUpload}
-              className="w-full h-12 rounded-2xl bg-[#E84360] text-white font-semibold text-[15px] flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:bg-gray-200 disabled:text-gray-400"
+              className="w-full h-10 rounded-md bg-[#E84360] px-4 py-2.5 text-sm font-medium text-white shadow flex items-center justify-center gap-2 hover:bg-slate-800 disabled:opacity-50"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h1.5l1.2-2h8.6l1.2 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -823,7 +886,7 @@ function ChatContent() {
               </svg>
               {EVIDENCE_COPY[evidenceStep].button}
             </button>
-            <p className={`text-center text-[12px] ${uploadError ? "text-[#E84360]" : "text-[#9CA3AF]"}`}>
+            <p className={`text-center text-[12px] font-normal ${uploadError ? "text-[#E84360]" : "text-[#9CA3AF]"}`}>
               {uploadError ?? EVIDENCE_COPY[evidenceStep].hint}
             </p>
           </div>
