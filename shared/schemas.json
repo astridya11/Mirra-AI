@@ -102,10 +102,29 @@
           "type": "string",
           "description": "Category of the dispute, determining the evidence-collection and policy-evaluation path.",
           "enum": [
-            "ROUTE_DEVIATION",
+            "LOST_ITEM",
+            "REFUND_REQUEST",
+            "DRIVER_RATING",
+            "PAYMENT_FAILED",
+            "CANCELLED_BOOKING",
+            "NO_SHOW_CHARGE",
             "CLEANING_FEE",
+            "TOLL_REIMBURSEMENT",
+            "PASSENGER_CONDUCT",
+            "UNSAFE_DRIVING",
             "SAFETY_ALERT",
-            "NO_SHOW_CHARGE"
+            "HARASSMENT",
+            "VEHICLE_ACCIDENT",
+            "ROUTE_DEVIATION",
+            "SURGE_PRICING",
+            "FARE_DISPUTE",
+            "PAYOUT_DELAY",
+            "BONUS_INCENTIVE",
+            "SUBSCRIPTION_BILLING",
+            "CASHBACK_PROMO",
+            "ACCOUNT_PRIVACY",
+            "VEHICLE_DOCUMENTATION",
+            "DISPUTE_ESCALATION"
           ]
         },
         "dispute_claim_description": {
@@ -2092,6 +2111,7 @@
         "password",
         "account_age_days",
         "total_trips",
+        "trips_past_30_days",
         "avg_rating",
         "risk_score",
         "dispute_history_30d",
@@ -2125,6 +2145,14 @@
         "total_trips": {
           "type": "integer",
           "minimum": 0
+        },
+        "trips_past_30_days": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0,
+          "default": []
         },
         "avg_rating": {
           "type": "number",

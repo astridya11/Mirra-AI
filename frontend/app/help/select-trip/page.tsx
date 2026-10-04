@@ -7,16 +7,18 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
-import { listTrips } from "@/src/lib/api";
-import type { TripListItem } from "@/src/types";
+import { useAuth } from "@/src/context/AuthContext";
+import { listPast30DaysTrips } from "@/src/lib/api";
+import type { Past30DaysTripListItem } from "@/src/types";
 
 function SelectTripContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
 
-  const issue = searchParams.get("issue") || "Selected Issue";
+  const issue_type = searchParams.get("issue_type") || "Issue Type";
 
-  const [trips, setTrips] = useState<TripListItem[]>([]);
+  const [pastTrips, setPastTrips] = useState<Past30DaysTripListItem>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,12 +30,13 @@ function SelectTripContent() {
         setLoading(true);
         setError(null);
 
-        const result = await listTrips();
+        const result = await listPast30DaysTrips(user!.party_id); 
 
         if (!cancelled) {
-          setTrips(result);
+          setPastTrips(result);
         }
-      } catch (err) {
+      } 
+      catch (err) {
         console.error("Failed to load trips:", err);
 
         if (!cancelled) {
@@ -54,11 +57,10 @@ function SelectTripContent() {
   }, []);
 
   // Pass caseId, tripId AND the selected issue on to the chat page.
-  const goToChat = (trip: TripListItem) => {
+  const goToChat = (tripId: string) => {
     const query = new URLSearchParams({
-      caseId: String(trip.case_id),
-      tripId: String(trip.trip_id),
-      issue,
+      tripId,
+      issue_type,
     });
     router.push(`/help/chat?${query.toString()}`);
   };
@@ -66,17 +68,17 @@ function SelectTripContent() {
   return (
     <div className="min-h-screen bg-white">
       <IOSHeader
-        title="Select Trip for Issue"
+        title="RydeHELP"
         onBack={() => router.push("/help")}
       />
 
       <div className="px-5 pt-3 pb-2">
-        <p className="text-[15px] text-[#111827] font-medium">
-          {issue}
+        <p className="text-[13px] text-[#111827] font-medium">
+          Which Trip?
         </p>
 
-        <p className="text-[13px] text-[#6B7280] mt-0.5">
-          Select the affected trip within the last 30 days
+        <p className="text-[12px] text-[#6B7280] mt-0.5">
+          Select the trip you have had an issue with from the past 30 days.
         </p>
       </div>
 
@@ -93,21 +95,21 @@ function SelectTripContent() {
           </div>
         )}
 
-        {!loading && !error && trips.length === 0 && (
+        {!loading && !error && pastTrips!.total_trips === 0 && (
           <div className="py-8 text-center text-[14px] text-[#6B7280]">
-            No trips found.
+            You have no trips from the past 30 days!
           </div>
         )}
 
         {!loading &&
           !error &&
-          trips.map((trip) => {
-            const driver = trip.historical_profiles?.[1];
+          pastTrips!.trips.map((trip) => {
+            const driver = trip.historical_profiles[1];
 
             return (
               <button
                 key={trip.trip_id}
-                onClick={() => goToChat(trip)}
+                onClick={() => goToChat(trip.trip_id)}
                 className="w-full text-left rounded-xl border border-gray-200 p-4 active:bg-gray-50 transition-colors"
               >
                 <div className="flex items-start justify-between mb-2">

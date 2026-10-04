@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.db import user_repo
+from app.db.auth import user_repo
 from app.auth.dependencies import get_current_user
-from app.schemas import (
+from app.schemas.auth import (
     TokenResponse,
     UserAccount,
     UserLoginRequest,
@@ -10,7 +10,7 @@ from app.schemas import (
 )
 from app.auth.security import create_access_token, hash_password, verify_password
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)

@@ -18,16 +18,15 @@ export function IOSHeader({ title, onBack, rightAction, subtitle }: IOSHeaderPro
         {onBack && (
           <button
             onClick={onBack}
-            className="absolute left-3 flex items-center text-[17px] text-[#E84360] active:opacity-60 transition-opacity"
+            className="absolute left-3 flex items-center text-[17px] text-slate-500 active:opacity-60 transition-opacity"
           >
-            <svg className="w-6 h-6 mr-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-6 h-6 mr-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            <span className="text-[17px]">Back</span>
           </button>
         )}
         <div className="text-center">
-          <h1 className="text-[17px] font-semibold text-[#111827] truncate max-w-[200px]">{title}</h1>
+          <h1 className="text-[17px] font-normal text-[#111827] truncate max-w-[200px]">{title}</h1>
           {subtitle && (
             <p className="text-[11px] text-[#6B7280] -mt-0.5 truncate max-w-[200px]">{subtitle}</p>
           )}

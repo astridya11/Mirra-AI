@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from threading import Lock
 from app.core.config import settings
-from app.schemas import HistoricalProfile, UserAccount
+from app.schemas.auth import HistoricalProfile, UserAccount
 
 
 class UserRepository:
@@ -22,19 +22,25 @@ class UserRepository:
 
             if not self.file_path.exists():
                 self.file_path.parent.mkdir(parents=True, exist_ok=True)
-                self.file_path.write_text("[]", encoding="utf-8")
+                self.file_path.write_text("{}", encoding="utf-8")
 
             with open(self.file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            for user_dict in data:
+            # Handle dictionary format (keyed by party_id) or list format
+            user_records = data.values() if isinstance(data, dict) else data
+
+            for user_dict in user_records:
                 user = UserAccount(**user_dict)
                 self._by_email[user.email.lower()] = user
                 self._by_party_id[user.party_id] = user
 
     def _persist(self) -> None:
         """Internal helper to write the in-memory cache back to users.json."""
-        all_users = [user.model_dump() for user in self._by_party_id.values()]
+        all_users = {
+            party_id: user.model_dump()
+            for party_id, user in self._by_party_id.items()
+        }
         with open(self.file_path, "w", encoding="utf-8") as f:
             json.dump(all_users, f, indent=2)
 

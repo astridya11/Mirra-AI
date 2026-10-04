@@ -3,7 +3,30 @@
  * These mirror the exact field names from the backend pipeline.
  */
 
-export type DisputeType = "ROUTE_DEVIATION" | "CLEANING_FEE" | "SAFETY_ALERT" | "NO_SHOW_CHARGE";
+export type DisputeType = 
+  | "LOST_ITEM"
+  | "REFUND_REQUEST"
+  | "DRIVER_RATING"
+  | "PAYMENT_FAILED"
+  | "CANCELLED_BOOKING"
+  | "NO_SHOW_CHARGE"
+  | "CLEANING_FEE"
+  | "TOLL_REIMBURSEMENT"
+  | "PASSENGER_CONDUCT"
+  | "UNSAFE_DRIVING"
+  | "SAFETY_ALERT"
+  | "HARASSMENT"
+  | "VEHICLE_ACCIDENT"
+  | "ROUTE_DEVIATION"
+  | "SURGE_PRICING"
+  | "FARE_DISPUTE"
+  | "PAYOUT_DELAY"
+  | "BONUS_INCENTIVE"
+  | "SUBSCRIPTION_BILLING"
+  | "CASHBACK_PROMO"
+  | "ACCOUNT_PRIVACY"
+  | "VEHICLE_DOCUMENTATION"
+  | "DISPUTE_ESCALATION";
 
 export type PipelineState =
   | "INIT_CLAIM"
@@ -150,7 +173,7 @@ export interface DisputeClaim {
   /**
    * Category of the dispute claim.
    */
-  dispute_type: "ROUTE_DEVIATION" | "CLEANING_FEE" | "SAFETY_ALERT" | "NO_SHOW_CHARGE";
+  dispute_type: DisputeType;
   /**
    * Description of the dispute claim submitted by the party.
    */
@@ -549,15 +572,18 @@ export interface PipelineCompleteEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Trips Listing (from GET /api/trips)
+// Trips Listing (from GET /api/v1/30-days-trips/${party_id})
 // ---------------------------------------------------------------------------
 
-export interface TripListItem {
-  case_id: string;
-  trip_id: string;
-  trip_data: TripData;
-  historical_profiles: HistoricalProfile[];
-  payment_fare_data: PaymentFareData;
+export interface Past30DaysTripListItem {
+  party_id: string;
+  total_trips: number;
+  trips: {
+    trip_id: string;
+    trip_data: TripData;
+    payment_fare_data: PaymentFareData;
+    historical_profiles: HistoricalProfile[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +660,10 @@ export interface UserAccount {
   password: string;
   account_age_days: number;
   total_trips: number;
+  /**
+   * @minItems 0
+   */
+  trips_past_30_days: string[];
   avg_rating: number;
   risk_score: number;
   dispute_history_30d: number;

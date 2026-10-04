@@ -58,6 +58,11 @@ export default function HelpPage() {
     <div className="min-h-screen bg-white">
       <IOSHeader title="RydeHELP" onBack={() => router.push("/")} />
 
+      {/* Section label */}
+      <div className="px-5 pt-2 pb-1">
+        <p className="text-[14px] font-semibold text-[#6B7280]">Topics</p>
+      </div>
+
       {/* Search Bar */}
       <div className="px-4 py-3">
         <div className="flex items-center gap-2 bg-[#F3F4F6] rounded-lg px-3 py-2.5">
@@ -70,11 +75,6 @@ export default function HelpPage() {
             className="flex-1 bg-transparent text-[15px] text-[#111827] placeholder:text-[#9CA3AF] outline-none"
           />
         </div>
-      </div>
-
-      {/* Section label */}
-      <div className="px-5 pt-2 pb-1">
-        <p className="text-[13px] font-semibold text-[#6B7280] uppercase tracking-wide">Browse by Topic</p>
       </div>
 
       {/* Topics List */}

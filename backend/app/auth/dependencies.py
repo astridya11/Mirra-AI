@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from app.db import user_repo
-from app.schemas import PartyRole, TokenPayload, UserAccount
+from app.db.auth import user_repo
+from app.schemas.auth import PartyRole, TokenPayload, UserAccount
 from app.auth.security import decode_access_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")

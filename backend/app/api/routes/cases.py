@@ -6,9 +6,9 @@ from app.api.deps import ensure_case_party, get_current_party_id
 from app.db.session import get_db
 from app.models.case import Case
 from app.schemas.case import CaseCreate, CaseRead
-from app.db import user_repo
+from app.db.auth import user_repo
 from app.auth.dependencies import RequireRole, get_current_user
-from app.schemas import PartyRole, UserAccount
+from app.schemas.auth import PartyRole, UserAccount
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 

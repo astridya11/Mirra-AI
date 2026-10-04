@@ -53,7 +53,7 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
   if (!open) return null;
 
   const handleLogout = () => {
-    logout();
+    if (user) logout();
     onClose();
     onNavigate("/login");
   };
@@ -69,7 +69,7 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
       {/* Drawer */}
       <div className="absolute top-0 bottom-0 left-0 w-[85%] max-w-[340px] bg-white shadow-xl animate-slide-in-left flex flex-col">
         {/* Profile Header */}
-        <div className="px-5 pt-12 pb-5 bg-gradient-to-br from-[#E84360] to-[#DE3557]">
+        <div className="px-5 pt-10 pb-10 bg-gradient-to-br from-[#E84360] to-[#DE3557]">
           <div className="flex items-center gap-3">
             <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center text-white text-xl font-bold backdrop-blur-sm uppercase">
               {user ? user.name.charAt(0) : "A"}
@@ -83,12 +83,6 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
                 {user?.avg_rating || "5.00"}
               </p>
             </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded text-xs uppercase tracking-wider font-semibold bg-white/20 text-white">
-              Role: {user?.party || "Rider"}
-            </span>
-            <span className="text-white/70 text-[13px]">· {user?.total_trips || 0} trips</span>
           </div>
         </div>
 
@@ -134,16 +128,13 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
           />
         </div>
 
-        {/* Bottom Log Out Button */}
+        {/* Bottom Log In/Out Button */}
         <div className="px-5 py-4 border-t border-gray-100">
           <button
             onClick={handleLogout}
             className="w-full py-2.5 rounded-lg bg-red-50 text-[15px] font-semibold text-[#E84360] hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-            </svg>
-            Log Out
+            {user ? "Log Out" : "Log In"}
           </button>
         </div>
       </div>

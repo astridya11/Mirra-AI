@@ -18,10 +18,12 @@ class Settings(BaseSettings):
     # ponytail: sqlite fallback keeps `uvicorn app.main:app` runnable with zero setup;
     # point DATABASE_URL at Postgres for real deployments (see .env.example).
     database_url: str = "sqlite:///./mirra.db"
+    SECRET_KEY: str = "secret_key_123"
     USERS_FILE_PATH: str = str(BACKEND_DIR / "data" / "users.json")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 Hours
 
+settings = Settings()
 
 @lru_cache
 def get_settings() -> Settings:

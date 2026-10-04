@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -46,6 +46,7 @@ class UserAccount(BaseModel):
     password: str
     account_age_days: int = 0
     total_trips: int = 0
+    trips_past_30_days: List[str] = []
     avg_rating: float = 5.0
     risk_score: float = 0.0
     dispute_history_30d: int = 0

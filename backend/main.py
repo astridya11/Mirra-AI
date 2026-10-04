@@ -19,16 +19,22 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
+import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, cases
+from backend.app.db.auth import user_repo
+from backend.app.api.routes import auth, cases, evidence, verification
+from backend.app.core.config import get_settings
+
 
 from backend.orchestrator.state_machine import (
     ExecutionRoute,
@@ -70,8 +76,21 @@ app.add_middleware(
 )
 
 # Register Routers
+settings = get_settings()
+
 app.include_router(auth.router)
-app.include_router(cases.router)
+app.include_router(cases.router, prefix=settings.api_v1_prefix)
+app.include_router(evidence.router, prefix=settings.api_v1_prefix)
+app.include_router(verification.router, prefix=settings.api_v1_prefix)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # 打印堆栈日志方便调试
+    print(f"Global Exception Caught: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"},
+    )
 
 _SGT = timezone(timedelta(hours=8))
 _BACKEND_DIR = Path(__file__).resolve().parent
@@ -83,6 +102,10 @@ _completed_results: dict[str, dict[str, Any]] = {}
 
 def _now_iso() -> str:
     return datetime.now(_SGT).isoformat()
+
+# Path setup relative to backend directory
+DATA_DIR = Path(__file__).resolve().parent / "data"
+TRIPS_DIR = DATA_DIR / "trips"
 
 
 # ---------------------------------------------------------------------------
@@ -189,37 +212,54 @@ async def health_check():
 # Dispute listing & raw data loading
 # ---------------------------------------------------------------------------
 
-@app.get("/api/trips")
-async def list_trips():
+@app.get("/api/v1/30-days-trips/{party_id}")
+async def list_past_30_days_trips(party_id: str):
     """
-    List all available trips by scanning the mock_data directory.
+    Retrieve the past 30 days of trips for a user by party_id.
+    Returns trip_data and payment_fare_data for each trip found.
     """
-    trips: list[dict[str, Any]] = []
-    if not _MOCK_DATA_DIR.exists():
-        return trips
+    # 1. Fetch user from user_repo (or read directly from users.json)
+    user = user_repo.get_by_party_id(party_id)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
 
-    for file_path in sorted(_MOCK_DATA_DIR.glob("*.json")):
+    # Access trips_past_30_days from Pydantic model attribute or dict lookup
+    trip_ids = getattr(user, "trips_past_30_days", [])
+    if isinstance(user, dict):
+        trip_ids = user.get("trips_past_30_days", [])
+
+    results = []
+
+    # 2. Iterate through each trip_id and read its JSON file
+    for trip_id in trip_ids:
+        trip_file_path = TRIPS_DIR / f"{trip_id}.json"
+
+        if not trip_file_path.exists():
+            continue  # Skip missing trip files gracefully
+
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                case_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+            with open(trip_file_path, "r", encoding="utf-8") as f:
+                trip_json = json.load(f)
+
+            # 3. Extract requested keys: "trip_data" and "payment_fare_data"
+            extracted_data = {
+                "trip_id": trip_id,
+                "trip_data": trip_json.get("trip_data"),
+                "payment_fare_data": trip_json.get("payment_fare_data"),
+                "historical_profiles": trip_json.get("historical_profiles"),
+            }
+            results.append(extracted_data)
+
+        except (json.JSONDecodeError, IOError) as e:
+            # Handle corrupted or unreadable trip JSON files
             continue
 
-        meta = case_data.get("case_metadata", {})
-        data_sources = case_data.get("data_sources", {})
-        case_id = meta.get("case_id", file_path.stem)
-
-        trips.append(
-            {
-                "case_id": case_id,
-                "trip_id": meta.get("trip_id"),
-                "trip_data": data_sources.get("trip_data"),
-                "historical_profiles": data_sources.get("historical_profiles"),
-                "payment_fare_data": data_sources.get("payment_fare_data")
-            }
-        )
-
-    return trips
+    return {
+        "party_id": party_id,
+        "total_trips": len(results),
+        "trips": results
+    }
 
 @app.get("/api/disputes")
 async def list_dispute_cases():
