@@ -107,7 +107,7 @@ const topics: Record<string, Topic> = {
     id: "experience",
     title: "Ryde Experience",
     riderIssues: [
-      { id: "e1", label: "Poor vehicle condition or cleanliness", issue_type: "CLEANING_FEE" },
+      { id: "e1", label: "Poor vehicle condition or cleanliness", issue_type: "DRIVER_RATING" },
       { id: "e2", label: "Driver rating and feedback review", issue_type: "DRIVER_RATING" },
     ],
     driverIssues: [
