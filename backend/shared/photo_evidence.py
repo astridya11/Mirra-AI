@@ -34,6 +34,8 @@ from typing import Any
 
 from PIL import Image
 
+from backend.shared.vision_client import call_vision_json
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -388,6 +390,109 @@ def _detect_ai_hint(img: Image.Image, raw_bytes: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Vision provider hook
+# ---------------------------------------------------------------------------
+
+_PHOTO_SYSTEM_PROMPT = (
+    "You inspect photos of a ride-hailing car interior for a cleaning-fee "
+    "claim. Return ONLY JSON with these keys: "
+    '{"stain_damage_classification": one of LIQUID_SPILL, VOMIT, '
+    "FOOD_RESIDUE, PHYSICAL_DAMAGE, DIRT_MUD, NO_DAMAGE_DETECTED, OTHER, "
+    '"damage_severity": MINOR, MODERATE, or SEVERE (or null), '
+    '"is_ai_generated": bool, '
+    '"ai_generated_confidence": float between 0 and 1, '
+    '"stain_regions": a list (max 3) of boxes '
+    '{"x1","y1","x2","y2"} as fractions 0..1 of image width/height '
+    "(origin top-left) around each stain or damaged area. "
+    'Empty list if no stain or not sure. Do not guess.} '
+    "If the photo is not a car interior, use OTHER for the classification."
+)
+
+
+# ---------------------------------------------------------------------------
+# Stain-region validation
+# ---------------------------------------------------------------------------
+
+_MAX_STAIN_REGIONS = 3
+
+
+def _is_valid_fraction(value: Any) -> bool:
+    """True when *value* is a finite float/int in [0, 1] and not a bool."""
+    if _is_strict_bool(value):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(f):
+        return False
+    return 0.0 <= f <= 1.0
+
+
+def _validate_stain_regions(raw: Any) -> list[dict[str, float]]:
+    """Validate and return a list of stain-region boxes (max 3).
+
+    Each box must have x1, y1, x2, y2 that are finite numbers in [0, 1]
+    with x1 < x2 and y1 < y2.  Invalid boxes are silently dropped.
+    """
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, float]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        x1 = item.get("x1")
+        y1 = item.get("y1")
+        x2 = item.get("x2")
+        y2 = item.get("y2")
+        if not (
+            _is_valid_fraction(x1)
+            and _is_valid_fraction(y1)
+            and _is_valid_fraction(x2)
+            and _is_valid_fraction(y2)
+        ):
+            continue
+        fx1, fy1, fx2, fy2 = float(x1), float(y1), float(x2), float(y2)
+        if not (fx1 < fx2 and fy1 < fy2):
+            continue
+        result.append({"x1": fx1, "y1": fy1, "x2": fx2, "y2": fy2})
+        if len(result) >= _MAX_STAIN_REGIONS:
+            break
+    return result
+
+
+def _run_vision(file_path: str | Path) -> tuple[dict[str, Any] | None, list[dict[str, float]]]:
+    """Run DeepSeek vision analysis on *file_path*.
+
+    Returns a ``(provider_dict, stain_regions)`` tuple.  The provider dict
+    contains classification / severity / AI fields (same as annotations),
+    or None if the vision API returned nothing.  ``stain_regions`` is the
+    validated list of boxes (max 3), possibly empty.
+    """
+    raw = call_vision_json(
+        _PHOTO_SYSTEM_PROMPT,
+        "Analyse this photo and return the JSON.",
+        file_path,
+    )
+    if not isinstance(raw, dict):
+        return None, []
+    result: dict[str, Any] = {}
+    for key in (
+        "stain_damage_classification",
+        "damage_severity",
+        "is_ai_generated",
+        "ai_generated_confidence",
+    ):
+        val = raw.get(key)
+        if val is not None:
+            result[key] = val
+    stain_regions = _validate_stain_regions(raw.get("stain_regions"))
+    return (result or None), stain_regions
+
+
+# ---------------------------------------------------------------------------
 # provider_result assembly
 # ---------------------------------------------------------------------------
 
@@ -454,6 +559,7 @@ def build_image_evidence(
     image_url: str,
     known_hashes: dict[str, str] | None = None,
     annotation: dict[str, Any] | None = None,
+    use_vision: bool = False,
 ) -> dict[str, Any]:
     """Build an ``ImageEvidenceInput`` dict from an image file on disk.
 
@@ -518,13 +624,29 @@ def build_image_evidence(
     # 3. AI-generation hint
     ai_hint = _detect_ai_hint(img, raw_bytes)
 
-    # 4. provider_result
-    if annotation is None:
-        annotations = _load_default_annotations()
-        annotation = annotations.get(image_id)
+    # 4. provider_result + stain_regions
+    #    Order: vision result if valid, else annotation.
+    vision_result: dict[str, Any] | None = None
+    stain_regions: list[dict[str, float]] = []
+    if use_vision:
+        vision_result, stain_regions = _run_vision(file_path)
+
+    if vision_result is not None:
+        annotation = vision_result
+    else:
+        if annotation is None:
+            annotations = _load_default_annotations()
+            annotation = annotations.get(image_id)
+        # Read stain_regions from the annotation (same validation).
+        stain_regions = _validate_stain_regions(
+            annotation.get("stain_regions") if isinstance(annotation, dict) else None
+        )
     provider_result = _build_provider_result(annotation, ai_hint)
     if provider_result is not None:
         base["provider_result"] = provider_result
+
+    if stain_regions:
+        base["stain_regions"] = stain_regions
 
     return base
 
