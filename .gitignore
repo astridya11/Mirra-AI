@@ -153,3 +153,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# disputes files
+backend/disputes
+backend/data/disputes

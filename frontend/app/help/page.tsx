@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { IOSListItem } from "@/src/components/IOSListItem";
+import { useAuth } from "@/src/context/AuthContext";
 
-const helpTopics = [
+const riderTopics = [
   { id: "popular", label: "Popular Topics", icon: "flame" },
   { id: "ryde-plus", label: "Ryde+ Subscription", icon: "plus" },
   { id: "safety", label: "Safety & Emergency", icon: "shield" },
@@ -13,7 +14,20 @@ const helpTopics = [
   { id: "booking", label: "Booking a Ryde", icon: "car" },
   { id: "experience", label: "Ryde Experience", icon: "star" },
   { id: "account", label: "Ryde Account & Privacy", icon: "user" },
-  { id: "business", label: "Ryde for Business", icon: "briefcase" },
+];
+
+const driverTopics = [
+  { id: "popular", label: "Driver Essentials", icon: "flame" },
+  { id: "fares", label: "Earnings & Payouts", icon: "dollar" },
+  { id: "experience", label: "Ryde Experience", icon: "star" },
+  { id: "safety", label: "Safety & Emergency", icon: "shield" },
+  { id: "account", label: "Vehicle & Account", icon: "user" },
+];
+
+const supportTopics = [
+  { id: "popular", label: "Open Tickets Queue", icon: "flame" },
+  { id: "safety", label: "Safety Incidents Review", icon: "shield" },
+  { id: "business", label: "Dispute Escalations", icon: "briefcase" },
 ];
 
 const iconMap: Record<string, string> = {
@@ -30,10 +44,24 @@ const iconMap: Record<string, string> = {
 
 export default function HelpPage() {
   const router = useRouter();
+  const { user } = useAuth();
+
+  // Role-based topic selection
+  const helpTopics =
+    user?.party === "DRIVER"
+      ? driverTopics
+      : user?.party === "SUPPORT"
+      ? supportTopics
+      : riderTopics;
 
   return (
     <div className="min-h-screen bg-white">
       <IOSHeader title="RydeHELP" onBack={() => router.push("/")} />
+
+      {/* Section label */}
+      <div className="px-5 pt-2 pb-1">
+        <p className="text-[14px] font-semibold text-[#6B7280]">Topics</p>
+      </div>
 
       {/* Search Bar */}
       <div className="px-4 py-3">
@@ -47,11 +75,6 @@ export default function HelpPage() {
             className="flex-1 bg-transparent text-[15px] text-[#111827] placeholder:text-[#9CA3AF] outline-none"
           />
         </div>
-      </div>
-
-      {/* Section label */}
-      <div className="px-5 pt-2 pb-1">
-        <p className="text-[13px] font-semibold text-[#6B7280] uppercase tracking-wide">Browse by Topic</p>
       </div>
 
       {/* Topics List */}

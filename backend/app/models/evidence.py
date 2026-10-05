@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,6 +11,8 @@ from app.db.base import Base
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+if TYPE_CHECKING:
+    from app.models.case import Case  # Only imported during static type checking
 
 # Mirrors shared/schemas.json ($defs.EvidenceReference.source_type).
 class EvidenceSourceType(str, enum.Enum):

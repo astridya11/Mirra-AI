@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { useAuth } from "@/src/context/AuthContext";
 
 interface DrawerProps {
   open: boolean;
@@ -27,16 +28,17 @@ function MenuItem({ icon, label, onClick, showDivider = true }: MenuItemProps) {
       <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-gray-100 flex-shrink-0">
         {icon}
       </div>
-      <span className="flex-1 text-left text-[17px] text-[#111827]">{label}</span>
-      <svg className="w-5 h-5 text-[#C7C7CC]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <span className="flex-1 text-left text-[14px] text-[#111827]">{label}</span>
+      {/* <svg className="w-4 h-4 text-[#C7C7CC]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-      </svg>
+      </svg> */}
     </button>
   );
 }
 
 export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
-  // Prevent body scroll when open
+  const { user, logout } = useAuth();
+
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
@@ -50,6 +52,12 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
 
   if (!open) return null;
 
+  const handleLogout = () => {
+    if (user) logout();
+    onClose();
+    onNavigate("/login");
+  };
+
   return (
     <div className="fixed inset-0 z-50">
       {/* Backdrop */}
@@ -61,22 +69,21 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
       {/* Drawer */}
       <div className="absolute top-0 bottom-0 left-0 w-[85%] max-w-[340px] bg-white shadow-xl animate-slide-in-left flex flex-col">
         {/* Profile Header */}
-        <div className="px-5 pt-12 pb-5 bg-gradient-to-br from-[#E84360] to-[#DE3557]">
+        <div className="px-5 pt-10 pb-10 bg-gradient-to-br from-[#E84360] to-[#DE3557]">
           <div className="flex items-center gap-3">
-            <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center text-white text-xl font-bold backdrop-blur-sm">
-              A
+            <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center text-white text-xl font-bold backdrop-blur-sm uppercase">
+              {user ? user.name.charAt(0) : "A"}
             </div>
             <div>
-              <p className="text-white text-[19px] font-bold">astrid</p>
+              <p className="text-white text-[15px] font-bold">{user ? user.name : "Guest"}</p>
               <p className="text-white/80 text-[14px] flex items-center gap-1">
                 <svg className="w-3.5 h-3.5" fill="#FFD700" viewBox="0 0 24 24">
                   <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.854.606l-4.782-2.863a.562.562 0 00-.568 0L9.027 21.3a.562.562 0 01-.854-.606l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                 </svg>
-                4.90
+                {user?.avg_rating || "5.00"}
               </p>
             </div>
           </div>
-          <p className="text-white/70 text-[13px] mt-3">Ryde+ Member · 1,240 trips</p>
         </div>
 
         {/* Menu Items */}
@@ -121,13 +128,13 @@ export function Drawer({ open, onClose, onNavigate }: DrawerProps) {
           />
         </div>
 
-        {/* Bottom */}
+        {/* Bottom Log In/Out Button */}
         <div className="px-5 py-4 border-t border-gray-100">
           <button
-            onClick={onClose}
-            className="w-full py-2.5 rounded-lg bg-[#F3F4F6] text-[15px] font-medium text-[#6B7280] active:bg-gray-200 transition-colors"
+            onClick={handleLogout}
+            className="w-full py-2.5 rounded-lg bg-[#E84360] text-[14px] font-semibold text-white hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
           >
-            Close
+            {user ? "Log Out" : "Log In"}
           </button>
         </div>
       </div>

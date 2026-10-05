@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Drawer } from "@/src/components/Drawer";
+import { useAuth } from "@/src/context/AuthContext";
 
 export default function Home() {
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { user } = useAuth();
 
   return (
     <div className="relative min-h-screen bg-white overflow-hidden">
@@ -82,9 +84,14 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
               </svg>
             </button>
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#E84360] to-[#DE3557] flex items-center justify-center text-white text-sm font-bold shadow-sm">
-              A
-            </div>
+            
+            {/* Dynamic User Avatar */}
+            <button
+              onClick={() => (user ? setDrawerOpen(true) : router.push("/login"))}
+              className="w-10 h-10 rounded-full bg-gradient-to-br from-[#E84360] to-[#DE3557] flex items-center justify-center text-white text-sm font-bold shadow-sm"
+            >
+              {user ? user.name.charAt(0).toUpperCase() : "A"}
+            </button>
           </div>
         </div>
       </header>
@@ -113,7 +120,7 @@ export default function Home() {
           {/* Pickup location */}
           <button className="w-full flex items-center gap-3 py-3 border-b border-gray-100">
             <div className="w-2.5 h-2.5 rounded-full bg-[#0D9488] flex-shrink-0" />
-            <span className="flex-1 text-left text-[15px] text-[#111827]">Marina Bay Sands</span>
+            <span className="flex-1 text-left text-[14px] text-[#111827]">Marina Bay Sands</span>
             <svg className="w-4 h-4 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
@@ -121,7 +128,7 @@ export default function Home() {
           {/* Dropoff location */}
           <button className="w-full flex items-center gap-3 py-3 border-b border-gray-100">
             <div className="w-2.5 h-2.5 rounded-full bg-[#E84360] flex-shrink-0" />
-            <span className="flex-1 text-left text-[15px] text-[#111827]">Jewel Changi Airport</span>
+            <span className="flex-1 text-left text-[14px] text-[#111827]">Jewel Changi Airport</span>
             <svg className="w-4 h-4 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
@@ -131,16 +138,18 @@ export default function Home() {
           <div className="flex items-center justify-between py-3">
             <div>
               <p className="text-[13px] text-[#6B7280]">Estimated Fare</p>
-              <p className="text-[22px] font-bold text-[#111827]">$24.50 <span className="text-[14px] font-normal text-[#6B7280]">SGD</span></p>
+              <p className="text-[18px] font-bold text-[#111827]">$24.50 <span className="text-[14px] font-normal text-[#6B7280]">SGD</span></p>
             </div>
             <div className="text-right">
               <p className="text-[13px] text-[#6B7280]">ETA</p>
-              <p className="text-[15px] font-semibold text-[#111827]">18 min</p>
+              <p className="text-[14px] font-semibold text-[#111827]">18 min</p>
             </div>
           </div>
 
           {/* Book button */}
-          <button className="w-full py-3.5 rounded-xl bg-[#E84360] text-white text-[17px] font-semibold active:bg-[#DE3557] transition-colors">
+          <button 
+            className="w-full rounded-md bg-[#E84360] px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
+          >
             Book Ryde
           </button>
         </div>

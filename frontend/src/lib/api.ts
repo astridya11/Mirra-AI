@@ -7,7 +7,7 @@
 
 import type {
   CaseListItem,
-  TripListItem,
+  Past30DaysTripListItem,
   CaseResult,
   HumanReviewRequest,
   PartyDecisionRequest,
@@ -21,19 +21,57 @@ const API_BASE_URL =
 
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
+export interface CreateDisputePayload {
+  trip_id: string;
+  dispute_type: string;
+  dispute_claim_description: string;
+  filed_by: string;
+  rider_id: string;
+  driver_id: string;
+  image_evidence?: string[];
+  receipt_evidence?: string[];
+}
+
+export interface DisputeResponse {
+  message: string;
+  case_id: string;
+  file_path: string;
+  data: {
+    case_metadata: Record<string, any>;
+    dispute_claim: Record<string, any>;
+    data_sources: Record<string, any>;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // REST endpoints
 // ---------------------------------------------------------------------------
 
-export async function listTrips(): Promise<TripListItem[]> {
-  if (USE_MOCK) {
-    console.log("MOCK MODE ON: list cases");
-    const { mockListTrips } = await import("@/src/mock/cases");
-    return mockListTrips();
-  }
-  const res = await fetch(`${API_BASE_URL}/api/trips`);
-  if (!res.ok) throw new Error(`Failed to list trips: ${res.status}`);
+export async function listPast30DaysTrips(party_id: string): Promise<Past30DaysTripListItem> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/30-days-trips/${party_id}`);
+  if (!res.ok) throw new Error(`Failed to list past 30 days trips: ${res.status}`);
   return res.json();
+}
+
+/**
+ * Creates a new dispute case on the backend.
+ * Generates {case_id}.json inside backend/disputes folder.
+ */
+export async function createDispute(payload: CreateDisputePayload): Promise<DisputeResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/create-dispute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.detail || `Failed to create dispute: ${response.statusText}`);
+  }
+
+  return response.json();
 }
 
 export async function listCases(): Promise<CaseListItem[]> {

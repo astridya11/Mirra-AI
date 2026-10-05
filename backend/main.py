@@ -2,7 +2,7 @@
 Mirra AI — Ryde Multi-Agent Dispute Resolution Backend
 
 FastAPI application exposing:
-  - Dispute listing & raw data loading (dynamically from mock_data/)
+  - Dispute creation, listing & raw data loading (from backend/disputes/)
   - Full pipeline execution (6-phase state machine)
   - Pipeline execution with event streaming
   - Human review & override endpoints
@@ -16,20 +16,30 @@ Schema reference: shared/schemas.json (RydeMultiAgentAutonomousDisputeResolution
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+import threading
 import uuid
 from datetime import datetime, timezone, timedelta
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.db.auth import user_repo
+from backend.app.api.routes import auth, cases, evidence, verification
+from backend.app.core.config import get_settings
+
+
 from backend.orchestrator.state_machine import (
-    ExecutionRoute,
     HumanReviewDecision,
     PartyDecisionType,
     apply_human_review,
@@ -67,63 +77,159 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_SGT = timezone(timedelta(hours=8))
-_BACKEND_DIR = Path(__file__).resolve().parent
-_MOCK_DATA_DIR = _BACKEND_DIR / "mock_data"
+# Register Routers
+settings = get_settings()
 
-# In-memory store for completed pipeline results (keyed by dispute_id)
-_completed_results: dict[str, dict[str, Any]] = {}
+app.include_router(auth.router)
+app.include_router(cases.router, prefix=settings.api_v1_prefix)
+app.include_router(evidence.router, prefix=settings.api_v1_prefix)
+app.include_router(verification.router, prefix=settings.api_v1_prefix)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # 打印堆栈日志方便调试
+    print(f"Global Exception Caught: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"},
+    )
+
+_SGT = timezone(timedelta(hours=8))
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Path setup (all relative to the backend directory)
+#
+#   backend/data/trips/{trip_id}.json   -> trip source data
+#   backend/data/users.json             -> user data
+#   backend/disputes/{case_id}.json     -> dispute cases (DISP-001, DISP-002, ...)
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+TRIPS_DIR = DATA_DIR / "trips"
+USERS_FILE = DATA_DIR / "users.json"
+DISPUTES_DIR = BASE_DIR / "disputes"
+
+for _d in (TRIPS_DIR, DISPUTES_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
+# Serialises every write to backend/disputes/*.json: case-id generation +
+# creation, and read-merge-write of pipeline results. Prevents duplicate
+# DISP-xxx ids and lost updates under concurrent requests.
+_case_file_lock = threading.Lock()
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _now_iso() -> str:
     return datetime.now(_SGT).isoformat()
 
 
+def _is_safe_id(value: str) -> bool:
+    """Reject ids that could escape the data directories (e.g. '../x')."""
+    return bool(value) and bool(_SAFE_ID_RE.match(value))
+
+
+def _read_json(path: Path) -> Any | None:
+    """Read a JSON file; return None if missing or unreadable."""
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read %s: %s", path, exc)
+        return None
+
+
+
+def _write_json_atomic(path: Path, data: Any) -> None:
+    """Write JSON via a temp file + rename so readers never see a half-written file."""
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, path)
+
+
 # ---------------------------------------------------------------------------
-# Case persistence (in-memory, consumed by state_machine.py)
+# Case persistence (consumed by state_machine.py)
+#
+# A dispute case lives in ONE file: backend/disputes/{case_id}.json.
+# It starts with case_metadata / dispute_claim / data_sources (written by
+# create-dispute); the pipeline and human review then merge their results
+# (round_1_statements ... judge_verdict, policy_kb_update) into that file.
 # ---------------------------------------------------------------------------
 
 
 def get_case(case_id: str) -> dict[str, Any] | None:
     """
-    Load a raw dispute case from the mock_data directory by case_id.
+    Load a raw dispute case from backend/disputes/{case_id}.json.
 
-    Returns the parsed JSON dict, or None if the file does not exist.
+    Returns the parsed JSON dict, or None if the case does not exist.
     """
-    file_path = _MOCK_DATA_DIR / f"{case_id}.json"
-    if not file_path.exists():
+    if not _is_safe_id(case_id):
         return None
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    data = _read_json(DISPUTES_DIR / f"{case_id}.json")
+    return data if isinstance(data, dict) else None
+
+
+def is_completed_case(case_data: dict[str, Any] | None) -> bool:
+    """A case is 'completed' once EXECUTION_ROUTER has written an execution_payload."""
+    if not case_data:
+        return False
+    return bool((case_data.get("judge_verdict") or {}).get("execution_payload"))
 
 
 def save_case(result: dict[str, Any]) -> None:
     """
-    Persist a completed pipeline result to the in-memory store.
+    Persist a pipeline result into the dispute case file.
 
-    The result dict follows the master schema (case_metadata, data_sources,
-    round_1_statements, …, judge_verdict, policy_kb_update).
+    The result (case_metadata, data_sources, round_1_statements, ...,
+    judge_verdict, policy_kb_update) is merged on top of the existing
+    backend/disputes/{case_id}.json, so any top-level section the result
+    does not carry (e.g. dispute_claim) is preserved.
+
+    Raises ValueError if the case id is invalid or the case file does not
+    exist, so results are never silently dropped or written to a stray file.
     """
-    case_id = result.get("case_metadata", {}).get("case_id") or result.get("case_id", "UNKNOWN")
-    _completed_results[case_id] = result
+    case_id = (result.get("case_metadata") or {}).get("case_id") or result.get("case_id")
+    if not case_id or not _is_safe_id(case_id):
+        raise ValueError(f"Cannot save result: invalid case_id {case_id!r}")
+
+    file_path = DISPUTES_DIR / f"{case_id}.json"
+    with _case_file_lock:
+        existing = _read_json(file_path)
+        if not isinstance(existing, dict):
+            raise ValueError(f"Cannot save result: case file for {case_id} not found")
+        _write_json_atomic(file_path, {**existing, **result})
 
 
 def get_completed_case(case_id: str) -> dict[str, Any] | None:
     """
-    Return the completed pipeline result for case_id from the in-memory
-    store, or None if the pipeline has not been run for this case.
+    Return the case (with pipeline results) for case_id from its case file,
+    or None if the case does not exist or the pipeline has not completed.
 
-    Used by apply_human_review so the human decision is applied to the
-    real pipeline result (judge_verdict, policy_consultation,
-    prosecutor_findings), not the raw mock_data file.
+    Used by apply_human_review / apply_party_decision so decisions are
+    applied to the real pipeline result.
     """
-    return _completed_results.get(case_id)
+    case_data = get_case(case_id)
+    return case_data if is_completed_case(case_data) else None
 
 
 # ---------------------------------------------------------------------------
 # Pydantic request models
 # ---------------------------------------------------------------------------
 
+class CreateDisputeRequest(BaseModel):
+    trip_id: str
+    dispute_type: str
+    dispute_claim_description: str
+    filed_by: str  # "RIDER" | "DRIVER", or the filing party_id (e.g. "R-1092" / "D-5541")
+    rider_id: str
+    driver_id: str
+    # Plain URL/path strings or schema objects (ImageEvidenceInput / ReceiptEvidenceInput)
+    image_evidence: List[str | dict[str, Any]] = []
+    receipt_evidence: List[str | dict[str, Any]] = []
 
 class HumanReviewRequest(BaseModel):
     reviewer_id: str = Field(..., description="Unique ID of the human reviewer")
@@ -180,58 +286,248 @@ async def health_check():
 
 
 # ---------------------------------------------------------------------------
-# Dispute listing & raw data loading
+# Dispute creation, listing & raw data loading
 # ---------------------------------------------------------------------------
 
-@app.get("/api/trips")
-async def list_trips():
-    """
-    List all available trips by scanning the mock_data directory.
-    """
-    trips: list[dict[str, Any]] = []
-    if not _MOCK_DATA_DIR.exists():
-        return trips
+def _find_user(party_id: str) -> Any | None:
+    """Look up a user via user_repo, falling back to backend/data/users.json."""
+    try:
+        user = user_repo.get_by_party_id(party_id)
+    except Exception as exc:  # repo misconfigured / file missing
+        logger.warning("user_repo lookup failed for %s: %s", party_id, exc)
+        user = None
+    if user:
+        return user
 
-    for file_path in sorted(_MOCK_DATA_DIR.glob("*.json")):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                case_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+    data = _read_json(USERS_FILE)
+    if isinstance(data, dict):
+        if isinstance(data.get(party_id), dict):
+            return data[party_id]
+        data = data.get("users", list(data.values()))
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("party_id") == party_id:
+                return item
+    return None
+
+
+def _get_trip_ids(user: Any) -> list[str]:
+    """Extract trips_past_30_days from a Pydantic model or a dict."""
+    if isinstance(user, dict):
+        trip_ids = user.get("trips_past_30_days")
+    else:
+        trip_ids = getattr(user, "trips_past_30_days", None)
+    return list(trip_ids or [])
+
+
+@app.get("/api/v1/30-days-trips/{party_id}")
+async def list_past_30_days_trips(party_id: str):
+    """
+    Retrieve the past 30 days of trips for a user by party_id.
+
+    Reads trips_past_30_days from the user record (backend/data/users.json),
+    then loads each backend/data/trips/{trip_id}.json and returns
+    trip_data, payment_fare_data and historical_profiles per trip.
+    """
+    user = _find_user(party_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    results: list[dict[str, Any]] = []
+
+    for trip_id in _get_trip_ids(user):
+        if not _is_safe_id(str(trip_id)):
+            logger.warning("Skipping invalid trip id %r for %s", trip_id, party_id)
             continue
 
-        meta = case_data.get("case_metadata", {})
-        data_sources = case_data.get("data_sources", {})
-        case_id = meta.get("case_id", file_path.stem)
+        trip_json = _read_json(TRIPS_DIR / f"{trip_id}.json")
+        if not isinstance(trip_json, dict):
+            continue  # missing / corrupted trip file: skip gracefully
 
-        trips.append(
+        results.append(
             {
-                "case_id": case_id,
-                "trip_id": meta.get("trip_id"),
-                "trip_data": data_sources.get("trip_data"),
-                "historical_profiles": data_sources.get("historical_profiles"),
-                "payment_fare_data": data_sources.get("payment_fare_data")
+                "trip_id": trip_id,
+                "trip_data": trip_json.get("trip_data"),
+                "payment_fare_data": trip_json.get("payment_fare_data"),
+                "historical_profiles": trip_json.get("historical_profiles"),
             }
         )
 
-    return trips
+    return {
+        "party_id": party_id,
+        "total_trips": len(results),
+        "trips": results,
+    }
+
+
+def _case_number(path: Path) -> int:
+    """Numeric part of DISP-001.json -> 1 (non-matching names return -1)."""
+    try:
+        return int(path.stem.split("-")[1])
+    except (IndexError, ValueError):
+        return -1
+
+
+def generate_next_case_id() -> str:
+    """Scan backend/disputes and generate sequential ids: DISP-001, DISP-002, ...
+
+    Call while holding _case_file_lock to avoid duplicate ids.
+    """
+    max_num = max(
+        (_case_number(f) for f in DISPUTES_DIR.glob("DISP-*.json")),
+        default=0,
+    )
+    return f"DISP-{max(max_num, 0) + 1:03d}"
+
+
+def _resolve_filed_by(filed_by: str, rider_id: str, driver_id: str) -> str:
+    """Map the filer to the schema enum (RIDER | DRIVER)."""
+    value = filed_by.strip()
+    if value.upper() in ("RIDER", "DRIVER"):
+        return value.upper()
+    if value == rider_id:
+        return "RIDER"
+    if value == driver_id:
+        return "DRIVER"
+    raise HTTPException(
+        status_code=422,
+        detail="filed_by must be RIDER, DRIVER, or match rider_id / driver_id",
+    )
+
+
+def _normalize_evidence(
+    items: list[str | dict[str, Any]],
+    *,
+    id_prefix: str,
+    id_key: str,
+    url_key: str,
+    uploaded_at: str | None = None,
+) -> list[dict[str, Any]]:
+    """Turn plain URL strings into schema objects; validate object entries."""
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, str):
+            entry: dict[str, Any] = {url_key: item}
+        else:
+            entry = dict(item)
+        if not entry.get(url_key):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Evidence item #{index} is missing '{url_key}'",
+            )
+        entry.setdefault(id_key, f"{id_prefix}-{index:03d}")
+        if uploaded_at:
+            entry.setdefault("uploaded_at", uploaded_at)
+        normalized.append(entry)
+    return normalized
+
+
+@app.post("/api/v1/create-dispute", status_code=201)
+async def create_dispute_case(payload: CreateDisputeRequest):
+    """
+    Create a dispute case file at backend/disputes/{case_id}.json.
+
+    The case embeds the trip source data from backend/data/trips/{trip_id}.json
+    under data_sources, and is immediately usable by every /api/disputes/*
+    endpoint (list, raw data, SSE pipeline stream, human review, ...).
+    """
+    # 1. Validate and load trip source data
+    if not _is_safe_id(payload.trip_id):
+        raise HTTPException(status_code=422, detail="Invalid trip_id")
+
+    trip_file_path = TRIPS_DIR / f"{payload.trip_id}.json"
+    if not trip_file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trip record {payload.trip_id} not found",
+        )
+
+    try:
+        with open(trip_file_path, "r", encoding="utf-8") as tf:
+            trip_json_data = json.load(tf)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read trip source file: {str(e)}",
+        )
+
+    filed_at = _now_iso()
+    filed_by = _resolve_filed_by(payload.filed_by, payload.rider_id, payload.driver_id)
+    image_evidence = _normalize_evidence(
+        payload.image_evidence,
+        id_prefix="IMG", id_key="image_id", url_key="image_url",
+    )
+    receipt_evidence = _normalize_evidence(
+        payload.receipt_evidence,
+        id_prefix="RCP", id_key="receipt_id", url_key="receipt_url",
+        uploaded_at=filed_at,
+    )
+
+    # 2. Generate id + write file atomically under a lock (no duplicate ids)
+    with _case_file_lock:
+        case_id = generate_next_case_id()
+
+        dispute_payload = {
+            "case_metadata": {
+                "case_id": case_id,
+                "dispute_type": payload.dispute_type,
+                "dispute_claim_description": payload.dispute_claim_description,
+                "trip_id": payload.trip_id,
+                "rider_id": payload.rider_id,
+                "driver_id": payload.driver_id,
+                "current_state": "INIT_CLAIM",
+                "current_round": 1,
+                # Placeholder required by the schema; EXECUTION_ROUTER sets the real value
+                "resolution_channel": "FULLY_AUTOMATED",
+                "created_at": filed_at,
+                "updated_at": filed_at,
+            },
+            "dispute_claim": {
+                "case_id": case_id,
+                "trip_id": payload.trip_id,
+                "dispute_type": payload.dispute_type,
+                "description": payload.dispute_claim_description,
+                "filed_by": filed_by,
+                "filed_at": filed_at,
+                "image_evidence": image_evidence,
+                "receipt_evidence": receipt_evidence,
+            },
+            "data_sources": trip_json_data,
+        }
+
+        file_path = DISPUTES_DIR / f"{case_id}.json"
+        try:
+            # "x" = fail rather than overwrite an existing case
+            with open(file_path, "x", encoding="utf-8") as f:
+                json.dump(dispute_payload, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save dispute file: {str(e)}",
+            )
+
+    return {
+        "message": "Dispute case created successfully",
+        "case_id": case_id,
+        "file_path": str(file_path),
+        "data": dispute_payload,
+    }
+
 
 @app.get("/api/disputes")
 async def list_dispute_cases():
     """
-    List all available dispute cases by scanning the mock_data directory.
+    List all dispute cases by scanning backend/disputes/.
 
-    For each case file, reads case_metadata to extract case_id, dispute_type,
-    and current_state. No hardcoded data — fully dynamic.
+    For each case file, reads case_metadata to extract case_id, dispute_type
+    and current_state. Fully dynamic, no hardcoded data.
     """
     cases: list[dict[str, Any]] = []
-    if not _MOCK_DATA_DIR.exists():
-        return cases
 
-    for file_path in sorted(_MOCK_DATA_DIR.glob("*.json")):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                case_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+    # Numeric sort so DISP-1000 comes after DISP-999
+    for file_path in sorted(DISPUTES_DIR.glob("*.json"), key=lambda p: (_case_number(p), p.stem)):
+        case_data = _read_json(file_path)
+        if not isinstance(case_data, dict):
             continue
 
         meta = case_data.get("case_metadata", {})
@@ -245,7 +541,8 @@ async def list_dispute_cases():
                 "trip_id": meta.get("trip_id"),
                 "rider_id": meta.get("rider_id"),
                 "driver_id": meta.get("driver_id"),
-                "has_completed_result": case_id in _completed_results,
+                "created_at": meta.get("created_at"),
+                "has_completed_result": is_completed_case(case_data),
             }
         )
 
@@ -254,7 +551,7 @@ async def list_dispute_cases():
 
 @app.get("/api/disputes/{dispute_id}")
 async def get_dispute_data(dispute_id: str):
-    """Load the raw dispute dataset (simulates pulling from Ryde's database)."""
+    """Load the raw dispute case from backend/disputes/{dispute_id}.json."""
     case_data = get_case(dispute_id)
     if case_data is None:
         raise HTTPException(
@@ -280,18 +577,26 @@ async def stream_pipeline_realtime(dispute_id: str):
         )
 
     async def event_generator():
-        # 实时产生事件，出一条就往前端推一条
-        async for event in run_dispute_pipeline_realtime(dispute_id):
-            # event now contains:
-            # PHASE_STARTED
-            # PHASE_COMPLETED
-            # AGENT_CONVERSATION
+        try:
+            # 实时产生事件，出一条就往前端推一条
+            async for event in run_dispute_pipeline_realtime(dispute_id):
+                # event now contains:
+                # PHASE_STARTED
+                # PHASE_COMPLETED
+                # AGENT_CONVERSATION
+                yield {
+                    "event": "pipeline_event",  # 事件类型
+                    "data": json.dumps(event),  # 转为 JSON 字符串传输
+                }
+        except Exception as exc:
+            logger.exception("Pipeline failed for %s", dispute_id)
             yield {
-                "event": "pipeline_event",  # 事件类型
-                "data": json.dumps(event),  # 转为 JSON 字符串传输
+                "event": "pipeline_error",
+                "data": json.dumps({"case_id": dispute_id, "detail": str(exc)}),
             }
+            return
 
-        # 流结束时，推推送一条完成通知及最终 verdict 结果
+        # 流结束时，推送一条完成通知及最终 verdict 结果
         final_result = get_completed_case(dispute_id)
         yield {
             "event": "pipeline_complete",
@@ -308,12 +613,13 @@ async def stream_pipeline_realtime(dispute_id: str):
 @app.get("/api/disputes/{dispute_id}/result")
 async def get_completed_result(dispute_id: str):
     """Retrieve the completed pipeline result for a previously-run case."""
-    if dispute_id not in _completed_results:
+    result = get_completed_case(dispute_id)
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"No completed result for case {dispute_id}. Run the pipeline first.",
         )
-    return _completed_results[dispute_id]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -352,14 +658,14 @@ async def submit_human_review(dispute_id: str, review: HumanReviewRequest):
             review_notes=review.override_reason or review.review_notes,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        status = 409 if "already been reviewed" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc))
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"Human review application failed: {exc}",
         )
 
-    _completed_results[dispute_id] = result
     return result
 
 
@@ -410,7 +716,6 @@ async def submit_party_decision(dispute_id: str, request: PartyDecisionRequest):
             detail=f"Party decision application failed: {exc}",
         )
 
-    _completed_results[dispute_id] = result
     return result
 
 
@@ -428,7 +733,7 @@ async def get_policy_kb_update(dispute_id: str):
     Returns has_update=False for FULLY_AUTOMATED cases and for human
     reviews that confirmed the Judge's ruling (CONFIRMED_AUTO).
     """
-    result = _completed_results.get(dispute_id)
+    result = get_completed_case(dispute_id)
     if result is None:
         raise HTTPException(
             status_code=404,

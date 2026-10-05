@@ -1,0 +1,195 @@
+{
+    "trip_data": {
+        "trip_id": "TRIP-2026-09945",
+        "rider_id": "R-7823",
+        "driver_id": "D-2398",
+        "pickup_location": {
+        "name": "Tiong Bahru Plaza",
+        "lat": 1.2847,
+        "lng": 103.8382
+        },
+        "dropoff_location": {
+        "name": "VivoCity",
+        "lat": 1.2648,
+        "lng": 103.8223
+        },
+        "scheduled_time": "2026-09-13T08:45:00+08:00",
+        "driver_arrival_time": "2026-09-13T08:43:00+08:00",
+        "driver_wait_start": "2026-09-13T08:43:00+08:00",
+        "cancellation_time": "2026-09-13T08:51:00+08:00",
+        "cancellation_fee": 5.0,
+        "cancellation_reason": "rider_no_show"
+    },
+    "app_events": [
+        {
+        "timestamp": "2026-09-13T08:30:00+08:00",
+        "event_type": "booking_confirmed",
+        "details": "Rider R-7823 booked trip TRIP-2026-09945 from Tiong Bahru Plaza to VivoCity. Scheduled pickup 08:45."
+        },
+        {
+        "timestamp": "2026-09-13T08:30:15+08:00",
+        "event_type": "driver_assigned",
+        "details": "Driver D-2398 (Lim Wei Ming, Honda HR-V SGP 4521 M) assigned. ETA 13 min."
+        },
+        {
+        "timestamp": "2026-09-13T08:30:20+08:00",
+        "event_type": "driver_en_route",
+        "details": "Driver started navigating to pickup location. Live tracking enabled."
+        },
+        {
+        "timestamp": "2026-09-13T08:43:00+08:00",
+        "event_type": "driver_arrived",
+        "details": "Driver GPS within 10m of pickup point. Speed 0 km/h. Auto-arrival confirmed."
+        },
+        {
+        "timestamp": "2026-09-13T08:43:05+08:00",
+        "event_type": "rider_notified",
+        "details": "Push notification + in-app alert sent to rider: 'Your driver has arrived.'"
+        },
+        {
+        "timestamp": "2026-09-13T08:43:10+08:00",
+        "event_type": "wait_timer_started",
+        "details": "Free wait timer started. 5 min free wait period ends at 08:48."
+        },
+        {
+        "timestamp": "2026-09-13T08:47:05+08:00",
+        "event_type": "driver_called_rider",
+        "details": "Driver initiated in-app call to rider. Call rang 22s, no answer."
+        },
+        {
+        "timestamp": "2026-09-13T08:48:10+08:00",
+        "event_type": "wait_timer_expired",
+        "details": "Free 5-min wait period expired. Rider had not boarded. Cancellation fee now applicable per policy."
+        },
+        {
+        "timestamp": "2026-09-13T08:51:00+08:00",
+        "event_type": "cancellation_fee_applied",
+        "details": "No-show threshold (8 min) reached. $5.00 cancellation fee charged to rider payment method (e-wallet)."
+        },
+        {
+        "timestamp": "2026-09-13T08:51:05+08:00",
+        "event_type": "driver_released",
+        "details": "Driver D-2398 released from trip. Trip status: cancelled (rider_no_show)."
+        }
+    ],
+    "gps_telemetry": {
+        "actual_route": [
+        {"latitude": 1.2920, "longitude": 103.8450, "timestamp": "2026-09-13T08:31:00+08:00", "speed_kmh": 42, "status": "en_route"},
+        {"latitude": 1.2890, "longitude": 103.8430, "timestamp": "2026-09-13T08:34:00+08:00", "speed_kmh": 38, "status": "en_route"},
+        {"latitude": 1.2865, "longitude": 103.8400, "timestamp": "2026-09-13T08:38:00+08:00", "speed_kmh": 25, "status": "en_route"},
+        {"latitude": 1.2852, "longitude": 103.8388, "timestamp": "2026-09-13T08:41:00+08:00", "speed_kmh": 12, "status": "en_route"},
+        {"latitude": 1.2847, "longitude": 103.8382, "timestamp": "2026-09-13T08:43:00+08:00", "speed_kmh": 0, "status": "arrived"},
+        {"latitude": 1.2847, "longitude": 103.8382, "timestamp": "2026-09-13T08:45:00+08:00", "speed_kmh": 0, "status": "waiting"},
+        {"latitude": 1.2847, "longitude": 103.8382, "timestamp": "2026-09-13T08:48:00+08:00", "speed_kmh": 0, "status": "waiting"},
+        {"latitude": 1.2847, "longitude": 103.8382, "timestamp": "2026-09-13T08:51:00+08:00", "speed_kmh": 0, "status": "cancelled"}
+        ],
+        "optimal_route": [
+        {"latitude": 1.2920, "longitude": 103.8450, "timestamp": "2026-09-13T08:31:00+08:00", "speed_kmh": 42},
+        {"latitude": 1.2847, "longitude": 103.8382, "timestamp": "2026-09-13T08:43:00+08:00", "speed_kmh": 0}
+        ],
+        "deviation_distance_km": 0,
+        "unexpected_stops": [],
+        "trip_duration_seconds": 1200,
+        "optimal_duration_seconds": 1200
+    },
+    "chat_communication": {
+        "transcript": [
+        {
+            "message_id": "CHAT-001",
+            "sender": "driver",
+            "content": "I've arrived at the pickup point, I'm at the lobby area.",
+            "timestamp": "2026-09-13T08:43:00+08:00",
+            "sentiment_score": 0.1,
+            "type": "message",
+            "safety_threat_keywords": []
+        },
+        {
+            "message_id": "CHAT-002",
+            "sender": "driver",
+            "content": "I'm waiting at the lobby area, white Honda HR-V plate SGP 4521 M.",
+            "timestamp": "2026-09-13T08:45:20+08:00",
+            "sentiment_score": 0.0,
+            "type": "message",
+            "safety_threat_keywords": []
+        },
+        {
+            "message_id": "CHAT-003",
+            "sender": "driver",
+            "content": "Outgoing call to rider — not answered (rang 22s, no response).",
+            "timestamp": "2026-09-13T08:47:05+08:00",
+            "sentiment_score": 0.0,
+            "type": "call",
+            "safety_threat_keywords": []
+        },
+        {
+            "message_id": "CHAT-004",
+            "sender": "driver",
+            "content": "Hi, are you coming down? I've been waiting a while.",
+            "timestamp": "2026-09-13T08:49:30+08:00",
+            "sentiment_score": -0.1,
+            "type": "message",
+            "safety_threat_keywords": []
+        },
+        {
+            "message_id": "CHAT-005",
+            "sender": "driver",
+            "content": "Please let me know, otherwise I'll have to cancel the trip.",
+            "timestamp": "2026-09-13T08:50:45+08:00",
+            "sentiment_score": -0.2,
+            "type": "message",
+            "safety_threat_keywords": []
+        },
+        {
+            "message_id": "CHAT-006",
+            "sender": "system",
+            "content": "Trip cancelled by driver. Reason: rider_no_show. Cancellation fee of $5.00 applied.",
+            "timestamp": "2026-09-13T08:51:00+08:00",
+            "sentiment_score": 0.0,
+            "type": "system",
+            "safety_threat_keywords": []
+        }
+        ],
+        "overall_sentiment_score": -0.04,
+        "safety_threat_keywords_detected": false
+    },
+    "payment_fare_data": {
+        "original_fare": {
+        "base_fare": 0.0,
+        "distance_fare": 0.0,
+        "time_fare": 0.0,
+        "surge_multiplier": 1.0,
+        "total_fare": 5.0,
+        "currency": "SGD"
+        },
+        "disputed_amount": 5.0,
+        "disputed_amount_currency": "SGD",
+        "payment_method": "e-wallet"
+    },
+    "historical_profiles": [
+        {
+            "party": "RIDER",
+            "party_id": "R-7823",
+            "name": "Michael Wong",
+            "account_age_days": 210,
+            "total_trips": 34,
+            "avg_rating": 3.9,
+            "risk_score": 0.65,
+            "dispute_history_30d": 2,
+            "dispute_history_90d": 4,
+            "bad_faith_flag": true,
+            "bad_faith_reason": "flagged_for_frequent_late_cancellations"
+        },
+        {
+            "party": "DRIVER",
+            "party_id": "D-2398",
+            "name": "Lim Wei Ming",
+            "account_age_days": 900,
+            "total_trips": 3201,
+            "avg_rating": 4.9,
+            "risk_score": 0.02,
+            "dispute_history_30d": 0,
+            "dispute_history_90d": 1,
+            "bad_faith_flag": false
+        }
+    ]
+}

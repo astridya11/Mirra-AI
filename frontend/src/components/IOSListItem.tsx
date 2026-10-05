@@ -41,11 +41,11 @@ export function IOSListItem({
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <p className={`text-[17px] truncate ${isDestructive ? "text-red-500" : "text-[#111827]"}`}>
+        <p className={`text-[14px] ${isDestructive ? "text-red-500" : "text-[#111827]"}`}>
           {title}
         </p>
         {subtitle && (
-          <p className="text-[13px] text-[#6B7280] truncate mt-0.5">{subtitle}</p>
+          <p className="text-[12px] text-[#6B7280] truncate mt-0.5">{subtitle}</p>
         )}
       </div>
       {value && (

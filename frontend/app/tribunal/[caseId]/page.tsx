@@ -106,6 +106,26 @@ function FunctionalChatBubble({ msg }: { msg: ChatMessage }) {
     return msg.text.slice(0, maxLength) + "…";
   }, [msg.text, isLongText, isExpanded]);
 
+  // Determine bubble style based on speaker role
+  const s = msg.speaker.toUpperCase();
+  let bubbleClass: string;
+  if (s.includes("DRIVER")) {
+    // Driver Advocate — black bubble, right side
+    bubbleClass = "bg-slate-900 text-white rounded-tr-none";
+  } else if (s.includes("RIDER")) {
+    // Rider Advocate — gray bubble, left side
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+  } else if (s.includes("PROSECUTOR")) {
+    // Prosecutor — soft amber
+    bubbleClass = "bg-[#E84360]/10 text-slate-800 rounded-tl-none";
+  } else if (s.includes("POLICY")) {
+    // Policy Consultant — soft emerald
+    bubbleClass = "bg-emerald-50 text-slate-800 rounded-tl-none";
+  } else {
+    // Default fallback
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+  }
+
   return (
     <div className={`flex flex-col my-2.5 ${isRight ? "items-end" : "items-start"}`}>
       {/* Speaker Header */}
@@ -113,21 +133,15 @@ function FunctionalChatBubble({ msg }: { msg: ChatMessage }) {
         <span className="font-semibold text-slate-700">{msg.speakerTitle}</span>
         {msg.targetLabel && <span className="text-gray-400">→ {msg.targetLabel}</span>}
         {msg.badge && (
-          <span className="px-1.5 py-0.2 text-[10px] bg-slate-100 text-slate-600 rounded font-medium border border-slate-200">
+          <span className="px-1.5 py-0.2 text-[10px] bg-slate-100 text-slate-600 rounded font-medium">
             {msg.badge}
           </span>
         )}
       </div>
 
-      {/* Bubble Content */}
+      {/* Bubble Content — no shadow, no border */}
       <div
-        className={`max-w-[85%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed shadow-sm transition-all ${
-          isRight
-            ? "bg-slate-900 text-white rounded-tr-none"
-            : msg.speaker.includes("PROSECUTOR") || msg.speaker.includes("POLICY")
-            ? "bg-amber-50/80 border border-amber-200/60 text-slate-800 rounded-tl-none"
-            : "bg-gray-100 text-slate-800 rounded-tl-none"
-        }`}
+        className={`max-w-[85%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed transition-all ${bubbleClass}`}
       >
         <p className="whitespace-pre-wrap break-words">{displayedText}</p>
 
@@ -135,8 +149,8 @@ function FunctionalChatBubble({ msg }: { msg: ChatMessage }) {
         {isLongText && (
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className={`mt-2 text-[12px] font-semibold underline focus:outline-none transition-colors ${
-              isRight ? "text-slate-300 hover:text-white" : "text-amber-800 hover:text-amber-950"
+            className={`mt-2 text-[10px] font-normal underline focus:outline-none transition-colors ${
+              isRight ? "text-slate-300 hover:text-white" : "text-slate-500 hover:text-slate-800"
             }`}
           >
             {isExpanded ? "收起 (Show Less)" : "展开全部 (Show More)"}
@@ -166,24 +180,24 @@ function firstText(obj: Rec | null, keys: string[]): string {
 
 function speakerSide(speaker: string): BubbleSide {
   const s = speaker.toUpperCase();
-  if (s.includes("DRIVER")) return "right";
+  if (s.includes("DRIVER") || s.includes("POLICY")) return "right";
   return "left";
 }
 
 function roleTitle(speaker: string): string {
   const s = speaker.toUpperCase();
-  if (s.includes("PROSECUTOR") || speaker.includes("检察官")) return "检察官 Prosecutor";
-  if (s.includes("RIDER") || speaker.includes("乘客")) return "乘客代理 Rider Advocate";
-  if (s.includes("DRIVER") || speaker.includes("司机")) return "司机代理 Driver Advocate";
-  if (s.includes("POLICY") || speaker.includes("政策")) return "政策顾问 Policy Consultant";
+  if (s.includes("PROSECUTOR") || speaker.includes("检察官")) return "Prosecutor";
+  if (s.includes("RIDER") || speaker.includes("乘客")) return "Rider Advocate";
+  if (s.includes("DRIVER") || speaker.includes("司机")) return "Driver Advocate";
+  if (s.includes("POLICY") || speaker.includes("政策")) return "Policy Consultant";
   return speaker;
 }
 
 function targetName(target: string): string {
   const t = target.toUpperCase();
-  if (t.includes("RIDER")) return "乘客代理";
-  if (t.includes("DRIVER")) return "司机代理";
-  if (t.includes("PROSECUTOR")) return "检察官";
+  if (t.includes("RIDER")) return "Rider Advocate";
+  if (t.includes("DRIVER")) return "Driver Advocate";
+  if (t.includes("PROSECUTOR")) return "Prosecutor";
   return target;
 }
 
@@ -314,7 +328,7 @@ export default function ProcessPage() {
             if (m) parsedMsgs.push(m);
           }
           if (result.round_1_statements?.driver_statement) {
-            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "一轮答辩");
+            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "一轮申诉");
             if (m) parsedMsgs.push(m);
           }
 
@@ -324,7 +338,7 @@ export default function ProcessPage() {
               id: "init-audit",
               side: "left",
               speaker: "PROSECUTOR",
-              speakerTitle: "检察官 Prosecutor",
+              speakerTitle: "Prosecutor",
               text: result.prosecutor_findings.prosecutor_summary,
               badge: "初始审计与欺诈筛查",
             });
@@ -339,7 +353,7 @@ export default function ProcessPage() {
                 id: `q-${i}`,
                 side: "left",
                 speaker: "PROSECUTOR",
-                speakerTitle: "检察官 Prosecutor",
+                speakerTitle: "Prosecutor",
                 text: q.question_text,
                 badge: "质询问题",
                 targetLabel: targetName(q.directed_to || q.target || ""),
@@ -354,7 +368,7 @@ export default function ProcessPage() {
                   speakerTitle: roleTitle(respParty),
                   text: r.response_text,
                   badge: "答辩回应",
-                  targetLabel: "检察官",
+                  targetLabel: "Prosecutor",
                 });
               }
             });
@@ -368,9 +382,9 @@ export default function ProcessPage() {
             if (ruling || rationale) {
               parsedMsgs.push({
                 id: "policy-sug",
-                side: "left",
+                side: "right",
                 speaker: "POLICY_CONSULTANT",
-                speakerTitle: "政策顾问 Policy Consultant",
+                speakerTitle: "Policy Consultant",
                 text: `建议裁决: ${ruling}\n建议依据: ${rationale}`,
                 badge: "政策建议",
               });
@@ -458,7 +472,7 @@ export default function ProcessPage() {
                       id: msgId,
                       side: "left",
                       speaker: "PROSECUTOR",
-                      speakerTitle: "检察官 Prosecutor",
+                      speakerTitle: "Prosecutor",
                       text: pf.prosecutor_summary as string,
                       badge,
                       subPhase,
@@ -480,9 +494,9 @@ export default function ProcessPage() {
                   ...prev,
                   {
                     id: Math.random().toString(36).substring(2, 9),
-                    side: "left",
+                    side: "right",
                     speaker: "POLICY_CONSULTANT",
-                    speakerTitle: "政策顾问 Policy Consultant",
+                    speakerTitle: "Policy Consultant",
                     text: `建议裁决: ${ruling}\n建议依据: ${rationale}`,
                     badge: "政策建议依据",
                   },
@@ -519,7 +533,9 @@ export default function ProcessPage() {
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 max-w-[600px] w-full mx-auto relative"
+        className={`flex-1 overflow-y-auto px-4 py-4 max-w-[600px] w-full mx-auto relative ${
+          isFinished ? "pb-28" : ""
+        }`}
       >
         {isLoading && messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-slate-400 text-sm">

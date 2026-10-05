@@ -3,7 +3,30 @@
  * These mirror the exact field names from the backend pipeline.
  */
 
-export type DisputeType = "ROUTE_DEVIATION" | "CLEANING_FEE" | "SAFETY_ALERT" | "NO_SHOW_CHARGE";
+export type DisputeType = 
+  | "LOST_ITEM"
+  | "REFUND_REQUEST"
+  | "DRIVER_RATING"
+  | "PAYMENT_FAILED"
+  | "CANCELLED_BOOKING"
+  | "NO_SHOW_CHARGE"
+  | "CLEANING_FEE"
+  | "TOLL_REIMBURSEMENT"
+  | "PASSENGER_CONDUCT"
+  | "UNSAFE_DRIVING"
+  | "SAFETY_ALERT"
+  | "HARASSMENT"
+  | "VEHICLE_ACCIDENT"
+  | "ROUTE_DEVIATION"
+  | "SURGE_PRICING"
+  | "FARE_DISPUTE"
+  | "PAYOUT_DELAY"
+  | "BONUS_INCENTIVE"
+  | "SUBSCRIPTION_BILLING"
+  | "CASHBACK_PROMO"
+  | "ACCOUNT_PRIVACY"
+  | "VEHICLE_DOCUMENTATION"
+  | "DISPUTE_ESCALATION";
 
 export type PipelineState =
   | "INIT_CLAIM"
@@ -42,6 +65,7 @@ export type HumanReviewDecision = "CONFIRMED_AUTO" | "MODIFIED" | "OVERRIDDEN" |
 export interface CaseMetadata {
   case_id: string;
   dispute_type: DisputeType;
+  dispute_claim_description: string;
   current_state: PipelineState;
   current_round: 1 | 2;
   resolution_channel: ResolutionChannel;
@@ -76,6 +100,10 @@ export interface TripData {
   cancellation_time?: string;
   cancellation_fee?: number;
   cancellation_reason?: string;
+  /**
+   * Time the trip was completed (drop-off). Used by POL-4 for the photo time window.
+   */
+  trip_end_time?: string;
 }
 
 export interface AppEvent {
@@ -128,6 +156,155 @@ export interface HistoricalProfile {
   dispute_history_90d: number;
   bad_faith_flag: boolean;
   bad_faith_reason?: string;
+}
+
+/**
+ * Contains details of the initial dispute claim submitted by a party, including any attached image or receipt evidence.
+ */
+export interface DisputeClaim {
+  /**
+   * Unique identifier for the dispute case.
+   */
+  case_id: string;
+  /**
+   * Reference identifier for the trip associated with this dispute claim.
+   */
+  trip_id: string;
+  /**
+   * Category of the dispute claim.
+   */
+  dispute_type: DisputeType;
+  /**
+   * Description of the dispute claim submitted by the party.
+   */
+  description: string;
+  /**
+   * Party who filed the dispute claim.
+   */
+  filed_by: "RIDER" | "DRIVER";
+  /**
+   * ISO 8601 timestamp of when the dispute claim was filed.
+   */
+  filed_at: string;
+  /**
+   * Optional structured image evidence submitted for this case. Omitted or empty when no images are available.
+   *
+   * @minItems 0
+   */
+  image_evidence?: ImageEvidenceInput[];
+  /**
+   * Optional cleaning receipts submitted for this case. Omitted or empty when no receipt is available.
+   *
+   * @minItems 0
+   */
+  receipt_evidence?: ReceiptEvidenceInput[];
+}
+/**
+ * A single image submitted as evidence.  The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.
+ */
+export interface ImageEvidenceInput {
+  /**
+   * Unique identifier for the submitted image (e.g., 'IMG-001').
+   */
+  image_id: string;
+  /**
+   * URL or storage path to the image.
+   */
+  image_url: string;
+  /**
+   * EXIF-embedded timestamp of when the photo was taken, normalized to ISO-8601 by the provider adapter.
+   */
+  exif_timestamp?: string;
+  exif_gps_location?: ImageExifGpsLocation;
+  provider_result?: ProviderImageResult;
+  /**
+   * Perceptual or cryptographic hash of the image for recycled-image detection.
+   */
+  image_hash?: string;
+  /**
+   * Optional corpus mapping image_hash to a prior case_id for recycled-image comparison.
+   */
+  known_matches?: {
+    [k: string]: string;
+  };
+}
+/**
+ * GPS coordinates extracted from image EXIF metadata.  Unlike GPSCoordinate, this does not require a timestamp.
+ */
+export interface ImageExifGpsLocation {
+  /**
+   * Latitude in decimal degrees.
+   */
+  latitude: number;
+  /**
+   * Longitude in decimal degrees.
+   */
+  longitude: number;
+}
+/**
+ * Visual-analysis output from an actual model / vision provider.  These fields are NEVER inferred from chat text or trip data.
+ */
+export interface ProviderImageResult {
+  /**
+   * Whether the image is detected as AI-generated (synthetic/fabricated).
+   */
+  is_ai_generated: boolean;
+  /**
+   * Confidence score (0.0-1.0) for the AI-generated detection result.
+   */
+  ai_generated_confidence: number;
+  /**
+   * Classification of the stain or damage type detected in the image.
+   */
+  stain_damage_classification:
+    "LIQUID_SPILL" | "VOMIT" | "FOOD_RESIDUE" | "PHYSICAL_DAMAGE" | "DIRT_MUD" | "NO_DAMAGE_DETECTED" | "OTHER";
+  /**
+   * Estimated severity of the detected damage.
+   */
+  damage_severity?: "MINOR" | "MODERATE" | "SEVERE";
+}
+/**
+ * A single receipt submitted as evidence.  The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.
+ */
+export interface ReceiptEvidenceInput {
+  /**
+   * Unique identifier for the submitted receipt (e.g., 'RCP-001').
+   */
+  receipt_id: string;
+  /**
+   * URL or storage path to the receipt image.
+   */
+  receipt_url: string;
+  /**
+   * ISO 8601 timestamp of when the receipt was uploaded.
+   */
+  uploaded_at?: string;
+  ocr_result?: ReceiptOcrResult;
+}
+/**
+ * Structured OCR result.  Omitted when the receipt could not be read.
+ */
+export interface ReceiptOcrResult {
+  /**
+   * Monetary amount read from the receipt by OCR.
+   */
+  amount: number;
+  /**
+   * ISO 4217 currency code read from the receipt.
+   */
+  currency: string;
+  /**
+   * Merchant or vendor name printed on the receipt, if legible.
+   */
+  merchant_name?: string;
+  /**
+   * Date printed on the receipt, normalized to ISO-8601 by the OCR adapter.
+   */
+  receipt_date?: string;
+  /**
+   * Confidence score (0.0-1.0) for the overall OCR read result.
+   */
+  ocr_confidence?: number;
 }
 
 export interface DataSources {
@@ -344,7 +521,9 @@ export interface JudgeVerdict {
 
 export interface CaseResult {
   case_metadata: CaseMetadata;
+  dispute_claim?: DisputeClaim;
   data_sources?: DataSources;
+  user_account?: UserAccount;
   round_1_statements?: {
     rider_statement?: AgentStatement;
     driver_statement?: AgentStatement;
@@ -393,15 +572,18 @@ export interface PipelineCompleteEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Trips Listing (from GET /api/trips)
+// Trips Listing (from GET /api/v1/30-days-trips/${party_id})
 // ---------------------------------------------------------------------------
 
-export interface TripListItem {
-  case_id: string;
-  trip_id: string;
-  trip_data: TripData;
-  historical_profiles: HistoricalProfile[];
-  payment_fare_data: PaymentFareData;
+export interface Past30DaysTripListItem {
+  party_id: string;
+  total_trips: number;
+  trips: {
+    trip_id: string;
+    trip_data: TripData;
+    payment_fare_data: PaymentFareData;
+    historical_profiles: HistoricalProfile[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +606,9 @@ export interface CaseListItem {
 
 export interface RawCaseData {
   case_metadata: CaseMetadata;
+  dispute_claim: DisputeClaim;
   data_sources: DataSources;
+  user_account?: UserAccount;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,4 +639,35 @@ export interface PartyDecision {
   decision: PartyDecisionType;
   decided_at: string;
   comment?: string;
+}
+
+export type UserRole = "RIDER" | "DRIVER" | "SUPPORT";
+
+/**
+ * User account schema stored in users.json for backend authentication and historical profile mapping.
+ */
+export interface UserAccount {
+  party: UserRole;
+  /**
+   * Primary key / unique ID (e.g., R-1092, D-5541, S-0001).
+   */
+  party_id: string;
+  name: string;
+  email: string;
+  /**
+   * Hashed password string (or plaintext in development).
+   */
+  password: string;
+  account_age_days: number;
+  total_trips: number;
+  /**
+   * @minItems 0
+   */
+  trips_past_30_days: string[];
+  avg_rating: number;
+  risk_score: number;
+  dispute_history_30d: number;
+  dispute_history_90d: number;
+  bad_faith_flag: boolean;
+  bad_faith_reason?: string;
 }

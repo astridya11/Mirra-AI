@@ -6,6 +6,7 @@
   "type": "object",
   "required": [
     "case_metadata",
+    "dispute_claim",
     "data_sources",
     "round_1_statements",
     "round_2_cross_exam",
@@ -17,6 +18,9 @@
   "properties": {
     "case_metadata": {
       "$ref": "#/$defs/CaseMetadata"
+    },
+    "dispute_claim": {
+      "$ref": "#/$defs/DisputeClaim"
     },
     "data_sources": {
       "$ref": "#/$defs/DataSources"
@@ -68,6 +72,9 @@
     },
     "agent_conversation": {
       "$ref": "#/$defs/AgentConversation"
+    },
+    "user_account": {
+      "$ref": "#/$defs/UserAccount"
     }
   },
   "additionalProperties": false,
@@ -79,6 +86,7 @@
       "required": [
         "case_id",
         "dispute_type",
+        "dispute_claim_description",
         "current_state",
         "current_round",
         "resolution_channel",
@@ -94,11 +102,34 @@
           "type": "string",
           "description": "Category of the dispute, determining the evidence-collection and policy-evaluation path.",
           "enum": [
-            "ROUTE_DEVIATION",
+            "LOST_ITEM",
+            "REFUND_REQUEST",
+            "DRIVER_RATING",
+            "PAYMENT_FAILED",
+            "CANCELLED_BOOKING",
+            "NO_SHOW_CHARGE",
             "CLEANING_FEE",
+            "TOLL_REIMBURSEMENT",
+            "PASSENGER_CONDUCT",
+            "UNSAFE_DRIVING",
             "SAFETY_ALERT",
-            "NO_SHOW_CHARGE"
+            "HARASSMENT",
+            "VEHICLE_ACCIDENT",
+            "ROUTE_DEVIATION",
+            "SURGE_PRICING",
+            "FARE_DISPUTE",
+            "PAYOUT_DELAY",
+            "BONUS_INCENTIVE",
+            "SUBSCRIPTION_BILLING",
+            "CASHBACK_PROMO",
+            "ACCOUNT_PRIVACY",
+            "VEHICLE_DOCUMENTATION",
+            "DISPUTE_ESCALATION"
           ]
+        },
+        "dispute_claim_description": {
+          "type": "string",
+          "description": "Description of the dispute claim submitted by the party."
         },
         "current_state": {
           "type": "string",
@@ -147,6 +178,75 @@
         "updated_at": {
           "type": "string",
           "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DisputeClaim": {
+      "title": "DisputeClaim",
+      "description": "Contains details of the initial dispute claim submitted by a party, including any attached image or receipt evidence.",
+      "type": "object",
+      "required": [
+        "case_id",
+        "trip_id",
+        "dispute_type",
+        "description",
+        "filed_by",
+        "filed_at"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "description": "Unique identifier for the dispute case."
+        },
+        "trip_id": {
+          "type": "string",
+          "description": "Reference identifier for the trip associated with this dispute claim."
+        },
+        "dispute_type": {
+          "type": "string",
+          "description": "Category of the dispute claim.",
+          "enum": [
+            "ROUTE_DEVIATION",
+            "CLEANING_FEE",
+            "SAFETY_ALERT",
+            "NO_SHOW_CHARGE"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the dispute claim submitted by the party."
+        },
+        "filed_by": {
+          "type": "string",
+          "description": "Party who filed the dispute claim.",
+          "enum": [
+            "RIDER",
+            "DRIVER"
+          ]
+        },
+        "filed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when the dispute claim was filed."
+        },
+        "image_evidence": {
+          "type": "array",
+          "description": "Optional structured image evidence submitted for this case. Omitted or empty when no images are available.",
+          "items": {
+            "$ref": "#/$defs/ImageEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
+        },
+        "receipt_evidence": {
+          "type": "array",
+          "description": "Optional cleaning receipts submitted for this case. Omitted or empty when no receipt is available.",
+          "items": {
+            "$ref": "#/$defs/ReceiptEvidenceInput"
+          },
+          "minItems": 0,
+          "default": []
         }
       },
       "additionalProperties": false
@@ -930,7 +1030,7 @@
     },
     "ImageExifGpsLocation": {
       "title": "ImageExifGpsLocation",
-      "description": "GPS coordinates extracted from image EXIF metadata.  Unlike GPSCoordinate, this does not require a timestamp.",
+      "description": "GPS coordinates extracted from image EXIF metadata. Unlike GPSCoordinate, this does not require a timestamp.",
       "type": "object",
       "required": ["latitude", "longitude"],
       "properties": {
@@ -951,7 +1051,7 @@
     },
     "ProviderImageResult": {
       "title": "ProviderImageResult",
-      "description": "Visual-analysis output from an actual model / vision provider.  These fields are NEVER inferred from chat text or trip data.",
+      "description": "Visual-analysis output from an actual model / vision provider. These fields are NEVER inferred from chat text or trip data.",
       "type": "object",
       "required": [
         "is_ai_generated",
@@ -996,7 +1096,7 @@
     },
     "ImageEvidenceInput": {
       "title": "ImageEvidenceInput",
-      "description": "A single image submitted as evidence.  The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.",
+      "description": "A single image submitted as evidence. The presence of this object does not guarantee that an ExifAnalysis can be emitted; required EXIF or provider fields may still be missing.",
       "type": "object",
       "required": ["image_id", "image_url"],
       "properties": {
@@ -1035,7 +1135,7 @@
     },
     "ReceiptOcrResult": {
       "title": "ReceiptOcrResult",
-      "description": "Structured OCR output from reading a submitted receipt image.  These fields are NEVER inferred from chat text or trip data.",
+      "description": "Structured OCR output from reading a submitted receipt image. These fields are NEVER inferred from chat text or trip data.",
       "type": "object",
       "required": [
         "amount",
@@ -1072,7 +1172,7 @@
     },
     "ReceiptEvidenceInput": {
       "title": "ReceiptEvidenceInput",
-      "description": "A single receipt submitted as evidence.  The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.",
+      "description": "A single receipt submitted as evidence. The presence of this object does not guarantee that a ReceiptOcrResult can be emitted; the receipt image may be unreadable.",
       "type": "object",
       "required": ["receipt_id", "receipt_url"],
       "properties": {
@@ -1091,7 +1191,7 @@
         },
         "ocr_result": {
           "$ref": "#/$defs/ReceiptOcrResult",
-          "description": "Structured OCR result.  Omitted when the receipt could not be read."
+          "description": "Structured OCR result. Omitted when the receipt could not be read."
         }
       },
       "additionalProperties": false
@@ -1133,24 +1233,6 @@
             "$ref": "#/$defs/HistoricalProfile"
           },
           "minItems": 1
-        },
-        "image_evidence": {
-          "type": "array",
-          "description": "Optional structured image evidence submitted for this case.  Omitted or empty when no images are available.",
-          "items": {
-            "$ref": "#/$defs/ImageEvidenceInput"
-          },
-          "minItems": 0,
-          "default": []
-        },
-        "receipt_evidence": {
-          "type": "array",
-          "description": "Optional cleaning receipts submitted for this case.  Omitted or empty when no receipt is available.",
-          "items": {
-            "$ref": "#/$defs/ReceiptEvidenceInput"
-          },
-          "minItems": 0,
-          "default": []
         }
       },
       "additionalProperties": false
@@ -2016,6 +2098,89 @@
     "AgentConversation": {
       "type": "array",
       "items": {"$ref": "#/$defs/AgentConversationMessage"}
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "User account schema stored in users.json for backend authentication and historical profile mapping.",
+      "type": "object",
+      "required": [
+        "party",
+        "party_id",
+        "name",
+        "email",
+        "password",
+        "account_age_days",
+        "total_trips",
+        "trips_past_30_days",
+        "avg_rating",
+        "risk_score",
+        "dispute_history_30d",
+        "dispute_history_90d",
+        "bad_faith_flag"
+      ],
+      "properties": {
+        "party": {
+          "type": "string",
+          "enum": ["RIDER", "DRIVER", "SUPPORT"]
+        },
+        "party_id": {
+          "type": "string",
+          "description": "Primary key / unique ID (e.g., R-1092, D-5541, S-0001)."
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "password": {
+          "type": "string",
+          "description": "Hashed password string (or plaintext in development)."
+        },
+        "account_age_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_trips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trips_past_30_days": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0,
+          "default": []
+        },
+        "avg_rating": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 5.0
+        },
+        "risk_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "dispute_history_30d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dispute_history_90d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bad_faith_flag": {
+          "type": "boolean",
+          "default": false
+        },
+        "bad_faith_reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
