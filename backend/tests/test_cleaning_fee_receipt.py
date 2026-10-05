@@ -404,6 +404,11 @@ def main() -> None:
             import asyncio  # noqa: E402
 
             raw_004 = _load_json(_MOCK_DATA_DIR / "DISP-004.json")
+            from backend.shared.claim_evidence import merge_claim_evidence
+            raw_004 = dict(raw_004)
+            raw_004["data_sources"] = merge_claim_evidence(
+                raw_004["data_sources"], raw_004.get("dispute_claim", {})
+            )
             normalized_004 = normalize_evidence(raw_004)
             audit_result = asyncio.run(run_prosecutor_audit(normalized_004))
             analyses_004 = audit_result.get("bonus_modules", {}).get("image_exif_analyses", [])
