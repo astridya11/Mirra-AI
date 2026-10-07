@@ -324,7 +324,7 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
     return <span className="text-slate-100 font-mono">{value}</span>;
   }
   if (typeof value === "string") {
-    return <span className="text-slate-200 whitespace-pre-wrap leading-relaxed">{value}</span>;
+    return <span className="text-slate-200 whitespace-pre-wrap leading-5">{value}</span>;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="text-slate-500">（空）</span>;
@@ -428,7 +428,7 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
           {event.timestamp && <span className="text-xs text-slate-400">{formatTime(event.timestamp)}</span>}
         </div>
 
-        <div className="text-sm leading-relaxed whitespace-pre-wrap">
+        <div className="text-sm leading-5 whitespace-pre-wrap">
           {msg.text || <span className="italic text-slate-500">（该 Agent 未返回文本内容）</span>}
         </div>
 
@@ -545,7 +545,7 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
           {typeof findings.prosecutor_summary === "string" && findings.prosecutor_summary && (
             <div>
               <div className="text-slate-400 mb-1">检察官总结</div>
-              <p className="p-2.5 rounded bg-slate-900/80 leading-relaxed whitespace-pre-wrap text-slate-200">
+              <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap text-slate-200">
                 {findings.prosecutor_summary}
               </p>
             </div>
@@ -587,7 +587,7 @@ const KNOWN_PRECEDENTS = ["matched_precedents", "precedents", "similar_precedent
 
 const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => {
   if (typeof suggestion === "string") {
-    return <p className="p-2.5 rounded bg-slate-900/80 leading-relaxed whitespace-pre-wrap">{suggestion}</p>;
+    return <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap">{suggestion}</p>;
   }
   const s = asRecord(suggestion);
   if (!s || isEmpty(s)) {
@@ -629,7 +629,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       {reason && (
         <div>
           <div className="text-slate-400 mb-1">建议依据</div>
-          <p className="p-2.5 rounded bg-slate-900/80 leading-relaxed whitespace-pre-wrap">
+          <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap">
             {typeof reason[1] === "string" ? reason[1] : <DataView value={reason[1]} />}
           </p>
         </div>
@@ -653,7 +653,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
                     {rec.clause_id && <span className="font-mono mr-2">{rec.clause_id}</span>}
                     {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : `条款 ${i + 1}`)}
                   </div>
-                  {body && <div className="text-slate-300 mt-1 leading-relaxed whitespace-pre-wrap">{body}</div>}
+                  {body && <div className="text-slate-300 mt-1 leading-5 whitespace-pre-wrap">{body}</div>}
                   {why && <div className="text-slate-400 mt-1">适用理由：{why}</div>}
                   {Object.keys(rec).some((k) => !shownKeys.includes(k) && !isEmpty(rec[k])) && (
                     <div className="mt-1.5 pt-1.5 border-t border-slate-700/50">

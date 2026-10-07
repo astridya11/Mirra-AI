@@ -9,6 +9,7 @@ import { streamPipeline, getCompletedResult } from "@/src/lib/api";
 import type { PipelineEvent } from "@/src/types";
 import { useParams, useSearchParams } from "next/navigation";
 import { VerdictButton } from "@/src/components/tribunal/VerdictButton";
+import { ChatBubble, ChatMessage, TypingBubble, TypingConfig } from "@/src/components/tribunal/ChatBubble";
 // import { ScrollToLatest } from "@/src/components/tribunal/ScrollToLatest";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { DebugProcessView } from "./DebugProcessView";
@@ -27,16 +28,6 @@ type FeedEvent = PipelineEvent & {
 
 type BubbleSide = "left" | "right";
 
-interface ChatMessage {
-  id: string;
-  side: BubbleSide;
-  speaker: string;
-  speakerTitle: string;
-  text: string;
-  badge?: string;
-  targetLabel?: string;
-}
-
 type Rec = Record<string, unknown>;
 
 // ==========================================
@@ -44,118 +35,63 @@ type Rec = Record<string, unknown>;
 // ==========================================
 
 const STEPS = [
-  { id: "INIT_CLAIM", name: "立案" },
-  { id: "ROUND_1_PLEADINGS", name: "一轮辩论" },
-  { id: "ROUND_2_AUDIT", name: "证据审计" },
-  { id: "ROUND_2_CROSS_EXAM", name: "交叉质询" },
-  { id: "ROUND_2_REPORT", name: "最终报告" },
-  { id: "POLICY_CONSULTATION", name: "政策检索" },
-  { id: "JUDGE_DELIBERATION", name: "法官审理" },
-  { id: "EXECUTION_ROUTER", name: "执行路由" },
+  { id: "INIT_CLAIM", name: "Dispute Filed" },
+  { id: "ROUND_1_PLEADINGS", name: "Round 1 Pleadings" },
+  { id: "ROUND_2_AUDIT", name: "Evidence Audit & Fraud Screening" },
+  { id: "ROUND_2_CROSS_EXAM", name: "Cross Examination" },
+  { id: "ROUND_2_REPORT", name: "Final Audit Report" },
+  { id: "POLICY_CONSULTATION", name: "Policy & Precedent Research" },
+  { id: "JUDGE_DELIBERATION", name: "Judge Deliberation" },
+  { id: "EXECUTION_ROUTER", name: "Execution Router" },
 ];
 
 function DashedProgressStepper({ currentStepIndex }: { currentStepIndex: number }) {
   return (
     <div className="w-full bg-white px-4 py-3 border-b border-gray-100">
       <div className="max-w-[560px] mx-auto">
-        <div className="flex gap-1.5 items-center">
+        {/* 节点与连接线容器 */}
+        <div className="relative flex items-center justify-between w-full px-2">
           {STEPS.map((step, idx) => {
             const isCompleted = idx < currentStepIndex;
             const isCurrent = idx === currentStepIndex;
+            const isFinishedOrCurrent = idx <= currentStepIndex;
+            const isLast = idx === STEPS.length - 1;
 
             return (
-              <div key={step.id} className="flex-1 flex flex-col items-center gap-1">
+              <div key={step.id} className={`flex items-center ${!isLast ? "flex-1" : ""}`}>
+                {/* 1. 圆形数字节点 */}
                 <div
-                  className={`h-1.5 w-full rounded-full transition-all duration-300 ${
-                    isCompleted
-                      ? "bg-slate-900"
-                      : isCurrent
-                      ? "bg-slate-900 animate-pulse"
-                      : "bg-gray-200 border border-dashed border-gray-300"
+                  className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] font-medium transition-all duration-300 z-10 flex-shrink-0 ${
+                    isFinishedOrCurrent
+                      ? "bg-slate-900 text-white"
+                      : "bg-gray-100 text-gray-400"
                   }`}
-                />
+                >
+                  {idx + 1}
+                </div>
+
+                {/* 2. 节点间的连接线 */}
+                {!isLast && (
+                  <div
+                    className={`h-[1px] w-full transition-all duration-300 ${
+                      isCompleted ? "bg-slate-900" : "bg-gray-100"
+                    }`}
+                  />
+                )}
               </div>
             );
           })}
         </div>
-        <div className="flex justify-between items-center mt-1.5 px-0.5">
-          <span className="text-[11px] font-medium text-slate-500">
-            阶段 {Math.min(currentStepIndex + 1, STEPS.length)} / {STEPS.length}
-          </span>
+
+        {/* 底部阶段文字描述 */}
+        <div className="flex justify-center items-center mt-2.5 px-1">
+          {/* <span className="text-[11px] font-medium text-slate-400">
+            Stage {Math.min(currentStepIndex + 1, STEPS.length)} / {STEPS.length}
+          </span> */}
           <span className="text-[11px] font-semibold text-slate-800">
             {STEPS[Math.min(currentStepIndex, STEPS.length - 1)]?.name}
           </span>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ==========================================
-// Expandable Chat Bubble Component
-// ==========================================
-
-function FunctionalChatBubble({ msg }: { msg: ChatMessage }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const isRight = msg.side === "right";
-  const maxLength = 180;
-  const isLongText = msg.text.length > maxLength;
-
-  const displayedText = useMemo(() => {
-    if (!isLongText || isExpanded) return msg.text;
-    return msg.text.slice(0, maxLength) + "…";
-  }, [msg.text, isLongText, isExpanded]);
-
-  // Determine bubble style based on speaker role
-  const s = msg.speaker.toUpperCase();
-  let bubbleClass: string;
-  if (s.includes("DRIVER")) {
-    // Driver Advocate — black bubble, right side
-    bubbleClass = "bg-slate-900 text-white rounded-tr-none";
-  } else if (s.includes("RIDER")) {
-    // Rider Advocate — gray bubble, left side
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
-  } else if (s.includes("PROSECUTOR")) {
-    // Prosecutor — soft amber
-    bubbleClass = "bg-[#E84360]/10 text-slate-800 rounded-tl-none";
-  } else if (s.includes("POLICY")) {
-    // Policy Consultant — soft emerald
-    bubbleClass = "bg-emerald-50 text-slate-800 rounded-tl-none";
-  } else {
-    // Default fallback
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
-  }
-
-  return (
-    <div className={`flex flex-col my-2.5 ${isRight ? "items-end" : "items-start"}`}>
-      {/* Speaker Header */}
-      <div className={`flex items-center gap-1.5 mb-1 px-1 text-[12px] text-gray-500 ${isRight ? "flex-row-reverse" : ""}`}>
-        <span className="font-semibold text-slate-700">{msg.speakerTitle}</span>
-        {msg.targetLabel && <span className="text-gray-400">→ {msg.targetLabel}</span>}
-        {msg.badge && (
-          <span className="px-1.5 py-0.2 text-[10px] bg-slate-100 text-slate-600 rounded font-medium">
-            {msg.badge}
-          </span>
-        )}
-      </div>
-
-      {/* Bubble Content — no shadow, no border */}
-      <div
-        className={`max-w-[85%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed transition-all ${bubbleClass}`}
-      >
-        <p className="whitespace-pre-wrap break-words">{displayedText}</p>
-
-        {/* Show More / Show Less Toggle Button */}
-        {isLongText && (
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className={`mt-2 text-[10px] font-normal underline focus:outline-none transition-colors ${
-              isRight ? "text-slate-300 hover:text-white" : "text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            {isExpanded ? "收起 (Show Less)" : "展开全部 (Show More)"}
-          </button>
-        )}
       </div>
     </div>
   );
@@ -283,6 +219,7 @@ export default function ProcessPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [activeTypingConfig, setActiveTypingConfig] = useState<TypingConfig | null>(null);
   const [isFinished, setIsFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -324,11 +261,11 @@ export default function ProcessPage() {
 
           // 1. Round 1 Statements (Rider & Driver Argument Summary)
           if (result.round_1_statements?.rider_statement) {
-            const m = extractMessageFromData("RIDER_ADVOCATE", result.round_1_statements.rider_statement, "一轮申诉");
+            const m = extractMessageFromData("RIDER_ADVOCATE", result.round_1_statements.rider_statement, "Round 1 Pleading");
             if (m) parsedMsgs.push(m);
           }
           if (result.round_1_statements?.driver_statement) {
-            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "一轮申诉");
+            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "Round 1 Pleading");
             if (m) parsedMsgs.push(m);
           }
 
@@ -340,7 +277,7 @@ export default function ProcessPage() {
               speaker: "PROSECUTOR",
               speakerTitle: "Prosecutor",
               text: result.prosecutor_findings.prosecutor_summary,
-              badge: "初始审计与欺诈筛查",
+              badge: "Initial Audit",
             });
           }
 
@@ -355,7 +292,7 @@ export default function ProcessPage() {
                 speaker: "PROSECUTOR",
                 speakerTitle: "Prosecutor",
                 text: q.question_text,
-                badge: "质询问题",
+                badge: "Cross Exam Question",
                 targetLabel: targetName(q.directed_to || q.target || ""),
               });
               const r = rs.find((x: any) => x.question_id === q.question_id) || rs[i];
@@ -367,7 +304,7 @@ export default function ProcessPage() {
                   speaker: respParty,
                   speakerTitle: roleTitle(respParty),
                   text: r.response_text,
-                  badge: "答辩回应",
+                  badge: "Defense Response",
                   targetLabel: "Prosecutor",
                 });
               }
@@ -385,8 +322,8 @@ export default function ProcessPage() {
                 side: "right",
                 speaker: "POLICY_CONSULTANT",
                 speakerTitle: "Policy Consultant",
-                text: `建议裁决: ${ruling}\n建议依据: ${rationale}`,
-                badge: "政策建议",
+                text: `Suggested Ruling: ${ruling}\nRationale: ${rationale}`,
+                badge: "Policy Recommendation",
               });
             }
           }
@@ -419,6 +356,24 @@ export default function ProcessPage() {
         const e = event as FeedEvent;
         const phase = e.phase || "";
         const subPhase = e.sub_phase || "";
+        const getRoleConfig = (speaker: string, side: "left" | "right", title: string): TypingConfig => ({
+          speaker,
+          side,
+          speakerTitle: title,
+        });
+
+        if (e.event_type === "PHASE_STARTED") {
+          if (phase === "ROUND_1_PLEADINGS") {
+            // 一轮辩论首位：Rider Advocate
+            setActiveTypingConfig(getRoleConfig("RIDER_ADVOCATE", "left", "Rider Advocate"));
+          } else if (subPhase === "INITIAL_AUDIT" || subPhase === "FINAL_REPORT") {
+            setActiveTypingConfig(getRoleConfig("PROSECUTOR", "left", "Prosecutor"));
+          } else if (subPhase === "CROSS_EXAM") {
+            setActiveTypingConfig(getRoleConfig("PROSECUTOR", "left", "Prosecutor"));
+          } else if (phase === "POLICY_CONSULTATION") {
+            setActiveTypingConfig(getRoleConfig("POLICY_CONSULTANT", "right", "Policy Consultant"));
+          }
+        }
 
         // Advance stepper step
         if (phase === "ROUND_1_PLEADINGS") setCurrentStepIndex(1);
@@ -434,13 +389,41 @@ export default function ProcessPage() {
         if (e.event_type === "AGENT_CONVERSATION") {
           const data = asRecord(e.data) || asRecord(e.payload) || {};
           const speaker = String(e.speaker || data.speaker || "Agent");
+
           const msg = extractMessageFromData(
             speaker,
             data,
-            phase === "ROUND_1_PLEADINGS" ? "一轮辩论" : subPhase === "CROSS_EXAM" ? "交叉质询" : "辩论发言"
+            phase === "ROUND_1_PLEADINGS" ? "Round 1 Pleadings" : subPhase === "CROSS_EXAM" ? "Cross Examination" : "Argument"
           );
+
           if (msg) {
             setMessages((prev) => [...prev, msg]);
+          }
+
+          // 预测并接续下一个角色的 Typing 状态
+          if (phase === "ROUND_1_PLEADINGS") {
+            if (speaker === "RIDER_ADVOCATE") {
+              // Rider 完结，接下来 Driver Advocate
+              setActiveTypingConfig(getRoleConfig("DRIVER_ADVOCATE", "right", "Driver Advocate"));
+            } else {
+              setActiveTypingConfig(null);
+            }
+          } else if (subPhase === "CROSS_EXAM") {
+            if (speaker === "PROSECUTOR") {
+              // 检察官问完，判断被质询对象 (比如从 target 或默认 Rider/Driver)
+              const target = String(data.target || "RIDER_ADVOCATE");
+              const isDriver = target.includes("DRIVER");
+              setActiveTypingConfig(
+                getRoleConfig(
+                  isDriver ? "DRIVER_ADVOCATE" : "RIDER_ADVOCATE",
+                  isDriver ? "right" : "left",
+                  isDriver ? "Driver Advocate" : "Rider Advocate"
+                )
+              );
+            } else {
+              // Advocate 刚回答完，等待检察官评估/提下一个问题
+              setActiveTypingConfig(getRoleConfig("PROSECUTOR", "left", "Prosecutor"));
+            }
           }
         }
 
@@ -458,7 +441,7 @@ export default function ProcessPage() {
               const isFinal = subPhase === "FINAL_REPORT";
 
               if (isInitial || isFinal) {
-                const badge = isInitial ? "初始证据审计报告总结" : "检察官最终报告总结";
+                const badge = isInitial ? "Initial Evidence Audit Report" : "Final Audit Report";
                 const msgId = `prosecutor-report-${subPhase}-${e.timestamp || Math.random()}`;
 
                 setMessages((prev) => {
@@ -497,13 +480,16 @@ export default function ProcessPage() {
                     side: "right",
                     speaker: "POLICY_CONSULTANT",
                     speakerTitle: "Policy Consultant",
-                    text: `建议裁决: ${ruling}\n建议依据: ${rationale}`,
-                    badge: "政策建议依据",
+                    text: `Suggested Ruling: ${ruling}\nRationale: ${rationale}`,
+                    badge: "Policy Recommendation",
                   },
                 ]);
               }
             }
           }
+
+          // 当整个阶段/子阶段明确完成时，关闭当前 Typing 动画
+          setActiveTypingConfig(null);
         }
       },
       onComplete: () => {
@@ -511,7 +497,7 @@ export default function ProcessPage() {
         setCurrentStepIndex(STEPS.length - 1);
       },
       onError: () => {
-        setError("实时推送连接中断，请重试。");
+        setError("Real-time stream connection interrupted. Please try again.");
       },
     });
 
@@ -524,7 +510,7 @@ export default function ProcessPage() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      <IOSHeader title="AI Dispute Tribunal" />
+      <IOSHeader title="Mirra AI" />
 
       {/* Dashed Progress Stepper */}
       <DashedProgressStepper currentStepIndex={currentStepIndex} />
@@ -539,7 +525,7 @@ export default function ProcessPage() {
       >
         {isLoading && messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-            加载仲裁数据中...
+            Loading tribunal data...
           </div>
         )}
 
@@ -550,8 +536,12 @@ export default function ProcessPage() {
         )}
 
         {messages.map((msg) => (
-          <FunctionalChatBubble key={msg.id} msg={msg} />
+          <ChatBubble key={msg.id} msg={msg} />
         ))}
+
+        {activeTypingConfig && (
+          <TypingBubble config={activeTypingConfig} />
+        )}
 
         <div ref={bottomRef} />
 
