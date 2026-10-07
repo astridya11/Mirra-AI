@@ -46,7 +46,15 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-_SGT = timezone(timedelta(hours=8))
+from backend.shared.time_rules import (
+    SGT as _SGT,
+    parse_ts,
+    haversine_m,
+    check_window,
+    check_distance,
+    format_gap,
+    trip_end_time as _trip_end_time_ts,
+)
 
 _DEFAULT_POLICY_PATH = os.path.join(os.path.dirname(__file__), "ryde_policy_v1.json")
 _POLICY_PATH = os.environ.get("POLICY_FILE_PATH", _DEFAULT_POLICY_PATH)
@@ -129,21 +137,13 @@ def clause_reference(clause: Dict[str, Any], keywords: Optional[List[str]] = Non
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
+    """Thin wrapper around backend.shared.time_rules.haversine_m."""
+    return haversine_m(lat1, lon1, lat2, lon2)
 
 
 def _parse_dt(value: Optional[str]):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
+    """Thin wrapper around backend.shared.time_rules.parse_ts."""
+    return parse_ts(value)
 
 
 def _fact_text(context: Dict[str, Any]) -> str:
@@ -418,11 +418,9 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
         return {"computable": False, "reason": "POL-4 photo location check requires trip_data.dropoff_location"}
 
     # --- Trip end timestamp (shared/schemas.json TripData.trip_end_time) ------
-    trip_end = _parse_dt(
-        trip.get("trip_end_time")
-        or trip.get("dropoff_time")
-        or context.get("trip_end_time")
-    )
+    trip_end = _trip_end_time_ts(ds)
+    if trip_end is None:
+        trip_end = _parse_dt(context.get("trip_end_time"))
     if not trip_end:
         return {
             "computable": False,
@@ -433,14 +431,15 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
     receipts_raw = ds.get("receipt_evidence") or []
     receipts = [r for r in receipts_raw if isinstance(r, dict)]
 
+    # Initialised so the APPROVED detail append below can reference them safely.
+    readable_receipts: List[Dict[str, Any]] = []
+    in_window_receipts: List[Dict[str, Any]] = []
+
     # Receipt window: only receipts dated within trip_end .. trip_end + window
     receipt_window_hours = params.get("receipt_window_hours_after_trip_end")
-    receipt_window_end: Optional[datetime] = None
-    if receipt_window_hours is not None:
-        receipt_window_end = trip_end + timedelta(hours=float(receipt_window_hours))
 
     if receipts:
-        readable_receipts: List[Dict[str, Any]] = []
+        readable_receipts = []
         for r in receipts:
             ocr = r.get("ocr_result")
             if not isinstance(ocr, dict):
@@ -451,35 +450,46 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
 
         receipt_present = bool(readable_receipts)
 
-        if receipt_present and receipt_window_end is not None:
-            in_window_receipts: List[Dict[str, Any]] = []
+        if receipt_present and receipt_window_hours is not None:
+            in_window_receipts = []
+            rejected_detail: Optional[str] = None
+            rejected_seconds: Optional[int] = None
             for r in readable_receipts:
                 ocr = r["ocr_result"]
                 rd = ocr.get("receipt_date")
-                receipt_dt = _parse_dt(rd)
+                receipt_dt = parse_ts(rd)
                 if receipt_dt is None:
                     # Receipts without receipt_date are still counted.
                     in_window_receipts.append(r)
                 else:
-                    # Normalise tz for comparison: if one is naive and the other
-                    # aware, treat the naive one as SGT (the file's convention).
-                    rdt = receipt_dt
-                    wnd_start = trip_end
-                    wnd_end = receipt_window_end
-                    if rdt.tzinfo is None and wnd_start.tzinfo is not None:
-                        rdt = rdt.replace(tzinfo=_SGT)
-                    elif rdt.tzinfo is not None and wnd_start.tzinfo is None:
-                        wnd_start = wnd_start.replace(tzinfo=_SGT)
-                        wnd_end = wnd_end.replace(tzinfo=_SGT)
-                    if wnd_start <= rdt <= wnd_end:
+                    w = check_window(
+                        receipt_dt, trip_end,
+                        max_after=float(receipt_window_hours),
+                        min_after=0,
+                        unit="hours",
+                    )
+                    if w["within"] is True:
                         in_window_receipts.append(r)
+                    else:
+                        rejected_detail = w["text"]
+                        rejected_seconds = w["seconds"]
 
             if not in_window_receipts:
+                if rejected_detail and rejected_seconds is not None:
+                    # format_gap already appended "before" for negative gaps;
+                    # use abs() and choose the word ourselves to avoid
+                    # "before after trip end".
+                    if rejected_seconds < 0:
+                        detail = f" (dated {format_gap(abs(rejected_seconds))} before trip end)"
+                    else:
+                        detail = f" (dated {format_gap(rejected_seconds)} after trip end)"
+                else:
+                    detail = ""
                 return {
                     "computable": True,
                     "ruling_type": "REJECTED",
                     "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
-                    "reason": "Cleaning receipt is not dated within 24 h after the trip.",
+                    "reason": f"Cleaning receipt is not dated within 24 h after the trip{detail}.",
                     "confidence": 0.85,
                 }
 
@@ -491,7 +501,7 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
 
             # If any counted receipt lacked receipt_date, note it in the reason.
             has_missing_date = any(
-                _parse_dt(r["ocr_result"].get("receipt_date")) is None
+                parse_ts(r["ocr_result"].get("receipt_date")) is None
                 for r in in_window_receipts
             )
         else:
@@ -502,7 +512,7 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
             ]
             receipt_amount = sum(amounts) if amounts else None
             has_missing_date = any(
-                _parse_dt(r["ocr_result"].get("receipt_date")) is None
+                parse_ts(r["ocr_result"].get("receipt_date")) is None
                 for r in readable_receipts
             )
     else:
@@ -543,26 +553,24 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
         if isinstance(case_meta, dict):
             filed_at_raw = case_meta.get("created_at")
 
+    claim_filing_detail: Optional[str] = None
     if claim_window_hours is not None and filed_at_raw is not None:
-        filed_dt = _parse_dt(filed_at_raw)
-        if filed_dt is not None:
-            claim_deadline = trip_end + timedelta(hours=float(claim_window_hours))
-            # Normalise tz for comparison: if one is naive and the other aware,
-            # treat the naive one as SGT (the file's convention).
-            filed_cmp = filed_dt
-            trip_end_cmp = trip_end
-            if filed_cmp.tzinfo is None and trip_end_cmp.tzinfo is not None:
-                filed_cmp = filed_cmp.replace(tzinfo=_SGT)
-            elif filed_cmp.tzinfo is not None and trip_end_cmp.tzinfo is None:
-                trip_end_cmp = trip_end_cmp.replace(tzinfo=_SGT)
-            if filed_cmp > trip_end_cmp + timedelta(hours=float(claim_window_hours)):
-                return {
-                    "computable": True,
-                    "ruling_type": "REJECTED",
-                    "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
-                    "reason": "Claim filed more than 48 h after the trip.",
-                    "confidence": 0.85,
-                }
+        w = check_window(
+            filed_at_raw, trip_end,
+            max_after=float(claim_window_hours),
+            min_after=0,
+            unit="hours",
+        )
+        if w["within"] is False:
+            return {
+                "computable": True,
+                "ruling_type": "REJECTED",
+                "action": {"action_type": "NO_REFUND", "refund_amount": 0, "cleaning_fee_amount": 0, "currency": "SGD"},
+                "reason": "Claim filed more than 48 h after the trip.",
+                "confidence": 0.85,
+            }
+        if w["seconds"] is not None:
+            claim_filing_detail = format_gap(w["seconds"])
 
     valid = []
     invalid_reasons = []
@@ -586,19 +594,22 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
             continue
 
         delta = (exif_timestamp - trip_end).total_seconds() / 60
-        if delta < 0 or delta > params.get("photo_window_min_after_trip_end", 30):
+        photo_max_min = params.get("photo_window_min_after_trip_end", 30)
+        tw = check_window(
+            exif_timestamp, trip_end,
+            max_after=float(photo_max_min),
+            min_after=0,
+            unit="minutes",
+        )
+        if tw["within"] is not True:
             invalid_reasons.append(f"{img.get('image_id', 'image')}: EXIF timestamp outside photo window")
             continue
 
-        try:
-            distance = _haversine_m(
-                exif_location["latitude"], exif_location["longitude"],
-                dropoff["lat"], dropoff["lng"],
-            )
-        except (KeyError, TypeError, ValueError):
-            invalid_reasons.append(f"{img.get('image_id', 'image')}: invalid EXIF/drop-off location")
-            continue
-        if distance > params.get("photo_location_radius_m", 500):
+        dist = check_distance(
+            exif_location, dropoff,
+            max_m=float(params.get("photo_location_radius_m", 500)),
+        )
+        if dist["within"] is not True:
             invalid_reasons.append(f"{img.get('image_id', 'image')}: EXIF location outside drop-off radius")
             continue
         valid.append(img)
@@ -698,6 +709,40 @@ def _compute_cleaning_fee(clause: Dict[str, Any], context: Dict[str, Any]) -> Di
 
     if has_missing_date:
         reason += " (receipt date not available)"
+
+    # Append computed time/distance details for APPROVED cases.
+    timing_parts: list[str] = []
+    _detail_receipts = in_window_receipts if in_window_receipts else readable_receipts
+    if receipt_window_hours is not None and _detail_receipts:
+        first_dated = next(
+            (r for r in in_window_receipts
+             if parse_ts(r["ocr_result"].get("receipt_date")) is not None),
+            None,
+        )
+        if first_dated is not None:
+            rdt = parse_ts(first_dated["ocr_result"].get("receipt_date"))
+            if rdt is not None:
+                rw = check_window(rdt, trip_end, max_after=float(receipt_window_hours), unit="hours")
+                rw_secs = rw["seconds"]
+                if rw_secs is not None:
+                    rw_word = "before" if rw_secs < 0 else "after"
+                    timing_parts.append(
+                        f"Receipt dated {format_gap(abs(rw_secs))} {rw_word} trip end "
+                        f"(POL-4 limit {rw['limit_text']})"
+                    )
+
+    if claim_filing_detail is not None and claim_window_hours is not None:
+        filed_dt = parse_ts(filed_at_raw)
+        if filed_dt is not None and trip_end is not None:
+            cf_secs = int((filed_dt - trip_end).total_seconds())
+            cf_word = "before" if cf_secs < 0 else "after"
+            timing_parts.append(
+                f"Claim filed {format_gap(abs(cf_secs))} {cf_word} trip end "
+                f"(limit {int(claim_window_hours)} h)"
+            )
+
+    if timing_parts:
+        reason += " " + "; ".join(timing_parts) + "."
 
     return {
         "computable": True,

@@ -12,7 +12,14 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-_SGT = timezone(timedelta(hours=8))
+from backend.shared.time_rules import (
+    parse_ts,
+    haversine_m,
+    check_window,
+    check_distance,
+    trip_end_time,
+    format_gap,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -47,28 +54,6 @@ def _find_first_receipt(case: dict) -> dict | None:
         if isinstance(r, dict):
             return r
     return None
-
-
-def _parse_ts(ts: str) -> datetime | None:
-    if not isinstance(ts, str):
-        return None
-    try:
-        return datetime.fromisoformat(ts)
-    except Exception:
-        return None
-
-
-def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6_371_000
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    )
-    return 2 * R * math.asin(math.sqrt(a))
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +113,7 @@ def _resolve_stamp(case: dict) -> tuple[str | None, str]:
     if is_pending_human:
         stamp_sub = "PENDING HUMAN CONFIRMATION"
     elif deliberated_at:
-        dt = _parse_ts(deliberated_at)
+        dt = parse_ts(deliberated_at)
         if dt:
             stamp_sub = "MIRRA AI · " + dt.strftime("%d %b %Y").upper()
         else:
@@ -201,7 +186,7 @@ def _build_receipt_line(case: dict) -> str | None:
             if merchant:
                 sub.append(str(merchant))
             if rdate:
-                dt = _parse_ts(rdate)
+                dt = parse_ts(rdate)
                 if dt:
                     sub.append(dt.strftime("%d %b %H:%M"))
 
@@ -225,33 +210,27 @@ def _build_photo_line(case: dict, image: dict) -> str | None:
     # EXIF timestamp + trip_end_time
     exif_ts = image.get("exif_timestamp")
     if isinstance(exif_ts, str) and exif_ts:
-        trip_data = (case.get("data_sources") or {}).get("trip_data") or {}
-        trip_end_str = trip_data.get("trip_end_time")
-        if isinstance(trip_end_str, str) and trip_end_str:
-            trip_end = _parse_ts(trip_end_str)
-            if trip_end:
-                exif_dt = _parse_ts(exif_ts)
-                if exif_dt:
-                    delta_min = int((exif_dt - trip_end).total_seconds() / 60)
-                    line = f"Photo {delta_min} min after drop-off"
+        ds = case.get("data_sources") or {}
+        trip_end = trip_end_time(ds)
+        if trip_end is not None:
+            exif_dt = parse_ts(exif_ts)
+            if exif_dt is not None:
+                w = check_window(exif_dt, trip_end, max_after=30, unit="minutes")
+                if w["seconds"] is not None:
+                    secs = w["seconds"]
+                    word = "before" if secs < 0 else "after"
+                    line = f"Photo {format_gap(abs(secs))} {word} drop-off"
 
                     # GPS distance
                     exif_gps = image.get("exif_gps_location")
-                    dropoff = trip_data.get("dropoff_location")
+                    dropoff = (ds.get("trip_data") or {}).get("dropoff_location")
                     if (
                         isinstance(exif_gps, dict)
                         and isinstance(dropoff, dict)
                     ):
-                        try:
-                            lat1 = float(exif_gps.get("latitude"))
-                            lon1 = float(exif_gps.get("longitude"))
-                            lat2 = float(dropoff.get("lat"))
-                            lon2 = float(dropoff.get("lng"))
-                            dist_m = _haversine_m(lat1, lon1, lat2, lon2)
-                            dist_rounded = round(dist_m / 10) * 10
-                            line += f", {dist_rounded} m from drop-off"
-                        except (TypeError, ValueError):
-                            pass
+                        d = check_distance(exif_gps, dropoff, max_m=500)
+                        if d["text"] != "not available":
+                            line += f", {d['text']} from drop-off"
 
                     return line
     elif not exif_ts:
