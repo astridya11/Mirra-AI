@@ -254,6 +254,11 @@ def main() -> None:
         check_c_errors: list[str] = []
 
         case_c = _make_case(
+            case_metadata={
+                "case_id": "DISP-001",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "ESCALATED_HUMAN_REVIEW",
+            },
             dispute_claim={
                 "case_id": "DISP-001",
                 "image_evidence": [
@@ -457,6 +462,195 @@ def main() -> None:
         else:
             print("\nCHECK g RESULT: PASS")
             print("  - returned None for unknown image_id")
+
+        # ===================================================================
+        # CHECK h: APPROVED + escalated channel + no human decision
+        #          -> stamp APPROVED, sub "PENDING HUMAN CONFIRMATION"
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK h: APPROVED + escalated + no human -> PENDING HUMAN CONFIRMATION")
+        print("=" * 70)
+        check_h_errors: list[str] = []
+
+        case_h = _make_case(
+            case_metadata={
+                "case_id": "DISP-001",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "ESCALATED_HUMAN_REVIEW",
+            },
+            dispute_claim={
+                "case_id": "DISP-001",
+                "image_evidence": [
+                    {"image_id": "IMG-001", "image_url": "/evidence/DISP-001/IMG-001.jpg"},
+                ],
+                "receipt_evidence": [],
+            },
+            judge_verdict={
+                "ruling_type": "APPROVED",
+                "deliberated_at": "2026-09-25T22:30:00+08:00",
+                "recommended_action": {
+                    "action_type": "REFUND",
+                    "cleaning_fee_amount": 60.0,
+                    "currency": "SGD",
+                    "account_action": "NONE",
+                    "penalty_target": "NONE",
+                },
+            },
+        )
+        args_h = build_verdict_render_args(case_h, "IMG-001")
+
+        if args_h is None:
+            check_h_errors.append("render args is None")
+        else:
+            if args_h.get("stamp") != "APPROVED":
+                check_h_errors.append(
+                    f"stamp: got {args_h.get('stamp')!r}, expected APPROVED"
+                )
+            sub_h = args_h.get("stamp_sub") or ""
+            if sub_h != "PENDING HUMAN CONFIRMATION":
+                check_h_errors.append(
+                    f"stamp_sub: got {sub_h!r}, expected 'PENDING HUMAN CONFIRMATION'"
+                )
+
+        if check_h_errors:
+            print("\nCHECK h RESULT: FAIL")
+            for e in check_h_errors:
+                print(f"  - {e}")
+            errors.extend(check_h_errors)
+        else:
+            print("\nCHECK h RESULT: PASS")
+            print(f"  - stamp: {args_h['stamp']}")
+            print(f"  - stamp_sub: {args_h['stamp_sub']}")
+
+        # ===================================================================
+        # CHECK i: REJECTED fully automated -> sub starts "MIRRA AI"
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK i: REJECTED fully automated -> sub starts MIRRA AI")
+        print("=" * 70)
+        check_i_errors: list[str] = []
+
+        case_i = _make_case(
+            case_metadata={
+                "case_id": "DISP-002",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "FULLY_AUTOMATED",
+            },
+            dispute_claim={
+                "case_id": "DISP-002",
+                "image_evidence": [
+                    {"image_id": "IMG-001", "image_url": "/evidence/DISP-002/IMG-001.jpg"},
+                ],
+                "receipt_evidence": [],
+            },
+            judge_verdict={
+                "ruling_type": "REJECTED",
+                "deliberated_at": "2026-09-25T22:30:00+08:00",
+                "recommended_action": {
+                    "action_type": "NO_REFUND",
+                    "cleaning_fee_amount": 0,
+                    "currency": "SGD",
+                    "account_action": "NONE",
+                    "penalty_target": "NONE",
+                },
+            },
+        )
+        args_i = build_verdict_render_args(case_i, "IMG-001")
+
+        if args_i is None:
+            check_i_errors.append("render args is None")
+        else:
+            if args_i.get("stamp") != "REJECTED":
+                check_i_errors.append(
+                    f"stamp: got {args_i.get('stamp')!r}, expected REJECTED"
+                )
+            sub_i = args_i.get("stamp_sub") or ""
+            if not sub_i.startswith("MIRRA AI"):
+                check_i_errors.append(
+                    f"stamp_sub: got {sub_i!r}, expected to start with 'MIRRA AI'"
+                )
+
+        if check_i_errors:
+            print("\nCHECK i RESULT: FAIL")
+            for e in check_i_errors:
+                print(f"  - {e}")
+            errors.extend(check_i_errors)
+        else:
+            print("\nCHECK i RESULT: PASS")
+            print(f"  - stamp: {args_i['stamp']}")
+            print(f"  - stamp_sub: {args_i['stamp_sub']}")
+
+        # ===================================================================
+        # CHECK j: human OVERRIDDEN to REJECTED -> stamp REJECTED,
+        #          sub starts "CONFIRMED BY HUMAN"
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK j: human OVERRIDDEN to REJECTED -> CONFIRMED BY HUMAN")
+        print("=" * 70)
+        check_j_errors: list[str] = []
+
+        case_j = _make_case(
+            case_metadata={
+                "case_id": "DISP-003",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "ESCALATED_HUMAN_REVIEW",
+            },
+            dispute_claim={
+                "case_id": "DISP-003",
+                "image_evidence": [
+                    {"image_id": "IMG-001", "image_url": "/evidence/DISP-003/IMG-001.jpg"},
+                ],
+                "receipt_evidence": [],
+            },
+            judge_verdict={
+                "ruling_type": "APPROVED",
+                "deliberated_at": "2026-09-25T22:30:00+08:00",
+                "recommended_action": {
+                    "action_type": "REFUND",
+                    "cleaning_fee_amount": 60.0,
+                    "currency": "SGD",
+                    "account_action": "NONE",
+                    "penalty_target": "NONE",
+                },
+                "execution_payload": {
+                    "human_confirmation_details": {
+                        "reviewer_id": "REV-001",
+                        "approval_decision": "OVERRIDDEN",
+                        "approval_timestamp": "2026-09-26T10:00:00+08:00",
+                        "modified_action": {
+                            "action_type": "NO_REFUND",
+                            "refund_amount": 0,
+                            "currency": "SGD",
+                            "ruling_type": "REJECTED",
+                        },
+                    },
+                },
+            },
+        )
+        args_j = build_verdict_render_args(case_j, "IMG-001")
+
+        if args_j is None:
+            check_j_errors.append("render args is None")
+        else:
+            if args_j.get("stamp") != "REJECTED":
+                check_j_errors.append(
+                    f"stamp: got {args_j.get('stamp')!r}, expected REJECTED"
+                )
+            sub_j = args_j.get("stamp_sub") or ""
+            if not sub_j.startswith("CONFIRMED BY HUMAN"):
+                check_j_errors.append(
+                    f"stamp_sub: got {sub_j!r}, expected to start with 'CONFIRMED BY HUMAN'"
+                )
+
+        if check_j_errors:
+            print("\nCHECK j RESULT: FAIL")
+            for e in check_j_errors:
+                print(f"  - {e}")
+            errors.extend(check_j_errors)
+        else:
+            print("\nCHECK j RESULT: PASS")
+            print(f"  - stamp: {args_j['stamp']}")
+            print(f"  - stamp_sub: {args_j['stamp_sub']}")
 
         # ===================================================================
         # Summary

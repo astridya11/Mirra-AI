@@ -14,6 +14,7 @@ import json
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,103 @@ from PIL import Image
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend...` imports work
+
+_SCHEMAS_PATH = _BACKEND_DIR.parent / "shared" / "schemas.json"
+
+
+# ---------------------------------------------------------------------------
+# Lightweight JSON-schema validator (type, enum, required, additionalProperties,
+# $ref, properties, number min/max, array maxItems)
+# ---------------------------------------------------------------------------
+
+def _validate_against_schema(instance: Any, schema: dict[str, Any], defs: dict[str, Any], path: str = "root") -> list[str]:
+    """Return a list of validation errors (empty = valid).
+
+    Supports: type, enum, required, additionalProperties, $ref, properties,
+    number min/max, array maxItems.  This is a minimal validator — not a full
+    jsonschema impl.
+    """
+    errors: list[str] = []
+
+    if "$ref" in schema:
+        ref_name = schema["$ref"].split("/")[-1]
+        ref_schema = defs.get(ref_name, {})
+        return _validate_against_schema(instance, ref_schema, defs, path)
+
+    if "type" not in schema and "enum" not in schema and "properties" not in schema:
+        return errors
+
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if not isinstance(instance, dict):
+            errors.append(f"{path}: expected object, got {type(instance).__name__}")
+            return errors
+        # required
+        for req in schema.get("required", []):
+            if req not in instance:
+                errors.append(f"{path}: missing required '{req}'")
+        # additionalProperties: false
+        props = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            for key in instance:
+                if key not in props:
+                    errors.append(f"{path}: additional property '{key}' not allowed")
+        # recurse into properties
+        for key, sub_schema in props.items():
+            if key in instance:
+                errors.extend(_validate_against_schema(instance[key], sub_schema, defs, f"{path}.{key}"))
+    elif schema_type == "array":
+        if not isinstance(instance, list):
+            errors.append(f"{path}: expected array, got {type(instance).__name__}")
+            return errors
+        # maxItems
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(instance) > max_items:
+            errors.append(f"{path}: {len(instance)} items > maxItems {max_items}")
+        # recurse into items
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for i, item in enumerate(instance):
+                errors.extend(_validate_against_schema(item, item_schema, defs, f"{path}[{i}]"))
+    elif schema_type == "string":
+        if not isinstance(instance, str):
+            errors.append(f"{path}: expected string, got {type(instance).__name__}")
+    elif schema_type == "number":
+        if isinstance(instance, bool) or not isinstance(instance, (int, float)):
+            errors.append(f"{path}: expected number, got {type(instance).__name__}")
+        else:
+            if "minimum" in schema and instance < schema["minimum"]:
+                errors.append(f"{path}: {instance} < minimum {schema['minimum']}")
+            if "maximum" in schema and instance > schema["maximum"]:
+                errors.append(f"{path}: {instance} > maximum {schema['maximum']}")
+    elif schema_type == "boolean":
+        if not isinstance(instance, bool):
+            errors.append(f"{path}: expected boolean, got {type(instance).__name__}")
+
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{path}: {instance!r} not in enum {schema['enum']}")
+
+    # format: date-time — just verify datetime.fromisoformat works.
+    fmt = schema.get("format")
+    if fmt == "date-time" and isinstance(instance, str):
+        try:
+            datetime.fromisoformat(instance)
+        except Exception:
+            errors.append(f"{path}: '{instance}' is not a valid ISO 8601 date-time")
+
+    return errors
+
+
+def _validate_image_evidence(data: dict[str, Any]) -> list[str]:
+    """Validate *data* against ImageEvidenceInput in schemas.json."""
+    try:
+        with open(_SCHEMAS_PATH, "r", encoding="utf-8") as f:
+            all_defs = json.load(f)
+    except Exception as exc:
+        return [f"(could not load schemas.json: {exc})"]
+    defs = all_defs.get("$defs", {})
+    schema = defs.get("ImageEvidenceInput", {})
+    return _validate_against_schema(data, schema, defs)
 
 import backend.shared.receipt_evidence as receipt_mod  # noqa: E402
 import backend.shared.photo_evidence as photo_mod  # noqa: E402
@@ -655,6 +753,105 @@ def main() -> None:
         else:
             print("\nCHECK m RESULT: PASS")
             print(f"  - stain_regions: {json.dumps(sr_m)}")
+
+        # ===================================================================
+        # CHECK n: stain_regions in schema properties (not required);
+        #           valid image_evidence dict passes lightweight validator
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK n: stain_regions in schema + valid dict validates")
+        print("=" * 70)
+        check_n_errors: list[str] = []
+
+        with open(_SCHEMAS_PATH, "r", encoding="utf-8") as f:
+            all_defs = json.load(f)
+        ie_schema = all_defs.get("$defs", {}).get("ImageEvidenceInput", {})
+        ie_props = ie_schema.get("properties", {})
+        ie_required = ie_schema.get("required", [])
+
+        # stain_regions must be in properties, NOT in required
+        if "stain_regions" not in ie_props:
+            check_n_errors.append("stain_regions missing from ImageEvidenceInput.properties")
+        else:
+            sr = ie_props["stain_regions"]
+            if sr.get("type") != "array":
+                check_n_errors.append(f"stain_regions.type: got {sr.get('type')!r}, expected array")
+            if sr.get("maxItems") != 3:
+                check_n_errors.append(f"stain_regions.maxItems: got {sr.get('maxItems')!r}, expected 3")
+            items = sr.get("items", {})
+            if items.get("additionalProperties") is not False:
+                check_n_errors.append("stain_regions.items.additionalProperties: expected false")
+            if set(items.get("required", [])) != {"x1", "y1", "x2", "y2"}:
+                check_n_errors.append(f"stain_regions.items.required: got {items.get('required')!r}")
+            item_props = items.get("properties", {})
+            for coord in ("x1", "y1", "x2", "y2"):
+                cp = item_props.get(coord, {})
+                if cp.get("type") != "number":
+                    check_n_errors.append(f"{coord}.type: got {cp.get('type')!r}, expected number")
+                if cp.get("minimum") != 0:
+                    check_n_errors.append(f"{coord}.minimum: got {cp.get('minimum')!r}, expected 0")
+                if cp.get("maximum") != 1:
+                    check_n_errors.append(f"{coord}.maximum: got {cp.get('maximum')!r}, expected 1")
+
+        if "stain_regions" in ie_required:
+            check_n_errors.append("stain_regions must NOT be in ImageEvidenceInput.required")
+
+        # Valid image_evidence dict with stain_regions -> passes validator
+        valid_ie = {
+            "image_id": "IMG-N",
+            "image_url": "/evidence/DISP-001/IMG-N.jpg",
+            "stain_regions": [
+                {"x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4},
+                {"x1": 0.5, "y1": 0.5, "x2": 0.7, "y2": 0.8},
+            ],
+        }
+        val_errors = _validate_image_evidence(valid_ie)
+        if val_errors:
+            check_n_errors.append(f"valid stain_regions failed validation: {val_errors}")
+
+        if check_n_errors:
+            print("\nCHECK n RESULT: FAIL")
+            for e in check_n_errors:
+                print(f"  - {e}")
+            errors.extend(check_n_errors)
+        else:
+            print("\nCHECK n RESULT: PASS")
+            print("  - stain_regions in schema (optional, maxItems 3, coords 0-1)")
+            print("  - valid image_evidence with stain_regions validated OK")
+
+        # ===================================================================
+        # CHECK o: box with x1 = 1.5 fails lightweight validator
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK o: box with x1=1.5 fails schema validation")
+        print("=" * 70)
+        check_o_errors: list[str] = []
+
+        invalid_ie = {
+            "image_id": "IMG-O",
+            "image_url": "/evidence/DISP-001/IMG-O.jpg",
+            "stain_regions": [
+                {"x1": 1.5, "y1": 0.2, "x2": 0.3, "y2": 0.4},
+            ],
+        }
+        val_errors = _validate_image_evidence(invalid_ie)
+        if not val_errors:
+            check_o_errors.append("x1=1.5 should have failed validation but passed")
+        else:
+            # Verify the error mentions maximum
+            if not any("maximum" in e for e in val_errors):
+                check_o_errors.append(
+                    f"expected error about maximum, got: {val_errors}"
+                )
+
+        if check_o_errors:
+            print("\nCHECK o RESULT: FAIL")
+            for e in check_o_errors:
+                print(f"  - {e}")
+            errors.extend(check_o_errors)
+        else:
+            print("\nCHECK o RESULT: PASS")
+            print("  - x1=1.5 correctly rejected by validator")
 
         # ===================================================================
         # Summary

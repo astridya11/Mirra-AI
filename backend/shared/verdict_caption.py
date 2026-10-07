@@ -64,62 +64,66 @@ def _resolve_stamp(case: dict) -> tuple[str | None, str]:
     """Determine stamp and stamp_sub from judge_verdict / human review.
 
     Returns ``(stamp, stamp_sub)``.
-    stamp: "APPROVED", "REJECTED", "UNDER_REVIEW", or None.
-    stamp_sub: "MIRRA AI · <DD MON YYYY>" or "PENDING HUMAN CONFIRMATION".
+
+    stamp:
+      - APPROVED/PARTIAL_REFUND -> "APPROVED"
+      - REJECTED -> "REJECTED"
+      - ESCALATED -> "UNDER_REVIEW"
+      - no verdict -> None
+
+    stamp_sub:
+      - Routed to human review with no human decision yet -> "PENDING HUMAN CONFIRMATION"
+      - Human decision exists -> "CONFIRMED BY HUMAN · <DD MON YYYY>"
+      - Otherwise -> "MIRRA AI · <DD MON YYYY>"
     """
     jv = case.get("judge_verdict") or {}
+    cm = case.get("case_metadata") or {}
+    resolution_channel = cm.get("resolution_channel") or ""
 
-    # Check for human review outcome
+    # --- Determine effective ruling_type (human override wins) ---
+    ruling_type = jv.get("ruling_type") or ""
+
     ep = jv.get("execution_payload") or {}
     hc = ep.get("human_confirmation_details") or {}
     human_decision = hc.get("approval_decision") or ""
 
-    ruling_type = jv.get("ruling_type") or ""
-
-    # If human reviewed with modified action, use the modified ruling_type
     if human_decision:
         modified = hc.get("modified_action") or {}
         if isinstance(modified, dict) and modified.get("ruling_type"):
             ruling_type = modified["ruling_type"]
 
-    deliberated_at = jv.get("deliberated_at") or ""
+    is_human_review_channel = resolution_channel == "ESCALATED_HUMAN_REVIEW"
+    is_pending_human = is_human_review_channel and not human_decision
 
-    # Determine if case is routed to human review and no human decision yet
-    is_pending_human = (
-        ruling_type == "ESCALATED"
-        and not human_decision
-    )
-
-    # stamp
+    # --- stamp ---
     stamp: str | None = None
     if ruling_type in ("APPROVED", "PARTIAL_REFUND"):
         stamp = "APPROVED"
     elif ruling_type == "REJECTED":
         stamp = "REJECTED"
     elif ruling_type == "ESCALATED":
-        if human_decision == "REJECTED_AUTO":
-            stamp = "REJECTED"
-        elif human_decision in ("CONFIRMED_AUTO", "MODIFIED", "OVERRIDDEN"):
-            if ruling_type in ("APPROVED", "PARTIAL_REFUND"):
-                stamp = "APPROVED"
-            elif ruling_type == "REJECTED":
-                stamp = "REJECTED"
-            else:
-                stamp = "UNDER_REVIEW"
-        else:
-            stamp = "UNDER_REVIEW"
+        stamp = "UNDER_REVIEW"
+    # no verdict -> None
 
-    # stamp_sub
+    # --- stamp_sub ---
     if is_pending_human:
         stamp_sub = "PENDING HUMAN CONFIRMATION"
-    elif deliberated_at:
-        dt = parse_ts(deliberated_at)
+    elif human_decision and is_human_review_channel:
+        # Human has decided: use approval_timestamp for the date
+        ts = hc.get("approval_timestamp") or ""
+        dt = parse_ts(ts) if ts else None
+        if dt:
+            stamp_sub = "CONFIRMED BY HUMAN · " + dt.strftime("%d %b %Y").upper()
+        else:
+            stamp_sub = "CONFIRMED BY HUMAN"
+    else:
+        # Fully automated (or human review channel but human confirmed)
+        deliberated_at = jv.get("deliberated_at") or ""
+        dt = parse_ts(deliberated_at) if deliberated_at else None
         if dt:
             stamp_sub = "MIRRA AI · " + dt.strftime("%d %b %Y").upper()
         else:
             stamp_sub = "MIRRA AI"
-    else:
-        stamp_sub = "MIRRA AI"
 
     return stamp, stamp_sub
 
