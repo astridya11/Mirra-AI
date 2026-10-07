@@ -16,6 +16,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend.shared...` imports work
 
 from backend.shared.evidence_index import build_evidence_index, format_evidence_for_prompt  # noqa: E402
+from backend.shared.claim_evidence import merge_claim_evidence  # noqa: E402
 
 
 # --- Helpers -------------------------------------------------------------------
@@ -124,16 +125,17 @@ def _test_disp001_route_summary() -> None:
         print("  - contains '2.3', '35', '28'")
 
 
-# --- Test 3: DISP-001 and DISP-003 do not raise --------------------------------
+# --- Test 3: DISP-001 and DISP-004 do not raise --------------------------------
 
 
 def _test_other_cases() -> None:
     errors: list[str] = []
 
-    for case_id in ("DISP-001", "DISP-003", "DISP-004"):
+    for case_id in ("DISP-001", "DISP-004"):
         raw = _load_json(_MOCK_DIR / f"{case_id}.json")
+        data_sources = merge_claim_evidence(raw["data_sources"], raw.get("dispute_claim", {}))
         try:
-            index = build_evidence_index(raw["data_sources"])
+            index = build_evidence_index(data_sources)
         except Exception as exc:
             errors.append(f"{case_id}: build_evidence_index raised {exc!r}")
             continue
@@ -141,14 +143,13 @@ def _test_other_cases() -> None:
             errors.append(f"{case_id}: expected > 0 items, got 0")
 
     if errors:
-        print("\nTEST 2 (DISP-001 + DISP-003 + DISP-004) RESULT: FAIL")
+        print("\nTEST 2 (DISP-001 + DISP-004) RESULT: FAIL")
         for e in errors:
             print(f"  - {e}")
         sys.exit(1)
     else:
-        print("\nTEST 2 (DISP-001 + DISP-003 + DISP-004) RESULT: PASS")
+        print("\nTEST 2 (DISP-001 + DISP-004) RESULT: PASS")
         print("  - DISP-001: index built without errors, > 0 items")
-        print("  - DISP-003: index built without errors, > 0 items")
         print("  - DISP-004: index built without errors, > 0 items")
 
 
@@ -159,7 +160,7 @@ def _test_other_cases() -> None:
 
 def _test_disp004() -> None:
     raw = _load_json(_MOCK_DIR / "DISP-004.json")
-    data_sources = raw["data_sources"]
+    data_sources = merge_claim_evidence(raw["data_sources"], raw.get("dispute_claim", {}))
     snapshot = copy.deepcopy(data_sources)
 
     index = build_evidence_index(data_sources)

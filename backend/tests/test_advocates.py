@@ -25,6 +25,7 @@ sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend.agents...` imports w
 from backend.agents import rider_advocate_agent  # noqa: E402
 from backend.agents import driver_advocate_agent  # noqa: E402
 from backend.shared.evidence_index import build_evidence_index  # noqa: E402
+from backend.shared.claim_evidence import merge_claim_evidence  # noqa: E402
 from backend.policy.precedent_store import retrieve_clauses  # noqa: E402
 
 
@@ -34,7 +35,7 @@ _MOCK_DATA_DIR = _BACKEND_DIR / "mock_data"
 _FIXTURES_DIR = _BACKEND_DIR / "tests" / "fixtures"
 _CLAIMS_FILE = _FIXTURES_DIR / "dispute_claims.json"
 
-ALL_CASES = ["DISP-001", "DISP-002", "DISP-003"]
+ALL_CASES = ["DISP-001", "DISP-002", "DISP-004"]
 
 
 def _load_json(path: Path) -> dict:
@@ -46,11 +47,15 @@ def _build_context(case_id: str) -> dict:
     """Build an advocate context from mock_data + dispute_claims fixture."""
     mock_case = _load_json(_MOCK_DATA_DIR / f"{case_id}.json")
     claims = _load_json(_CLAIMS_FILE)
-    dispute_claim = claims[case_id]
+    dispute_claim = claims.get(case_id) or mock_case.get("dispute_claim", {})
+
+    data_sources = merge_claim_evidence(
+        mock_case["data_sources"], mock_case.get("dispute_claim", {})
+    )
 
     return {
         "case_metadata": mock_case["case_metadata"],
-        "data_sources": mock_case["data_sources"],
+        "data_sources": data_sources,
         "dispute_claim": dispute_claim,
         "round_1_statements": {},
         "round_2_cross_exam": {
@@ -209,28 +214,29 @@ _QUESTIONS = {
             "asked_at": "2026-09-13T09:30:00+08:00",
         },
     },
-    "DISP-003": {
+    "DISP-004": {
         "rider": {
             "question_id": "Q-TEST-001",
             "directed_to": "RIDER_ADVOCATE",
             "question_text": (
-                "The driver claims you vomited in the back seat. What "
-                "evidence shows your condition during the trip?"
+                "Photo IMG-001 is dated 30 Aug, before this trip. "
+                "What evidence shows the mess was caused by you on 25 Sep?"
             ),
-            "evidence_context": "MSG-101 to MSG-102",
-            "category": "CHAT_CONTENT",
-            "asked_at": "2026-09-22T04:20:00+08:00",
+            "evidence_context": "IMG-001",
+            "category": "MISSING_EVIDENCE",
+            "asked_at": "2026-09-26T10:00:00+08:00",
         },
         "driver": {
             "question_id": "Q-TEST-002",
             "directed_to": "DRIVER_ADVOCATE",
             "question_text": (
-                "You filed a cleaning fee claim of $100. What evidence "
-                "supports that the rider caused damage to your vehicle?"
+                "The photo IMG-001 is dated 30 Aug and the receipt RCP-001 "
+                "is dated 26 Sep. What evidence links the mess to this trip "
+                "on 25 Sep?"
             ),
-            "evidence_context": "EVT-001",
+            "evidence_context": "IMG-001, RCP-001",
             "category": "RECEIPT_VALIDITY",
-            "asked_at": "2026-09-22T04:20:00+08:00",
+            "asked_at": "2026-09-26T10:00:00+08:00",
         },
     },
 }
@@ -239,7 +245,7 @@ _QUESTIONS = {
 _AMOUNT_CAPS = {
     "DISP-001": {"claimant": "RIDER", "cap": 3.25},
     "DISP-002": {"claimant": "RIDER", "cap": 5.0},
-    "DISP-003": {"claimant": "DRIVER", "cap": 100.0},
+    "DISP-004": {"claimant": "DRIVER", "cap": 60.0},
 }
 
 
