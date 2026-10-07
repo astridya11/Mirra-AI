@@ -21,6 +21,7 @@ sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend.agents...` imports w
 
 from backend.agents import judge_agent  # noqa: E402
 from backend.agents.judge_agent import _get_dispute_claim_text, run_judge  # noqa: E402
+from backend.shared.llm_client import LLMError  # noqa: E402
 
 
 # --- Load mock data + fixture --------------------------------------------------
@@ -858,7 +859,86 @@ def _run_test8(mock: bool = False) -> None:
         print("  - no data → '(no claim statement available)'")
 
 
-# ---------------------------------------------------------------------------
+# --- Test 9: LLM failure produces safe escalated verdict ----------------------
+
+
+async def _run_test9(mock: bool = False) -> None:
+    """Test 9: monkeypatch call_llm_json to raise LLMError.
+
+    The judge must return a safe escalated verdict with:
+    - ruling_type ESCALATED
+    - confidence_score 0.0
+    - reasoning_summary == "The automated review could not be completed. Case escalated for human review."
+    - No field of the verdict (json.dumps) contains "boom", "DeepSeek" or "failed after".
+
+    Works with --mock and without (always monkeypatches, no network).
+    """
+    context = _build_context()
+
+    error_text = (
+        "DeepSeek LLM call failed after 2 attempts. Last error: boom"
+    )
+
+    original = judge_agent.call_llm_json
+
+    async def _failing_llm(system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        raise LLMError(error_text)
+
+    judge_agent.call_llm_json = _failing_llm
+    print("[MOCK MODE] call_llm_json raises LLMError for test 9\n")
+
+    try:
+        verdict = await run_judge(context)
+    finally:
+        judge_agent.call_llm_json = original
+
+    print("=" * 60)
+    print("TEST 9 — LLM FAILURE -> SAFE ESCALATED VERDICT")
+    print("=" * 60)
+    print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    print("=" * 60)
+
+    errors: list[str] = []
+
+    if verdict.get("ruling_type") != "ESCALATED":
+        errors.append(
+            f"Expected ruling_type == ESCALATED, got {verdict.get('ruling_type')}"
+        )
+
+    if verdict.get("confidence_score") != 0.0:
+        errors.append(
+            f"Expected confidence_score == 0.0, got {verdict.get('confidence_score')}"
+        )
+
+    expected_reasoning = (
+        "The automated review could not be completed. "
+        "Case escalated for human review."
+    )
+    if verdict.get("reasoning_summary") != expected_reasoning:
+        errors.append(
+            f"Expected reasoning_summary == {expected_reasoning!r}, "
+            f"got {verdict.get('reasoning_summary')!r}"
+        )
+
+    # No field of the verdict must leak the error text
+    verdict_json = json.dumps(verdict, ensure_ascii=False)
+    for forbidden in ("boom", "DeepSeek", "failed after"):
+        if forbidden in verdict_json:
+            errors.append(
+                f"Verdict JSON must not contain '{forbidden}', but it does"
+            )
+
+    if errors:
+        print("\nTEST 9 RESULT: FAIL")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("\nTEST 9 RESULT: PASS")
+        print("  - ruling_type == ESCALATED")
+        print("  - confidence_score == 0.0")
+        print("  - reasoning_summary is the clean fallback text")
+        print("  - no error text leaked in verdict JSON")
 
 
 async def _run_all_tests(mock: bool = False) -> None:
@@ -877,6 +957,8 @@ async def _run_all_tests(mock: bool = False) -> None:
     await _run_test7(mock=mock)
     print()
     _run_test8(mock=mock)
+    print()
+    await _run_test9(mock=mock)
     print()
     print("=" * 60)
     print("ALL TESTS PASSED")
