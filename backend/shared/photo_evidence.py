@@ -28,6 +28,10 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
+import re
+import tempfile
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -67,6 +71,12 @@ _BACKEND_DIR = _THIS_DIR.parent  # backend/
 _MOCK_EVIDENCE_DIR = _BACKEND_DIR / "mock_evidence"
 _DEFAULT_HASHES_PATH = _MOCK_EVIDENCE_DIR / "known_image_hashes.json"
 _DEFAULT_ANNOTATIONS_PATH = _MOCK_EVIDENCE_DIR / "photo_annotations.json"
+
+# Runtime hash registry — gitignored, never committed.
+RUNTIME_HASHES_PATH = _BACKEND_DIR / "disputes" / "known_image_hashes.runtime.json"
+
+# Regex for valid dHash strings: "dhash:" + exactly 16 hex chars.
+_HASH_RE = re.compile(r"^dhash:[0-9a-fA-F]{16}$")
 
 # ---------------------------------------------------------------------------
 # Stain / severity validation (mirrors image_analysis._parse_provider_result)
@@ -120,7 +130,20 @@ def _load_json(path: Path) -> dict:
 
 
 def _load_default_hashes() -> dict:
-    return _load_json(_DEFAULT_HASHES_PATH)
+    """Return the merge of the mock corpus and the runtime registry.
+
+    Runtime entries are added on top; mock entries win on a clash
+    (so the mock corpus is never shadowed by a runtime accident).
+    A missing or broken runtime file is silently ignored.
+    """
+    base = _load_json(_DEFAULT_HASHES_PATH)
+    runtime = _load_json(RUNTIME_HASHES_PATH)
+    if runtime:
+        # Merge: runtime entries added, mock entries win on clash.
+        merged = dict(runtime)
+        merged.update(base)
+        return merged
+    return base
 
 
 def _load_default_annotations() -> dict:
@@ -354,6 +377,74 @@ def _find_known_match(
 
 
 # ---------------------------------------------------------------------------
+# Runtime hash registry
+# ---------------------------------------------------------------------------
+
+_registry_lock = threading.Lock()
+
+
+def register_image_hash(
+    image_hash: str,
+    case_id: str,
+    *,
+    path: Path | None = None,
+) -> bool:
+    """Register *image_hash* → *case_id* in the runtime hash file.
+
+    Returns True if the hash was newly registered, False if it was
+    skipped (falsy, bad format, low-detail, or already owned by another case).
+
+    Never raises: all filesystem / JSON errors are swallowed.
+
+    Args:
+        image_hash: ``"dhash:<16 hex>"`` string.
+        case_id: Case that first uploaded this photo.
+        path: Override for the runtime file path (tests use a temp path).
+    """
+    # --- Validate inputs ----------------------------------------------------
+    if not image_hash or not isinstance(image_hash, str):
+        return False
+    if not _HASH_RE.match(image_hash):
+        return False
+    bits = _popcount(image_hash)
+    if bits is None or not (_MIN_HASH_BITS <= bits <= _MAX_HASH_BITS):
+        return False
+
+    runtime_path = RUNTIME_HASHES_PATH if path is None else Path(path)
+
+    try:
+        with _registry_lock:
+            # Load existing runtime data (empty dict on any error).
+            existing = _load_json(runtime_path)
+
+            # Do not overwrite an existing entry.
+            if image_hash in existing:
+                return False
+
+            existing[image_hash] = case_id
+
+            # Write atomically: temp file + os.replace.
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(runtime_path.parent),
+                prefix=".runtime_hashes_",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, indent=2, sort_keys=True)
+                os.replace(tmp_path, runtime_path)
+            except Exception:
+                # Clean up the temp file if the write failed.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                return False
+
+            return True
+    except Exception:
+        return False
 # AI-generation detection
 # ---------------------------------------------------------------------------
 
@@ -560,6 +651,7 @@ def build_image_evidence(
     known_hashes: dict[str, str] | None = None,
     annotation: dict[str, Any] | None = None,
     use_vision: bool = False,
+    current_case_id: str | None = None,
 ) -> dict[str, Any]:
     """Build an ``ImageEvidenceInput`` dict from an image file on disk.
 
@@ -573,6 +665,8 @@ def build_image_evidence(
             Defaults to ``backend/mock_evidence/known_image_hashes.json``.
         annotation: Vision-model stand-in dict for this image_id.  Defaults
             to a lookup in ``photo_annotations.json``.
+        current_case_id: When given, entries in *known_hashes* whose case_id
+            equals this value are ignored so a case never matches its own photo.
 
     Returns:
         A dict conforming to ``ImageEvidenceInput`` in ``shared/schemas.json``.
@@ -617,6 +711,13 @@ def build_image_evidence(
         if bits_set is not None and _MIN_HASH_BITS <= bits_set <= _MAX_HASH_BITS:
             if known_hashes is None:
                 known_hashes = _load_default_hashes()
+            # Filter out entries that belong to the current case so a
+            # case never matches its own photo.
+            if current_case_id is not None:
+                known_hashes = {
+                    h: c for h, c in known_hashes.items()
+                    if c != current_case_id
+                }
             matches = _find_known_match(this_hash, known_hashes)
             if matches:
                 base["known_matches"] = matches

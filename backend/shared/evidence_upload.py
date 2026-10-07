@@ -22,7 +22,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from backend.shared.photo_evidence import build_image_evidence
+from backend.shared.photo_evidence import build_image_evidence, register_image_hash
 from backend.shared.receipt_evidence import build_receipt_evidence
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ def process_uploaded_evidence(
     photo_annotations: dict | None = None,
     receipt_annotations: dict | None = None,
     use_vision: bool | None = None,
+    register_hashes: bool = True,
 ) -> tuple[list[dict], list[dict]]:
     """Process uploaded evidence items and return (image_evidence, receipt_evidence).
 
@@ -201,6 +202,7 @@ def process_uploaded_evidence(
                 ev = build_image_evidence(
                     file_path, image_id, url, annotation=annotation,
                     use_vision=use_vision,
+                    current_case_id=case_id,
                 )
 
             elif isinstance(item, str) and item.strip():
@@ -279,5 +281,16 @@ def process_uploaded_evidence(
     except Exception:
         _cleanup()
         raise
+
+    # ------------------------------------------------------------------
+    # Register image hashes AFTER all evidence is built successfully.
+    # A case never matches its own photo because build_image_evidence
+    # was called with current_case_id (self-entries are filtered out).
+    # ------------------------------------------------------------------
+    if register_hashes:
+        for ev in image_evidence:
+            img_hash = ev.get("image_hash")
+            if img_hash:
+                register_image_hash(img_hash, case_id)
 
     return image_evidence, receipt_evidence

@@ -209,6 +209,7 @@ def main() -> None:
                 "DISP-T01", [data_url_a], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             img_ev = None
@@ -268,6 +269,7 @@ def main() -> None:
                 "DISP-T02", [data_url_b], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             img_ev_b = None
@@ -326,6 +328,7 @@ def main() -> None:
                 uploads_dir=tmp_path,
                 receipt_annotations=receipt_ann,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             rcp_ev_c = None
@@ -382,6 +385,7 @@ def main() -> None:
                 uploads_dir=tmp_path,
                 photo_annotations=wrong_ann,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             img_ev_d = None
@@ -418,6 +422,7 @@ def main() -> None:
                 "DISP-T04", ["data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
             check_e_errors.append("expected EvidenceUploadError, got no exception")
         except EvidenceUploadError:
@@ -447,6 +452,7 @@ def main() -> None:
                 "DISP-T05", ["data:image/jpeg;base64,!!!not-valid-b64!!!"], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
             check_f_errors.append("expected EvidenceUploadError, got no exception")
         except EvidenceUploadError:
@@ -491,6 +497,7 @@ def main() -> None:
                     "DISP-T06", [_data_url("image/jpeg", big_bytes)], [], "2026-09-26T10:00:00+08:00",
                     uploads_dir=tmp_path,
                     use_vision=False,
+                    register_hashes=False,
                 )
                 check_g_errors.append("expected EvidenceUploadError, got no exception")
             except EvidenceUploadError:
@@ -525,6 +532,7 @@ def main() -> None:
                 "DISP-T07", [mismatched_url], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
             check_h_errors.append("expected EvidenceUploadError, got no exception")
         except EvidenceUploadError:
@@ -557,6 +565,7 @@ def main() -> None:
                 "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             img_ev_i = None
@@ -617,6 +626,7 @@ def main() -> None:
                 "DISP-T09", [valid_url, invalid_url], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
             check_j_errors.append("expected EvidenceUploadError, got no exception")
         except EvidenceUploadError:
@@ -649,6 +659,7 @@ def main() -> None:
                 "../x", [], [], "2026-09-26T10:00:00+08:00",
                 uploads_dir=tmp_path,
                 use_vision=False,
+                register_hashes=False,
             )
             check_k_errors.append("expected EvidenceUploadError, got no exception")
         except EvidenceUploadError:
@@ -709,6 +720,7 @@ def main() -> None:
                 uploads_dir=tmp_path,
                 receipt_annotations=receipt_ann_l,
                 use_vision=False,
+                register_hashes=False,
             )
         except Exception as exc:
             img_ev_l = None
