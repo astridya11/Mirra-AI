@@ -192,7 +192,7 @@ export default function HumanReviewPage() {
               </>
             )}
             {verdict.reasoning_summary && (
-              <p className="text-[13px] text-[#6B7280] leading-relaxed mt-2 pt-2 border-t border-gray-100">
+              <p className="text-[13px] text-[#6B7280] leading-5 mt-2 pt-2 border-t border-gray-100">
                 {verdict.reasoning_summary}
               </p>
             )}

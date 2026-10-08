@@ -152,7 +152,7 @@ export default function VerdictPage() {
                     <span className="text-[14px] font-semibold text-[#111827]">{clause.clause_title}</span>
                   </div>
                   {clause.clause_text_summary && (
-                    <p className="text-[12px] text-[#6B7280] leading-relaxed">{clause.clause_text_summary}</p>
+                    <p className="text-[12px] text-[#6B7280] leading-5">{clause.clause_text_summary}</p>
                   )}
                 </div>
               ))}
@@ -164,7 +164,7 @@ export default function VerdictPage() {
         {verdict?.reasoning_summary && (
           <div>
             <p className="text-[13px] font-semibold text-[#6B7280] uppercase tracking-wide mb-2">Judge's Reasoning</p>
-            <p className="text-[14px] text-[#111827] leading-relaxed">{verdict.reasoning_summary}</p>
+            <p className="text-[14px] text-[#111827] leading-5">{verdict.reasoning_summary}</p>
           </div>
         )}
 

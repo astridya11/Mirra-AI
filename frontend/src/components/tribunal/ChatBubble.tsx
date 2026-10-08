@@ -1,155 +1,298 @@
-/**
- * ChatBubble — conversation bubble for tribunal agent messages.
- *
- * Rider advocate → left (pink), Driver advocate → right (teal),
- * Prosecutor → center (neutral, with directional indicator).
- *
- * Features:
- *   - Avatar (initials circle, party-colored)
- *   - Markdown-stripped content from data.content
- *   - Expand/collapse for long messages (3–4 line clamp)
- *   - No raw JSON, no IDs, no timestamps, no evidence context
- *   - Spring-like fade-in animation
- */
-
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
+import { TypingDots } from "@/src/components/TypingDots";
+import { Avatar } from "@/src/components/Avatar";
 
-export type BubbleSide = "left" | "right" | "center";
+export type BubbleSide = "left" | "right";
 
-interface ChatBubbleProps {
+export interface ChatMessage {
+  id: string;
   side: BubbleSide;
   speaker: string;
-  /** The text to display (already cleaned of markdown). */
+  speakerTitle: string;
   text: string;
-  /** Optional label for the prosecutor's target direction. */
+  badge?: string;
   targetLabel?: string;
+  imageUrl?: string;
 }
 
-// --- Helpers ---
+// -----------------------------------------------------------------------------
+// Markdown cleanup
+// -----------------------------------------------------------------------------
 
 function stripMarkdown(s: string): string {
   return s
+    // fenced code blocks
     .replace(/```[\s\S]*?```/g, "")
+    // inline code
     .replace(/`([^`]+)`/g, "$1")
+    // bold
     .replace(/\*\*([^*]+)\*\*/g, "$1")
+    // italic
     .replace(/\*([^*]+)\*/g, "$1")
+    // underline
     .replace(/__([^_]+)__/g, "$1")
+    // headings
     .replace(/#{1,6}\s+/g, "")
+    // markdown links
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    // unordered lists
     .replace(/^[\s]*[-*+]\s+/gm, "")
+    // ordered lists
     .replace(/^[\s]*\d+\.\s+/gm, "")
+    // blockquotes
     .replace(/^\s*>\s+/gm, "")
     .trim();
 }
 
-// --- Avatar ---
 
-function Avatar({
-  side,
-  speaker,
+// -----------------------------------------------------------------------------
+// ChatBubble
+// -----------------------------------------------------------------------------
+
+function ChatBubbleImpl({
+  msg,
 }: {
-  side: BubbleSide;
-  speaker: string;
+  msg: ChatMessage;
 }) {
-  if (side === "center") {
-    // Prosecutor: small neutral avatar
-    return (
-      <div className="w-7 h-7 rounded-full bg-[#FFFBEB] flex items-center justify-center flex-shrink-0">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="11" cy="11" r="7" />
-          <line x1="16.5" y1="16.5" x2="21" y2="21" />
-        </svg>
-      </div>
-    );
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const isRight = msg.side === "right";
+
+  const maxLength = 180;
+
+  const hasImage = Boolean(msg.imageUrl);
+
+  /*
+   * Clean markdown before calculating/truncating the displayed text.
+   *
+   * This prevents markdown syntax from consuming part of the 180-character
+   * limit and ensures the user only sees clean text.
+   */
+  const cleanedText = useMemo(() => {
+    return stripMarkdown(msg.text || "");
+  }, [msg.text]);
+
+  const isLongText = cleanedText.length > maxLength;
+
+  const displayedText = useMemo(() => {
+    if (!isLongText || isExpanded) {
+      return cleanedText;
+    }
+
+    return cleanedText.slice(0, maxLength) + "…";
+  }, [
+    cleanedText,
+    isLongText,
+    isExpanded,
+  ]);
+
+  // ---------------------------------------------------------------------------
+  // Determine bubble style based on speaker role.
+  //
+  // This logic intentionally follows FunctionalChatBubble exactly.
+  // ---------------------------------------------------------------------------
+
+  const s = msg.speaker.toUpperCase();
+
+  let bubbleClass: string;
+
+  if (s.includes("DRIVER")) {
+    // Driver Advocate — black bubble, right side
+    bubbleClass =
+      "bg-slate-800 text-white rounded-tr-none";
+  } else if (s.includes("RIDER")) {
+    // Rider Advocate — gray bubble, left side
+    bubbleClass =
+      "bg-gray-100 text-slate-800 rounded-tl-none";
+  } else if (s.includes("PROSECUTOR")) {
+    // Prosecutor — soft amber/pink
+    bubbleClass =
+      "bg-[#FFEBCD] text-slate-800 rounded-tl-none";
+  } else if (s.includes("POLICY")) {
+    // Policy Consultant — soft emerald
+    bubbleClass =
+      "bg-[#4682B4] text-white rounded-tr-none";
+  } else {
+    // Default fallback
+    bubbleClass =
+      "bg-gray-100 text-slate-800 rounded-tl-none";
   }
-
-  const isRider = side === "left";
-  const bg = isRider ? "bg-[#FDF1F3]" : "bg-[#F0FDFA]";
-  const color = isRider ? "text-[#E84360]" : "text-[#0D9488]";
-  const initials = isRider ? "RA" : "DA";
-
-  return (
-    <div className={`w-8 h-8 rounded-full ${bg} flex items-center justify-center flex-shrink-0`}>
-      <span className={`text-[11px] font-bold ${color}`}>{initials}</span>
-    </div>
-  );
-}
-
-// --- Bubble ---
-
-function ChatBubbleImpl({ side, speaker, text, targetLabel }: ChatBubbleProps) {
-  const [expanded, setExpanded] = useState(false);
-  const cleaned = stripMarkdown(text || "");
-
-  // Prosecutor center bubble
-  if (side === "center") {
-    return (
-      <div className="flex items-start gap-2 justify-center my-2 animate-slide-up">
-        <Avatar side={side} speaker={speaker} />
-        <div className="max-w-[70%]">
-          <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[15px] leading-relaxed text-[#111827]">
-            <span
-              className={`block ${expanded ? "" : "line-clamp-4"}`}
-            >
-              {cleaned || "…"}
-            </span>
-            {cleaned.length > 160 && (
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="text-[13px] text-[#E84360] font-medium mt-1"
-              >
-                {expanded ? "Show less" : "Show more"}
-              </button>
-            )}
-          </div>
-          {targetLabel && (
-            <div className="flex items-center gap-1 mt-1 ml-2">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-              <span className="text-[11px] text-[#9CA3AF]">{targetLabel}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const isLeft = side === "left";
 
   return (
     <div
-      className={`flex items-end gap-2 ${isLeft ? "justify-start" : "justify-end"} animate-slide-up`}
+      className={`flex flex-col my-2.5 ${
+        isRight
+          ? "items-end"
+          : "items-start"
+      }`}
     >
-      {isLeft && <Avatar side={side} speaker={speaker} />}
-      <div className={`max-w-[75%] ${isLeft ? "" : "items-end"}`}>
-        <div
-          className={`px-4 py-2.5 text-[15px] leading-relaxed rounded-2xl ${
-            isLeft
-              ? "bg-[#F3F4F6] text-[#111827] rounded-tl-sm"
-              : "bg-[#0D9488] text-white rounded-tr-sm"
-          }`}
-        >
-          <span className={`block ${expanded ? "" : "line-clamp-4"}`}>
-            {cleaned || "…"}
+      {/* -----------------------------------------------------------------
+          Speaker Header
+          ----------------------------------------------------------------- */}
+
+      <div
+        className={`flex items-center gap-1.5 mb-1 px-1 text-[12px] text-gray-500 ${
+          isRight
+            ? "flex-row-reverse"
+            : ""
+        }`}
+      >
+        <span className="font-normal text-slate-700">
+          {msg.speakerTitle}
+        </span>
+
+        {msg.targetLabel && (
+          <span className="text-gray-400">
+            {isRight? "←" : "→"}
           </span>
-          {cleaned.length > 160 && (
+        )}
+
+        {msg.targetLabel && (
+          <span className="text-gray-400">
+            {msg.targetLabel}
+          </span>
+        )}
+
+        {/* {msg.badge && (
+          <span className="px-1.5 py-0.2 text-[10px] bg-slate-100 text-slate-800 rounded font-normal">
+            {msg.badge}
+          </span>
+        )} */}
+      </div>
+
+      {/* -----------------------------------------------------------------
+          Avatar + Bubble
+          
+          The bubble itself keeps FunctionalChatBubble's exact styling.
+          The avatar is simply added beside it.
+          ----------------------------------------------------------------- */}
+
+      <div
+        className={`flex items-start gap-2 ${
+          isRight
+            ? "flex-row-reverse"
+            : ""
+        }`}
+      >
+        <Avatar
+          speaker={msg.speaker}
+        />
+
+        {/* Bubble Content — FunctionalChatBubble styling unchanged */}
+        <div
+          className={`max-w-[75%] rounded-2xl ${hasImage ? "p-1.5" : "px-4 py-2.5"} text-[14px] leading-5 transition-all ${bubbleClass}`}
+        >
+          {hasImage && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={msg.imageUrl}
+              alt={displayedText || "Uploaded evidence"}
+              className="w-full max-h-56 rounded-xl object-cover"
+            />
+          )}
+
+          <p className={hasImage ? "px-2 pt-1.5 pb-1 text-[13px] whitespace-pre-wrap break-words" : "whitespace-pre-wrap break-words"}>
+            {displayedText}
+          </p>
+
+          {/* Show More / Show Less Toggle Button */}
+          {isLongText && (
             <button
-              onClick={() => setExpanded((v) => !v)}
-              className={`text-[13px] font-medium mt-1 ${
-                isLeft ? "text-[#E84360]" : "text-white/80"
+              onClick={() =>
+                setIsExpanded(
+                  !isExpanded
+                )
+              }
+              className={`mt-2 text-[10px] font-normal underline focus:outline-none transition-colors ${
+                isRight
+                  ? "text-slate-100 hover:text-white"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              {expanded ? "Show less" : "Show more"}
+              {isExpanded
+                ? "收起 (Show Less)"
+                : "展开全部 (Show More)"}
             </button>
           )}
         </div>
       </div>
-      {!isLeft && <Avatar side={side} speaker={speaker} />}
     </div>
   );
 }
 
-export const ChatBubble = memo(ChatBubbleImpl);
+export const ChatBubble = memo(
+  ChatBubbleImpl
+);
+
+// 在 ChatBubble.tsx 文件底部追加导出 TypingBubble 组件
+
+export interface TypingConfig {
+  speaker: string;
+  speakerTitle: string;
+  side: BubbleSide;
+}
+
+export const TypingBubble = memo(function TypingBubble({
+  config,
+}: {
+  config: TypingConfig;
+}) {
+  const isRight = config.side === "right";
+  const s = config.speaker.toUpperCase();
+
+  // 复用 ChatBubbleImpl 中的角色气泡配色逻辑
+  let bubbleClass: string;
+  let dotColorClass: string;
+
+  if (s.includes("DRIVER")) {
+    bubbleClass = "bg-slate-800 text-white rounded-tr-none";
+    dotColorClass = "bg-slate-300"; // 暗色背景用浅色点
+  } else if (s.includes("RIDER")) {
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+    dotColorClass = "bg-slate-500";
+  } else if (s.includes("PROSECUTOR")) {
+    bubbleClass = "bg-[#FFEBCD] text-slate-800 rounded-tl-none";
+    dotColorClass = "bg-amber-700";
+  } else if (s.includes("POLICY")) {
+    bubbleClass = "bg-[#4682B4] text-white rounded-tr-none";
+    dotColorClass = "bg-blue-100";
+  } else {
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+    dotColorClass = "bg-slate-500";
+  }
+
+  return (
+    <div
+      className={`flex flex-col my-2.5 transition-all duration-300 animate-fadeIn ${
+        isRight ? "items-end" : "items-start"
+      }`}
+    >
+      {/* 角色 Header & 正在输入指示 */}
+      <div
+        className={`flex items-center gap-1.5 mb-1 px-1 text-[11px] text-gray-400 ${
+          isRight ? "flex-row-reverse" : ""
+        }`}
+      >
+        <span className="font-medium text-slate-600">
+          {config.speakerTitle}
+        </span>
+        {/* <span className="text-gray-400 animate-pulse">正在思考中...</span> */}
+      </div>
+
+      {/* Avatar 与 Typing 气泡主体 */}
+      <div
+        className={`flex items-center gap-2 ${
+          isRight ? "flex-row-reverse" : ""
+        }`}
+      >
+        <Avatar speaker={config.speaker} />
+
+        <div className={`px-4 py-3 rounded-2xl ${bubbleClass}`}>
+          <TypingDots />
+        </div>
+      </div>
+    </div>
+  );
+});

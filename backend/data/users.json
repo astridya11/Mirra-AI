@@ -52,7 +52,7 @@
         "password":"test123",
         "account_age_days": 1095,
         "total_trips": 3200,
-        "trips_past_30_days": ["TRIP-2026-09104"],
+        "trips_past_30_days": ["TRIP-2026-09104", "TRIP-2026-09105"],
         "avg_rating": 4.9,
         "risk_score": 0.1,
         "dispute_history_30d": 0,

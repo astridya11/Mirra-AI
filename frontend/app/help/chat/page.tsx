@@ -36,6 +36,7 @@ import { IOSHeader } from "@/src/components/IOSHeader";
 import { TypingDots } from "@/src/components/TypingDots";
 import { createDispute, CreateDisputePayload, getCompletedResult, submitPartyDecision } from "@/src/lib/api";
 import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
+import { Avatar } from "@/src/components/Avatar";
 
 // ==========================================
 // Issue helpers
@@ -214,9 +215,7 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
     <div className="space-y-3">
       {/* Bot message introducing the verdict */}
       <div className="flex items-end gap-2 justify-start animate-slide-up">
-        <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-          <span className="text-[10px] font-bold text-[#E84360]">M</span>
-        </div>
+        <Avatar type="bot"/>
         <div className="max-w-[75%]">
           <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[14px] leading-5 text-[#111827]">
             Your case has been reviewed. Here's the outcome:
@@ -332,9 +331,7 @@ function EscalatedMessage({ caseId }: { caseId: string }) {
         </button>
       </div>
       <div className="flex items-end gap-2 justify-start">
-        <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-          <span className="text-[10px] font-bold text-[#E84360]">M</span>
-        </div>
+        <Avatar type="bot" />
         <div className="max-w-[75%]">
           <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-2.5 text-[14px] leading-5 text-[#111827]">
             Your case has been escalated to our human review team. They'll examine the details carefully and get back to you via email as soon as possible.
@@ -364,15 +361,19 @@ function ChatBubble({
 }) {
   const isBot = message.sender === "bot";
   const hasImage = Boolean(message.imageUrl);
+
   return (
-    <div className={`flex items-end gap-2 ${isBot ? "justify-start" : "justify-end"} animate-slide-up`}>
-      {isBot && (
-        <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-          <span className="text-[10px] font-bold text-[#E84360]">M</span>
-        </div>
-      )}
+    <div
+      className={`flex items-start gap-2 ${
+        isBot ? "justify-start" : "justify-end"
+      } animate-slide-up`}
+    >
+      {isBot && <Avatar type="bot" />}
+
       <div
-        className={`max-w-[75%] ${hasImage ? "p-1.5" : "px-4 py-2.5"} text-[14px] leading-5 ${
+        className={`max-w-[75%] ${
+          hasImage ? "p-1.5" : "px-4 py-2.5"
+        } text-[14px] leading-5 ${
           isBot
             ? "bg-[#F3F4F6] text-[#111827] rounded-2xl rounded-tl-sm"
             : "bg-[#E84360] text-white rounded-2xl rounded-tr-sm"
@@ -387,9 +388,13 @@ function ChatBubble({
           />
         )}
         {message.text && (
-          <div className={hasImage ? "px-2 pt-1.5 pb-1 text-[13px]" : ""}>{message.text}</div>
+          <div className={hasImage ? "px-2 pt-1.5 pb-1 text-[13px]" : ""}>
+            {message.text}
+          </div>
         )}
       </div>
+
+      {!isBot && <Avatar type="user" />}
     </div>
   );
 }
@@ -778,9 +783,7 @@ function ChatContent() {
         ))}
         {botTyping && (
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-[#FDF1F3] flex items-center justify-center flex-shrink-0">
-              <span className="text-[10px] font-bold text-[#E84360]">M</span>
-            </div>
+            <Avatar type="bot" />
             <div className="bg-[#F3F4F6] rounded-2xl rounded-tl-sm px-4 py-3">
               <TypingDots />
             </div>
