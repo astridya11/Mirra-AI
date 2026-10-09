@@ -46,6 +46,7 @@ from backend.shared.evidence_upload import (
 )
 from backend.shared.verdict_caption import build_verdict_render_args
 from backend.shared.verdict_image import render_verdict_image
+from backend.shared.image_check import build_image_check
 from backend.shared.voice_asr import (
     ASRNotConfigured,
     AudioRejected,
@@ -778,10 +779,11 @@ async def get_verdict_image(dispute_id: str, image_id: str):
     output_path = UPLOADS_DIR / dispute_id / f"{image_id}_verdict.jpg"
     try:
         render_verdict_image(source_file, output_path, **render_args)
-    except Exception as exc:
+    except Exception:
+        logger.exception("Failed to render verdict image for %s/%s", dispute_id, image_id)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to render verdict image: {exc}",
+            detail="Failed to render verdict image",
         )
 
     return FileResponse(
@@ -789,6 +791,24 @@ async def get_verdict_image(dispute_id: str, image_id: str):
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Image evidence check (structured summary for frontend)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/disputes/{dispute_id}/evidence/image-check")
+def get_image_check(dispute_id: str):
+    """Return a structured image evidence check for the dispute case."""
+    if not _is_safe_id(dispute_id):
+        raise HTTPException(status_code=422, detail="Invalid dispute_id")
+
+    case = get_case(dispute_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    return build_image_check(case)
 
 
 # ---------------------------------------------------------------------------

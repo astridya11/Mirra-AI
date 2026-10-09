@@ -19,6 +19,7 @@ from backend.shared.time_rules import (
     check_distance,
     trip_end_time,
     format_gap,
+    policy_params,
 )
 
 
@@ -219,7 +220,13 @@ def _build_photo_line(case: dict, image: dict) -> str | None:
         if trip_end is not None:
             exif_dt = parse_ts(exif_ts)
             if exif_dt is not None:
-                w = check_window(exif_dt, trip_end, max_after=30, unit="minutes")
+                _pol = policy_params("POL-4", {
+                    "photo_window_min_after_trip_end": 30,
+                    "photo_location_radius_m": 500,
+                })
+                _max_after = _pol.get("photo_window_min_after_trip_end", 30)
+                _max_m = _pol.get("photo_location_radius_m", 500)
+                w = check_window(exif_dt, trip_end, max_after=_max_after, unit="minutes")
                 if w["seconds"] is not None:
                     secs = w["seconds"]
                     word = "before" if secs < 0 else "after"
@@ -232,7 +239,7 @@ def _build_photo_line(case: dict, image: dict) -> str | None:
                         isinstance(exif_gps, dict)
                         and isinstance(dropoff, dict)
                     ):
-                        d = check_distance(exif_gps, dropoff, max_m=500)
+                        d = check_distance(exif_gps, dropoff, max_m=_max_m)
                         if d["text"] != "not available":
                             line += f", {d['text']} from drop-off"
 
