@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,6 +46,13 @@ from backend.shared.evidence_upload import (
 )
 from backend.shared.verdict_caption import build_verdict_render_args
 from backend.shared.verdict_image import render_verdict_image
+from backend.shared.voice_asr import (
+    ASRNotConfigured,
+    AudioRejected,
+    VoiceError,
+    parse_audio_data_url,
+    transcribe,
+)
 
 
 from backend.orchestrator.state_machine import (
@@ -782,6 +789,65 @@ async def get_verdict_image(dispute_id: str, image_id: str):
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Voice transcription (TRTC ASR one-sentence recognition)
+# ---------------------------------------------------------------------------
+
+
+class VoiceTranscribeRequest(BaseModel):
+    audio: str = Field(..., description="Audio data URL (base64)")
+    language: Literal["en", "zh", "ms"] = Field("en")
+
+
+@app.post("/api/voice/transcribe")
+def transcribe_voice(payload: VoiceTranscribeRequest):
+    """Transcribe a short audio clip to text via Tencent TRTC ASR."""
+    try:
+        audio_bytes, voice_format = parse_audio_data_url(payload.audio)
+    except AudioRejected as exc:
+        status = exc.status
+        if status == 415:
+            detail = "Unsupported audio format. Send WAV, MP3, M4A or OGG-Opus."
+        elif status == 413:
+            detail = "Recording too large (max 3 MB / 60 s)."
+        else:
+            detail = "Invalid audio data"
+        raise HTTPException(status_code=status, detail=detail)
+
+    # Check WAV duration.
+    if voice_format == "wav":
+        from backend.shared.voice_asr import _wav_duration_seconds
+
+        try:
+            duration = _wav_duration_seconds(audio_bytes)
+        except AudioRejected:
+            raise HTTPException(status_code=422, detail="Invalid audio data")
+        if duration > 60.0:
+            raise HTTPException(status_code=413, detail="Recording too large (max 3 MB / 60 s).")
+
+    try:
+        result = transcribe(audio_bytes, voice_format, payload.language)
+    except ASRNotConfigured:
+        raise HTTPException(status_code=503, detail="Voice input is not configured")
+    except AudioRejected as exc:
+        status = exc.status
+        if status == 413:
+            detail = "Recording too large (max 3 MB / 60 s)."
+        elif status == 415:
+            detail = "Unsupported audio format. Send WAV, MP3, M4A or OGG-Opus."
+        else:
+            detail = "Invalid audio data"
+        raise HTTPException(status_code=status, detail=detail)
+    except VoiceError:
+        raise HTTPException(status_code=502, detail="Voice recognition failed")
+
+    return {
+        "text": result["text"],
+        "duration_ms": result["duration_ms"],
+        "language": result["language"],
+    }
 
 
 # ---------------------------------------------------------------------------
