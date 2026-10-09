@@ -23,9 +23,6 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from trtc_asr import ASRError, SITE_INTL
-from trtc_asr.v3 import SentenceRecognizer, TranscribeRequest, new_credential
-
 # Load backend/.env the same way backend.shared.llm_client does.
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _BACKEND_DIR / ".env"
@@ -142,6 +139,38 @@ def _wav_duration_seconds(raw: bytes) -> float:
         raise AudioRejected(422, "Invalid audio data")
 
 
+# --- Lazy SDK import -----------------------------------------------------------
+
+
+def _import_sdk() -> Any:
+    """Lazily import the trtc_asr SDK so the backend starts without it.
+
+    Returns a dict with ``ASRError``, ``SITE_INTL``, ``SentenceRecognizer``,
+    ``TranscribeRequest``, ``new_credential``.
+
+    Raises:
+        ASRNotConfigured: if the package is not installed.
+    """
+    try:
+        from trtc_asr import ASRError, SITE_INTL
+        from trtc_asr.v3 import SentenceRecognizer, TranscribeRequest, new_credential
+
+        return {
+            "ASRError": ASRError,
+            "SITE_INTL": SITE_INTL,
+            "SentenceRecognizer": SentenceRecognizer,
+            "TranscribeRequest": TranscribeRequest,
+            "new_credential": new_credential,
+        }
+    except ImportError:
+        logger.warning(
+            "trtc-asr not installed: pip install -r backend/requirements.txt"
+        )
+        raise ASRNotConfigured(
+            "trtc-asr not installed: pip install -r backend/requirements.txt"
+        )
+
+
 # --- Credential + transcribe ----------------------------------------------------
 
 
@@ -152,9 +181,16 @@ def _get_credential() -> Any:
     if not app_id or not secret_key:
         raise ASRNotConfigured("TRTC_ASR_SDK_APP_ID / TRTC_ASR_SECRET_KEY not set")
 
-    credential = new_credential(int(app_id), secret_key)
-    credential.site = SITE_INTL
-    return credential
+    sdk = _import_sdk()
+
+    try:
+        numeric_app_id = int(app_id)
+    except (ValueError, TypeError):
+        raise ASRNotConfigured("TRTC_ASR_SDK_APP_ID must be a numeric value")
+
+    credential = sdk["new_credential"](numeric_app_id, secret_key)
+    credential.site = sdk["SITE_INTL"]
+    return credential, sdk
 
 
 def transcribe(audio: bytes, voice_format: str, language: str = "en") -> dict:
@@ -163,17 +199,17 @@ def transcribe(audio: bytes, voice_format: str, language: str = "en") -> dict:
     Returns ``{text, duration_ms, language, request_id}``.
 
     Raises:
-        ASRNotConfigured: env vars missing.
-        VoiceError: SDK error or non-zero response code.
+        ASRNotConfigured: env vars missing or SDK not installed.
+        VoiceError: SDK error, non-zero response code, or unexpected exception.
     """
-    credential = _get_credential()
+    credential, sdk = _get_credential()
 
     # Enforce size limit before passing to SDK.
     if len(audio) < 1 or len(audio) > _MAX_BYTES:
         raise VoiceError(413)
 
-    recognizer = SentenceRecognizer(credential)
-    req = TranscribeRequest(
+    recognizer = sdk["SentenceRecognizer"](credential)
+    req = sdk["TranscribeRequest"](
         engine_model_type="bigmodel",
         voice_format=voice_format,
         language=language,
@@ -182,9 +218,13 @@ def transcribe(audio: bytes, voice_format: str, language: str = "en") -> dict:
 
     try:
         resp = recognizer.recognize_data_with_options(audio, req)
-    except ASRError as exc:
-        logger.warning("ASR error code=%s request_id=%s", exc.code, "")
-        raise VoiceError(exc.code) from exc
+    except sdk["ASRError"] as exc:
+        request_id = getattr(exc, "request_id", "") or ""
+        logger.warning("ASR error code=%s request_id=%s", exc.code, request_id)
+        raise VoiceError(exc.code, request_id) from exc
+    except Exception as exc:
+        logger.warning("ASR unexpected %s", type(exc).__name__)
+        raise VoiceError(-1) from exc
 
     # Non-zero code → treat as failure (offline requests can return HTTP 200
     # on auth failure).

@@ -1,14 +1,13 @@
 """Tests for voice ASR endpoint — no network, SDK fully mocked.
 
-Run from backend/:
-    python -m pytest tests/test_voice.py -v
+Run from repo root:
+    python -m pytest backend/tests/test_voice.py -v --noconftest
 """
 
 from __future__ import annotations
 
 import base64
 import io
-import struct
 import sys
 import wave
 from pathlib import Path
@@ -24,7 +23,6 @@ sys.path.insert(0, str(_BACKEND_DIR.parent))
 from trtc_asr import ASRError  # noqa: E402
 
 from backend.shared.voice_asr import (  # noqa: E402
-    VoiceError,
     parse_audio_data_url,
 )
 
@@ -81,6 +79,31 @@ def _make_mock_response(
     return resp
 
 
+def _make_mock_sdk(
+    *,
+    recognizer: MagicMock | None = None,
+) -> dict[str, Any]:
+    """Build a fake SDK dict as returned by ``_import_sdk()``.
+
+    ``recognizer`` is the mock SentenceRecognizer instance to return.
+    If omitted, a default mock with a successful response is created.
+    """
+    if recognizer is None:
+        recognizer = MagicMock()
+        recognizer.recognize_data_with_options.return_value = _make_mock_response()
+
+    def fake_sentence_recognizer(credential):
+        return recognizer
+
+    return {
+        "ASRError": ASRError,
+        "SITE_INTL": "intl",
+        "SentenceRecognizer": fake_sentence_recognizer,
+        "TranscribeRequest": MagicMock,
+        "new_credential": MagicMock(),
+    }
+
+
 @pytest.fixture()
 def client():
     from backend.main import app
@@ -101,16 +124,13 @@ def _patch_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_wav_transcription_success(client, monkeypatch):
+def test_wav_transcription_success(client):
     mock_resp = _make_mock_response(text="hello world")
     mock_recognizer = MagicMock()
     mock_recognizer.recognize_data_with_options.return_value = mock_resp
+    mock_sdk = _make_mock_sdk(recognizer=mock_recognizer)
 
-    def fake_init(credential):
-        return mock_recognizer
-
-    # Patch SentenceRecognizer so no network call is made.
-    with patch("backend.shared.voice_asr.SentenceRecognizer", side_effect=fake_init, create=True):
+    with patch("backend.shared.voice_asr._import_sdk", return_value=mock_sdk):
         data_url = _make_wav_data_url(seconds=2.0)
         r = client.post(
             "/api/voice/transcribe",
@@ -227,11 +247,9 @@ def test_sdk_raises_asr_error_502(client):
 
     mock_recognizer = MagicMock()
     mock_recognizer.recognize_data_with_options.side_effect = err
+    mock_sdk = _make_mock_sdk(recognizer=mock_recognizer)
 
-    def fake_init(credential):
-        return mock_recognizer
-
-    with patch("backend.shared.voice_asr.SentenceRecognizer", side_effect=fake_init, create=True):
+    with patch("backend.shared.voice_asr._import_sdk", return_value=mock_sdk):
         data_url = _make_wav_data_url(seconds=2.0)
         r = client.post(
             "/api/voice/transcribe",
@@ -252,11 +270,9 @@ def test_sdk_nonzero_code_502(client):
     mock_resp = _make_mock_response(code=4001, text="")
     mock_recognizer = MagicMock()
     mock_recognizer.recognize_data_with_options.return_value = mock_resp
+    mock_sdk = _make_mock_sdk(recognizer=mock_recognizer)
 
-    def fake_init(credential):
-        return mock_recognizer
-
-    with patch("backend.shared.voice_asr.SentenceRecognizer", side_effect=fake_init, create=True):
+    with patch("backend.shared.voice_asr._import_sdk", return_value=mock_sdk):
         data_url = _make_wav_data_url(seconds=2.0)
         r = client.post(
             "/api/voice/transcribe",
@@ -272,7 +288,7 @@ def test_sdk_nonzero_code_502(client):
 # ---------------------------------------------------------------------------
 
 
-def test_x_m4a_maps_to_m4a(monkeypatch):
+def test_x_m4a_maps_to_m4a():
     raw = b"\x00" * 100
     raw_b64 = base64.b64encode(raw).decode("ascii")
     data_url = f"data:audio/x-m4a;base64,{raw_b64}"
@@ -282,7 +298,7 @@ def test_x_m4a_maps_to_m4a(monkeypatch):
     assert audio_bytes == raw
 
 
-def test_ogg_maps_to_ogg_opus(monkeypatch):
+def test_ogg_maps_to_ogg_opus():
     raw = b"\x00" * 100
     raw_b64 = base64.b64encode(raw).decode("ascii")
     data_url = f"data:audio/ogg;base64,{raw_b64}"
@@ -290,3 +306,64 @@ def test_ogg_maps_to_ogg_opus(monkeypatch):
     audio_bytes, voice_format = parse_audio_data_url(data_url)
     assert voice_format == "ogg-opus"
     assert audio_bytes == raw
+
+
+# ---------------------------------------------------------------------------
+# (i) trtc-asr not importable → 503
+# ---------------------------------------------------------------------------
+
+
+def test_sdk_not_installed_503(client, monkeypatch):
+    """Simulate trtc_asr not being installed by poisoning sys.modules."""
+    # Setting a module to None in sys.modules causes ImportError on import.
+    monkeypatch.setitem(sys.modules, "trtc_asr", None)
+    monkeypatch.setitem(sys.modules, "trtc_asr.v3", None)
+
+    data_url = _make_wav_data_url(seconds=2.0)
+    r = client.post(
+        "/api/voice/transcribe",
+        json={"audio": data_url, "language": "en"},
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Voice input is not configured"
+
+
+# ---------------------------------------------------------------------------
+# (j) App ID not an integer → 503
+# ---------------------------------------------------------------------------
+
+
+def test_app_id_not_integer_503(client, monkeypatch):
+    monkeypatch.setenv("TRTC_ASR_SDK_APP_ID", "abc")
+
+    data_url = _make_wav_data_url(seconds=2.0)
+    r = client.post(
+        "/api/voice/transcribe",
+        json={"audio": data_url, "language": "en"},
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Voice input is not configured"
+
+
+# ---------------------------------------------------------------------------
+# (k) SDK raises RuntimeError → 502, no secret in response
+# ---------------------------------------------------------------------------
+
+
+def test_sdk_raises_runtime_error_502(client):
+    err = RuntimeError("internal error with secret=sk-xxx")
+
+    mock_recognizer = MagicMock()
+    mock_recognizer.recognize_data_with_options.side_effect = err
+    mock_sdk = _make_mock_sdk(recognizer=mock_recognizer)
+
+    with patch("backend.shared.voice_asr._import_sdk", return_value=mock_sdk):
+        data_url = _make_wav_data_url(seconds=2.0)
+        r = client.post(
+            "/api/voice/transcribe",
+            json={"audio": data_url, "language": "en"},
+        )
+
+    assert r.status_code == 502
+    body_text = r.text.lower()
+    assert "secret" not in body_text

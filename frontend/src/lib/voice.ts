@@ -26,6 +26,16 @@ export interface RecordingHandle {
 }
 
 export async function startRecording(): Promise<RecordingHandle> {
+  // Check browser capabilities before attempting to use the mic.
+  if (
+    !navigator.mediaDevices?.getUserMedia ||
+    typeof MediaRecorder === "undefined"
+  ) {
+    throw new Error(
+      "Voice input needs a secure (https) page and a browser with microphone support."
+    );
+  }
+
   let stream: MediaStream | null = null;
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
