@@ -282,15 +282,11 @@ export default function ProcessPage() {
             });
           }
 
-          // 2b. Image evidence check + verdict images
+          // 2b. Image evidence check
           const icRes = await getImageCheck(caseId);
           const icMsgs = imageCheckMessages(icRes);
           const existingIds = new Set(parsedMsgs.map((m) => m.id));
           for (const m of icMsgs) {
-            if (!existingIds.has(m.id)) parsedMsgs.push(m);
-          }
-          const vMsgs = verdictImageMessages(icRes);
-          for (const m of vMsgs) {
             if (!existingIds.has(m.id)) parsedMsgs.push(m);
           }
 
@@ -339,6 +335,12 @@ export default function ProcessPage() {
                 badge: "Policy Recommendation",
               });
             }
+          }
+
+          // 4b. Verdict images (reuses icRes from section 2b)
+          const vMsgs = verdictImageMessages(icRes);
+          for (const m of vMsgs) {
+            if (!existingIds.has(m.id)) parsedMsgs.push(m);
           }
 
           setMessages(parsedMsgs);
