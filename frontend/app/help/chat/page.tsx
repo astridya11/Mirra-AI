@@ -35,6 +35,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { TypingDots } from "@/src/components/TypingDots";
 import { createDispute, CreateDisputePayload, getCompletedResult, submitPartyDecision } from "@/src/lib/api";
+import { startRecording, transcribeVoice, type RecordingHandle } from "@/src/lib/voice";
 import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
 import { Avatar } from "@/src/components/Avatar";
 
@@ -491,17 +492,39 @@ function ChatContent() {
   const objectUrlsRef = useRef<string[]>([]);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // --- Voice recording state ---
+  type VoiceState = "idle" | "recording" | "transcribing";
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceRecRef = useRef<RecordingHandle | null>(null);
+  const voiceErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showVoiceError = useCallback((msg: string) => {
+    setVoiceError(msg);
+    if (voiceErrorTimerRef.current) clearTimeout(voiceErrorTimerRef.current);
+    voiceErrorTimerRef.current = setTimeout(() => {
+      setVoiceError(null);
+      setVoiceState("idle");
+    }, 4000);
+    timersRef.current.push(voiceErrorTimerRef.current);
+  }, []);
+
   const later = useCallback((fn: () => void, ms: number) => {
     timersRef.current.push(setTimeout(fn, ms));
   }, []);
 
   // Clear pending timers and release preview URLs on unmount.
+  // Also cancel any in-progress voice recording.
   useEffect(() => {
     return () => {
       timersRef.current.forEach(clearTimeout);
       timersRef.current = [];
       objectUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       objectUrlsRef.current = [];
+      if (voiceRecRef.current) {
+        voiceRecRef.current.cancel();
+        voiceRecRef.current = null;
+      }
     };
   }, []);
 
@@ -651,6 +674,51 @@ function ChatContent() {
       console.error("Error creating dispute:", error);
       setBotTyping(false);
     }
+  };
+
+  // --- Voice recording handler ---
+  const handleMicClick = async () => {
+    if (voiceState === "idle") {
+      setVoiceError(null);
+      try {
+        const rec = await startRecording();
+        voiceRecRef.current = rec;
+        setVoiceState("recording");
+      } catch (err) {
+        const msg =
+          err instanceof DOMException && err.name === "NotAllowedError"
+            ? "Microphone access is blocked. Allow it in the browser and try again."
+            : err instanceof Error
+              ? err.message
+              : "Could not start recording. Please try again.";
+        showVoiceError(msg);
+      }
+    } else if (voiceState === "recording") {
+      setVoiceState("transcribing");
+      try {
+        const rec = voiceRecRef.current;
+        voiceRecRef.current = null;
+        if (!rec) {
+          setVoiceState("idle");
+          return;
+        }
+        const wav = await rec.stop();
+        const text = await transcribeVoice(wav, "en");
+        if (text) {
+          setInput((prev) => (prev ? prev + " " + text : text));
+        } else {
+          showVoiceError("Didn't catch that, please try again.");
+          return;
+        }
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Voice recognition failed.";
+        showVoiceError(msg);
+        return;
+      }
+      setVoiceState("idle");
+    }
+    // transcribing state: button is disabled, clicks ignored
   };
 
   // --- Issue submission handler (non-verdict mode) ---
@@ -895,10 +963,31 @@ function ChatContent() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleSend();
                 }}
-                placeholder="Type your message..."
+                placeholder={voiceState === "recording" ? "Listening… tap again to stop" : "Type your message..."}
                 className="flex-1 bg-transparent text-[14px] text-[#111827] placeholder:text-[#9CA3AF] outline-none"
               />
             </div>
+            {/* Microphone button */}
+            <button
+              type="button"
+              onClick={handleMicClick}
+              disabled={voiceState === "transcribing"}
+              className="relative flex items-center justify-center w-9 h-9 rounded-full bg-[#F3F4F6] text-[#6B7280] disabled:opacity-50 active:scale-95 transition-transform"
+              style={voiceState === "recording" ? { backgroundColor: "#E84360", color: "#fff" } : undefined}
+            >
+              {voiceState === "transcribing" ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                </svg>
+              )}
+              {voiceState === "recording" && (
+                <span className="absolute inset-0 rounded-full border-2 border-[#E84360] animate-ping" />
+              )}
+            </button>
             <button
               onClick={handleSend}
               disabled={!input.trim()}
@@ -909,6 +998,11 @@ function ChatContent() {
               </svg>
             </button>
           </div>
+          {voiceError && (
+            <div className="max-w-[560px] w-full mx-auto mt-1.5">
+              <p className="text-[12px] text-[#E84360] leading-4">{voiceError}</p>
+            </div>
+          )}
         </div>
       ) : fromProcess ? (
         <div className="border-t border-gray-100 px-4 py-3 bg-white">
