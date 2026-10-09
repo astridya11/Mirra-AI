@@ -79,19 +79,33 @@ export default function HelpPage() {
 
       {/* Topics List */}
       <div>
-        {helpTopics.map((topic) => (
-          <IOSListItem
-            key={topic.id}
-            icon={
-              <svg className="w-4 h-4 text-[#6B7280]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d={iconMap[topic.icon]} />
-              </svg>
-            }
-            title={topic.label}
-            onClick={() => router.push(`/help/topic/${topic.id}`)}
-            showDivider={true}
-          />
-        ))}
+        {helpTopics.map((topic) => {
+          const isPopular = topic.id === "popular";
+
+          return (
+            <IOSListItem
+              key={topic.id}
+              icon={
+                <svg
+                  className={`w-4 h-4 ${isPopular ? "text-[#E84360]" : "text-[#6B7280]"}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d={iconMap[topic.icon]}
+                  />
+                </svg>
+              }
+              title={topic.label}
+              onClick={() => router.push(`/help/topic/${topic.id}`)}
+              showDivider={true}
+            />
+          );
+        })}
       </div>
 
       <div className="h-8" />
