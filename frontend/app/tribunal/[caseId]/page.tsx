@@ -5,11 +5,12 @@
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { streamPipeline, getCompletedResult } from "@/src/lib/api";
+import { streamPipeline, getCompletedResult, getImageCheck } from "@/src/lib/api";
 import type { PipelineEvent } from "@/src/types";
 import { useParams, useSearchParams } from "next/navigation";
 import { VerdictButton } from "@/src/components/tribunal/VerdictButton";
 import { ChatBubble, ChatMessage, TypingBubble, TypingConfig } from "@/src/components/tribunal/ChatBubble";
+import { imageCheckMessages, verdictImageMessages } from "@/src/lib/imageCheck";
 // import { ScrollToLatest } from "@/src/components/tribunal/ScrollToLatest";
 import { IOSHeader } from "@/src/components/IOSHeader";
 import { DebugProcessView } from "./DebugProcessView";
@@ -281,6 +282,18 @@ export default function ProcessPage() {
             });
           }
 
+          // 2b. Image evidence check + verdict images
+          const icRes = await getImageCheck(caseId);
+          const icMsgs = imageCheckMessages(icRes);
+          const existingIds = new Set(parsedMsgs.map((m) => m.id));
+          for (const m of icMsgs) {
+            if (!existingIds.has(m.id)) parsedMsgs.push(m);
+          }
+          const vMsgs = verdictImageMessages(icRes);
+          for (const m of vMsgs) {
+            if (!existingIds.has(m.id)) parsedMsgs.push(m);
+          }
+
           // 3. Cross Exam QA
           if (result.round_2_cross_exam?.targeted_questions) {
             const qs = result.round_2_cross_exam.targeted_questions;
@@ -372,6 +385,8 @@ export default function ProcessPage() {
             setActiveTypingConfig(getRoleConfig("PROSECUTOR", "left", "Prosecutor"));
           } else if (phase === "POLICY_CONSULTATION") {
             setActiveTypingConfig(getRoleConfig("POLICY_CONSULTANT", "right", "Policy Consultant"));
+          } else if (phase === "JUDGE_DELIBERATION") {
+            setActiveTypingConfig(getRoleConfig("JUDGE", "right", "Judge"));
           }
         }
 
@@ -462,6 +477,19 @@ export default function ProcessPage() {
                     },
                   ];
                 });
+
+                // After the initial audit report, fetch image-check results
+                if (isInitial) {
+                  getImageCheck(caseId).then((icRes) => {
+                    const icMsgs = imageCheckMessages(icRes);
+                    if (icMsgs.length > 0) {
+                      setMessages((prev) => {
+                        const existing = new Set(prev.map((m) => m.id));
+                        return [...prev, ...icMsgs.filter((m) => !existing.has(m.id))];
+                      });
+                    }
+                  });
+                }
               }
             }
           }
@@ -495,6 +523,16 @@ export default function ProcessPage() {
       onComplete: () => {
         setIsFinished(true);
         setCurrentStepIndex(STEPS.length - 1);
+        setActiveTypingConfig(null);
+        getImageCheck(caseId).then((icRes) => {
+          const vMsgs = verdictImageMessages(icRes);
+          if (vMsgs.length > 0) {
+            setMessages((prev) => {
+              const existing = new Set(prev.map((m) => m.id));
+              return [...prev, ...vMsgs.filter((m) => !existing.has(m.id))];
+            });
+          }
+        });
       },
       onError: () => {
         setError("Real-time stream connection interrupted. Please try again.");

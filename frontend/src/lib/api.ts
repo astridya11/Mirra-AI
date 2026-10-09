@@ -112,6 +112,67 @@ export async function getRawCaseData(id: string): Promise<RawCaseData> {
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// Image evidence check
+// ---------------------------------------------------------------------------
+
+export interface ImageCheckPhotoTime {
+  taken_at: string | null;
+  seconds_after_trip_end: number | null;
+  within_window: boolean | null;
+  text: string;
+  limit_text: string;
+}
+
+export interface ImageCheckPhotoDistance {
+  meters: number | null;
+  within_radius: boolean | null;
+  text: string;
+  limit_text: string;
+}
+
+export interface ImageCheckItem {
+  image_id: string;
+  image_url: string;
+  verdict_image_url: string | null;
+  classification: string | null;
+  severity: string | null;
+  stain_regions: unknown;
+  photo_time: ImageCheckPhotoTime | null;
+  photo_distance: ImageCheckPhotoDistance | null;
+  recycled: { matched: boolean; prior_case: string | null };
+  ai_generated: { flag: boolean | null; confidence: number | null };
+  status: "OK" | "FLAGGED" | "INCOMPLETE";
+  summary: string;
+}
+
+export interface ImageCheckResponse {
+  case_id: string;
+  has_verdict: boolean;
+  images: ImageCheckItem[];
+}
+
+/**
+ * Build a full backend URL from a relative path (e.g. "/evidence/...").
+ */
+export function backendUrl(path: string): string {
+  return API_BASE_URL + path;
+}
+
+/**
+ * Fetch the image evidence check for a case.
+ * Returns null on any non-200 or network error (never throws).
+ */
+export async function getImageCheck(id: string): Promise<ImageCheckResponse | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/disputes/${id}/evidence/image-check`);
+    if (!res.ok) return null;
+    return (await res.json()) as ImageCheckResponse;
+  } catch {
+    return null;
+  }
+}
+
 export async function submitHumanReview(
   id: string,
   review: HumanReviewRequest
