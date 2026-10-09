@@ -1129,6 +1129,22 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "stain_regions": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "Stain bounding boxes from the vision provider, as fractions of image width/height (origin top-left). Display only.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x1", "y1", "x2", "y2"],
+            "properties": {
+              "x1": {"type": "number", "minimum": 0, "maximum": 1},
+              "y1": {"type": "number", "minimum": 0, "maximum": 1},
+              "x2": {"type": "number", "minimum": 0, "maximum": 1},
+              "y2": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
         }
       },
       "additionalProperties": false

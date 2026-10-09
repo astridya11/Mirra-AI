@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
 # ----------------------------------------------------------------------
 from backend.agents.judge_agent import run_judge
 from backend.policy import precedent_store
+from backend.shared.claim_evidence import merge_claim_evidence
 
 # ----------------------------------------------------------------------
 # Timezone & constants
@@ -286,7 +287,7 @@ class CaseContext:
         return {
             "case_metadata": self.case_metadata,
             "dispute_claim": self.dispute_claim,
-            "data_sources": self.data_sources,
+            "data_sources": merge_claim_evidence(self.data_sources, self.dispute_claim),
             "round_1_statements": self.round_1_statements,
             "round_2_cross_exam": self.round_2_cross_exam,
             "bonus_modules": self.bonus_modules,

@@ -19,17 +19,19 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import uuid
 from datetime import datetime, timezone, timedelta
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +39,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.db.auth import user_repo
 from backend.app.api.routes import auth, cases, evidence, verification
 from backend.app.core.config import get_settings
+from backend.shared.evidence_upload import (
+    UPLOADS_DIR,
+    EvidenceUploadError,
+    process_uploaded_evidence,
+)
+from backend.shared.verdict_caption import build_verdict_render_args
+from backend.shared.verdict_image import render_verdict_image
+from backend.shared.image_check import build_image_check
+from backend.shared.voice_asr import (
+    ASRNotConfigured,
+    AudioRejected,
+    VoiceError,
+    parse_audio_data_url,
+    transcribe,
+)
 
 
 from backend.orchestrator.state_machine import (
@@ -112,6 +129,9 @@ DISPUTES_DIR = BASE_DIR / "disputes"
 
 for _d in (TRIPS_DIR, DISPUTES_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/evidence", StaticFiles(directory=str(UPLOADS_DIR)), name="evidence")
 
 # Serialises every write to backend/disputes/*.json: case-id generation +
 # creation, and read-merge-write of pipeline results. Prevents duplicate
@@ -453,19 +473,17 @@ async def create_dispute_case(payload: CreateDisputeRequest):
 
     filed_at = _now_iso()
     filed_by = _resolve_filed_by(payload.filed_by, payload.rider_id, payload.driver_id)
-    image_evidence = _normalize_evidence(
-        payload.image_evidence,
-        id_prefix="IMG", id_key="image_id", url_key="image_url",
-    )
-    receipt_evidence = _normalize_evidence(
-        payload.receipt_evidence,
-        id_prefix="RCP", id_key="receipt_id", url_key="receipt_url",
-        uploaded_at=filed_at,
-    )
 
     # 2. Generate id + write file atomically under a lock (no duplicate ids)
     with _case_file_lock:
         case_id = generate_next_case_id()
+
+        try:
+            image_evidence, receipt_evidence = process_uploaded_evidence(
+                case_id, payload.image_evidence, payload.receipt_evidence, filed_at
+            )
+        except EvidenceUploadError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
         dispute_payload = {
             "case_metadata": {
@@ -501,6 +519,7 @@ async def create_dispute_case(payload: CreateDisputeRequest):
             with open(file_path, "x", encoding="utf-8") as f:
                 json.dump(dispute_payload, f, indent=2, ensure_ascii=False)
         except Exception as e:
+            shutil.rmtree(UPLOADS_DIR / case_id, ignore_errors=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to save dispute file: {str(e)}",
@@ -717,6 +736,138 @@ async def submit_party_decision(dispute_id: str, request: PartyDecisionRequest):
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Verdict image (stain boxes + stamp + caption)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/disputes/{dispute_id}/evidence/{image_id}/verdict.jpg")
+async def get_verdict_image(dispute_id: str, image_id: str):
+    """Render a verdict JPEG for an uploaded evidence photo."""
+    if not _is_safe_id(dispute_id):
+        raise HTTPException(status_code=422, detail="Invalid dispute_id")
+    if not _is_safe_id(image_id):
+        raise HTTPException(status_code=422, detail="Invalid image_id")
+
+    case = get_case(dispute_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"Case {dispute_id} not found")
+
+    render_args = build_verdict_render_args(case, image_id)
+    if render_args is None:
+        raise HTTPException(status_code=404, detail=f"Image {image_id} not found in case {dispute_id}")
+
+    # Find the image dict to get image_url
+    claim = case.get("dispute_claim") or {}
+    images = claim.get("image_evidence") or []
+    image_url = None
+    for img in images:
+        if isinstance(img, dict) and img.get("image_id") == image_id:
+            image_url = img.get("image_url")
+            break
+
+    if not isinstance(image_url, str) or not image_url.startswith("/evidence/"):
+        raise HTTPException(status_code=404, detail="Only uploaded images have verdict renders")
+
+    file_name = image_url.split("/")[-1]
+    source_file = UPLOADS_DIR / dispute_id / file_name
+    if not source_file.exists():
+        raise HTTPException(status_code=404, detail="Source image file not found")
+
+    output_path = UPLOADS_DIR / dispute_id / f"{image_id}_verdict.jpg"
+    try:
+        render_verdict_image(source_file, output_path, **render_args)
+    except Exception:
+        logger.exception("Failed to render verdict image for %s/%s", dispute_id, image_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to render verdict image",
+        )
+
+    return FileResponse(
+        output_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Image evidence check (structured summary for frontend)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/disputes/{dispute_id}/evidence/image-check")
+def get_image_check(dispute_id: str):
+    """Return a structured image evidence check for the dispute case."""
+    if not _is_safe_id(dispute_id):
+        raise HTTPException(status_code=422, detail="Invalid dispute_id")
+
+    case = get_case(dispute_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    return build_image_check(case)
+
+
+# ---------------------------------------------------------------------------
+# Voice transcription (TRTC ASR one-sentence recognition)
+# ---------------------------------------------------------------------------
+
+
+class VoiceTranscribeRequest(BaseModel):
+    audio: str = Field(..., description="Audio data URL (base64)")
+    language: Literal["en", "zh", "ms"] = Field("en")
+
+
+@app.post("/api/voice/transcribe")
+def transcribe_voice(payload: VoiceTranscribeRequest):
+    """Transcribe a short audio clip to text via Tencent TRTC ASR."""
+    try:
+        audio_bytes, voice_format = parse_audio_data_url(payload.audio)
+    except AudioRejected as exc:
+        status = exc.status
+        if status == 415:
+            detail = "Unsupported audio format. Send WAV, MP3, M4A or OGG-Opus."
+        elif status == 413:
+            detail = "Recording too large (max 3 MB / 60 s)."
+        else:
+            detail = "Invalid audio data"
+        raise HTTPException(status_code=status, detail=detail)
+
+    # Check WAV duration.
+    if voice_format == "wav":
+        from backend.shared.voice_asr import _wav_duration_seconds
+
+        try:
+            duration = _wav_duration_seconds(audio_bytes)
+        except AudioRejected:
+            raise HTTPException(status_code=422, detail="Invalid audio data")
+        if duration > 60.0:
+            raise HTTPException(status_code=413, detail="Recording too large (max 3 MB / 60 s).")
+
+    try:
+        result = transcribe(audio_bytes, voice_format, payload.language)
+    except ASRNotConfigured:
+        raise HTTPException(status_code=503, detail="Voice input is not configured")
+    except AudioRejected as exc:
+        status = exc.status
+        if status == 413:
+            detail = "Recording too large (max 3 MB / 60 s)."
+        elif status == 415:
+            detail = "Unsupported audio format. Send WAV, MP3, M4A or OGG-Opus."
+        else:
+            detail = "Invalid audio data"
+        raise HTTPException(status_code=status, detail=detail)
+    except VoiceError:
+        raise HTTPException(status_code=502, detail="Voice recognition failed")
+
+    return {
+        "text": result["text"],
+        "duration_ms": result["duration_ms"],
+        "language": result["language"],
+    }
 
 
 # ---------------------------------------------------------------------------

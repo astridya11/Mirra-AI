@@ -28,11 +28,17 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
+import re
+import tempfile
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
+
+from backend.shared.vision_client import call_vision_json
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -65,6 +71,12 @@ _BACKEND_DIR = _THIS_DIR.parent  # backend/
 _MOCK_EVIDENCE_DIR = _BACKEND_DIR / "mock_evidence"
 _DEFAULT_HASHES_PATH = _MOCK_EVIDENCE_DIR / "known_image_hashes.json"
 _DEFAULT_ANNOTATIONS_PATH = _MOCK_EVIDENCE_DIR / "photo_annotations.json"
+
+# Runtime hash registry — gitignored, never committed.
+RUNTIME_HASHES_PATH = _BACKEND_DIR / "disputes" / "known_image_hashes.runtime.json"
+
+# Regex for valid dHash strings: "dhash:" + exactly 16 hex chars.
+_HASH_RE = re.compile(r"^dhash:[0-9a-fA-F]{16}$")
 
 # ---------------------------------------------------------------------------
 # Stain / severity validation (mirrors image_analysis._parse_provider_result)
@@ -118,7 +130,20 @@ def _load_json(path: Path) -> dict:
 
 
 def _load_default_hashes() -> dict:
-    return _load_json(_DEFAULT_HASHES_PATH)
+    """Return the merge of the mock corpus and the runtime registry.
+
+    Runtime entries are added on top; mock entries win on a clash
+    (so the mock corpus is never shadowed by a runtime accident).
+    A missing or broken runtime file is silently ignored.
+    """
+    base = _load_json(_DEFAULT_HASHES_PATH)
+    runtime = _load_json(RUNTIME_HASHES_PATH)
+    if runtime:
+        # Merge: runtime entries added, mock entries win on clash.
+        merged = dict(runtime)
+        merged.update(base)
+        return merged
+    return base
 
 
 def _load_default_annotations() -> dict:
@@ -352,6 +377,74 @@ def _find_known_match(
 
 
 # ---------------------------------------------------------------------------
+# Runtime hash registry
+# ---------------------------------------------------------------------------
+
+_registry_lock = threading.Lock()
+
+
+def register_image_hash(
+    image_hash: str,
+    case_id: str,
+    *,
+    path: Path | None = None,
+) -> bool:
+    """Register *image_hash* → *case_id* in the runtime hash file.
+
+    Returns True if the hash was newly registered, False if it was
+    skipped (falsy, bad format, low-detail, or already owned by another case).
+
+    Never raises: all filesystem / JSON errors are swallowed.
+
+    Args:
+        image_hash: ``"dhash:<16 hex>"`` string.
+        case_id: Case that first uploaded this photo.
+        path: Override for the runtime file path (tests use a temp path).
+    """
+    # --- Validate inputs ----------------------------------------------------
+    if not image_hash or not isinstance(image_hash, str):
+        return False
+    if not _HASH_RE.match(image_hash):
+        return False
+    bits = _popcount(image_hash)
+    if bits is None or not (_MIN_HASH_BITS <= bits <= _MAX_HASH_BITS):
+        return False
+
+    runtime_path = RUNTIME_HASHES_PATH if path is None else Path(path)
+
+    try:
+        with _registry_lock:
+            # Load existing runtime data (empty dict on any error).
+            existing = _load_json(runtime_path)
+
+            # Do not overwrite an existing entry.
+            if image_hash in existing:
+                return False
+
+            existing[image_hash] = case_id
+
+            # Write atomically: temp file + os.replace.
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(runtime_path.parent),
+                prefix=".runtime_hashes_",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, indent=2, sort_keys=True)
+                os.replace(tmp_path, runtime_path)
+            except Exception:
+                # Clean up the temp file if the write failed.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                return False
+
+            return True
+    except Exception:
+        return False
 # AI-generation detection
 # ---------------------------------------------------------------------------
 
@@ -385,6 +478,109 @@ def _detect_ai_hint(img: Image.Image, raw_bytes: bytes) -> bool:
         pass
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Vision provider hook
+# ---------------------------------------------------------------------------
+
+_PHOTO_SYSTEM_PROMPT = (
+    "You inspect photos of a ride-hailing car interior for a cleaning-fee "
+    "claim. Return ONLY JSON with these keys: "
+    '{"stain_damage_classification": one of LIQUID_SPILL, VOMIT, '
+    "FOOD_RESIDUE, PHYSICAL_DAMAGE, DIRT_MUD, NO_DAMAGE_DETECTED, OTHER, "
+    '"damage_severity": MINOR, MODERATE, or SEVERE (or null), '
+    '"is_ai_generated": bool, '
+    '"ai_generated_confidence": float between 0 and 1, '
+    '"stain_regions": a list (max 3) of boxes '
+    '{"x1","y1","x2","y2"} as fractions 0..1 of image width/height '
+    "(origin top-left) around each stain or damaged area. "
+    'Empty list if no stain or not sure. Do not guess.} '
+    "If the photo is not a car interior, use OTHER for the classification."
+)
+
+
+# ---------------------------------------------------------------------------
+# Stain-region validation
+# ---------------------------------------------------------------------------
+
+_MAX_STAIN_REGIONS = 3
+
+
+def _is_valid_fraction(value: Any) -> bool:
+    """True when *value* is a finite float/int in [0, 1] and not a bool."""
+    if _is_strict_bool(value):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(f):
+        return False
+    return 0.0 <= f <= 1.0
+
+
+def _validate_stain_regions(raw: Any) -> list[dict[str, float]]:
+    """Validate and return a list of stain-region boxes (max 3).
+
+    Each box must have x1, y1, x2, y2 that are finite numbers in [0, 1]
+    with x1 < x2 and y1 < y2.  Invalid boxes are silently dropped.
+    """
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, float]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        x1 = item.get("x1")
+        y1 = item.get("y1")
+        x2 = item.get("x2")
+        y2 = item.get("y2")
+        if not (
+            _is_valid_fraction(x1)
+            and _is_valid_fraction(y1)
+            and _is_valid_fraction(x2)
+            and _is_valid_fraction(y2)
+        ):
+            continue
+        fx1, fy1, fx2, fy2 = float(x1), float(y1), float(x2), float(y2)
+        if not (fx1 < fx2 and fy1 < fy2):
+            continue
+        result.append({"x1": fx1, "y1": fy1, "x2": fx2, "y2": fy2})
+        if len(result) >= _MAX_STAIN_REGIONS:
+            break
+    return result
+
+
+def _run_vision(file_path: str | Path) -> tuple[dict[str, Any] | None, list[dict[str, float]]]:
+    """Run DeepSeek vision analysis on *file_path*.
+
+    Returns a ``(provider_dict, stain_regions)`` tuple.  The provider dict
+    contains classification / severity / AI fields (same as annotations),
+    or None if the vision API returned nothing.  ``stain_regions`` is the
+    validated list of boxes (max 3), possibly empty.
+    """
+    raw = call_vision_json(
+        _PHOTO_SYSTEM_PROMPT,
+        "Analyse this photo and return the JSON.",
+        file_path,
+    )
+    if not isinstance(raw, dict):
+        return None, []
+    result: dict[str, Any] = {}
+    for key in (
+        "stain_damage_classification",
+        "damage_severity",
+        "is_ai_generated",
+        "ai_generated_confidence",
+    ):
+        val = raw.get(key)
+        if val is not None:
+            result[key] = val
+    stain_regions = _validate_stain_regions(raw.get("stain_regions"))
+    return (result or None), stain_regions
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +650,8 @@ def build_image_evidence(
     image_url: str,
     known_hashes: dict[str, str] | None = None,
     annotation: dict[str, Any] | None = None,
+    use_vision: bool = False,
+    current_case_id: str | None = None,
 ) -> dict[str, Any]:
     """Build an ``ImageEvidenceInput`` dict from an image file on disk.
 
@@ -467,6 +665,8 @@ def build_image_evidence(
             Defaults to ``backend/mock_evidence/known_image_hashes.json``.
         annotation: Vision-model stand-in dict for this image_id.  Defaults
             to a lookup in ``photo_annotations.json``.
+        current_case_id: When given, entries in *known_hashes* whose case_id
+            equals this value are ignored so a case never matches its own photo.
 
     Returns:
         A dict conforming to ``ImageEvidenceInput`` in ``shared/schemas.json``.
@@ -511,6 +711,13 @@ def build_image_evidence(
         if bits_set is not None and _MIN_HASH_BITS <= bits_set <= _MAX_HASH_BITS:
             if known_hashes is None:
                 known_hashes = _load_default_hashes()
+            # Filter out entries that belong to the current case so a
+            # case never matches its own photo.
+            if current_case_id is not None:
+                known_hashes = {
+                    h: c for h, c in known_hashes.items()
+                    if c != current_case_id
+                }
             matches = _find_known_match(this_hash, known_hashes)
             if matches:
                 base["known_matches"] = matches
@@ -518,13 +725,29 @@ def build_image_evidence(
     # 3. AI-generation hint
     ai_hint = _detect_ai_hint(img, raw_bytes)
 
-    # 4. provider_result
-    if annotation is None:
-        annotations = _load_default_annotations()
-        annotation = annotations.get(image_id)
+    # 4. provider_result + stain_regions
+    #    Order: vision result if valid, else annotation.
+    vision_result: dict[str, Any] | None = None
+    stain_regions: list[dict[str, float]] = []
+    if use_vision:
+        vision_result, stain_regions = _run_vision(file_path)
+
+    if vision_result is not None:
+        annotation = vision_result
+    else:
+        if annotation is None:
+            annotations = _load_default_annotations()
+            annotation = annotations.get(image_id)
+        # Read stain_regions from the annotation (same validation).
+        stain_regions = _validate_stain_regions(
+            annotation.get("stain_regions") if isinstance(annotation, dict) else None
+        )
     provider_result = _build_provider_result(annotation, ai_hint)
     if provider_result is not None:
         base["provider_result"] = provider_result
+
+    if stain_regions:
+        base["stain_regions"] = stain_regions
 
     return base
 

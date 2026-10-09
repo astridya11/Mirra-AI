@@ -10,12 +10,15 @@ which is added later by the execution gate).
 """
 
 import json
+import logging
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from backend.shared.advocate_utils import get_claimant
 from backend.shared.llm_client import call_llm_json, LLMError
+
+logger = logging.getLogger(__name__)
 
 # Timezone for deliberated_at timestamps.
 _SGT = timezone(timedelta(hours=8))
@@ -436,8 +439,10 @@ def _safe_verdict(error_msg: str, reason: str = "llm_failure") -> dict:
             "Case escalated for human review."
         )
     else:
+        # Log the exception details; never expose them in the verdict.
+        logger.warning("Judge LLM call failed: %s", error_msg)
         reasoning_summary = (
-            f"Judge LLM call failed: {error_msg}. "
+            "The automated review could not be completed. "
             "Case escalated for human review."
         )
 

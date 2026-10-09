@@ -10,7 +10,14 @@ import math
 import re
 from typing import Any
 
-from .checks import _evidence_ref, _is_before, _parse_ts, _seconds_between
+from backend.shared.time_rules import (
+    parse_ts as _parse_ts,
+    trip_end_time as _trip_end_time,
+    format_gap as _format_gap,
+    check_window as _check_window,
+    check_distance as _check_distance,
+)
+from .checks import _evidence_ref, _is_before, _seconds_between
 from .image_analysis import analyze_image_evidence_batch, extract_images_from_context
 
 _CLEANING_RELEVANT_TERMS = frozenset(
@@ -509,9 +516,10 @@ def check_cleaning_claim_amount_consistency(data: dict[str, Any]) -> dict[str, A
 def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any]:
     """Whether the cleaning-fee claim was submitted after trip completion.
 
-    Uses ``_get_claim()['filed_at']`` instead of a dedicated app event.
-    Reports the exact arithmetic delta. Must NOT conclude that any delay is
-    suspicious or violates policy.
+    Uses ``time_rules.trip_end_time(data_sources)`` and
+    ``_get_claim()['filed_at']``.  Reports the human-readable gap via
+    ``format_gap``.  Must NOT conclude that any delay is suspicious or
+    violates policy.
     """
     ds = data.get("data_sources", {})
     if not isinstance(ds, dict):
@@ -559,7 +567,7 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
             "details": {"confidence_level": 1.0},
         }
 
-    trip_ts = _parse_ts(trip_complete_event.get("timestamp"))
+    trip_ts = _trip_end_time(ds)
     claim_ts = _parse_ts(claim.get("filed_at"))
 
     if trip_ts is None or claim_ts is None:
@@ -612,11 +620,14 @@ def check_cleaning_claim_submission_delay(data: dict[str, Any]) -> dict[str, Any
         }
 
     delta_minutes = delta_seconds // 60
+    gap_text = _format_gap(delta_seconds)
+    trip_str = trip_ts.strftime("%d %b %H:%M")
+    filed_str = claim_ts.strftime("%d %b %H:%M")
     return {
         "status": "VERIFIED",
         "description": (
-            f"The cleaning-fee claim was filed {delta_seconds} seconds "
-            f"({delta_minutes} minutes) after trip completion."
+            f"The cleaning-fee claim was filed {gap_text} after trip end "
+            f"(trip end {trip_str}, filed {filed_str})."
         ),
         "evidence_refs": evidence_refs,
         "details": {
@@ -972,6 +983,244 @@ def check_cleaning_photo_reference_consistency(data: dict[str, Any]) -> dict[str
             "Structured image evidence is present in the frozen record, though the claim "
             "does not explicitly reference an attached photo."
         ),
+        "evidence_refs": evidence_refs,
+        "details": {"confidence_level": 1.0},
+    }
+
+
+def check_cleaning_receipt_timing(data: dict[str, Any]) -> dict[str, Any]:
+    """State the time gap between each readable receipt and trip end.
+
+    For every receipt with a readable ``ocr_result.amount`` and a parseable
+    ``ocr_result.receipt_date``, states the gap as a fact using
+    ``time_rules.check_window``.  When there are no receipts, no dated
+    receipts, or no trip-end timestamp, returns MISSING.  A receipt dated
+    before trip end returns DISPUTED.
+
+    Must NOT conclude that any receipt is within/outside a policy window.
+    """
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+
+    trip_ts = _trip_end_time(ds)
+
+    evidence_refs: list[dict[str, Any]] = []
+    if trip_ts is not None:
+        evidence_refs.append(
+            _evidence_ref("TRIP-DATA", "TRIP_DATA", f"trip end {trip_ts.isoformat()}")
+        )
+
+    if trip_ts is None:
+        return {
+            "status": "MISSING",
+            "description": "Cannot determine receipt timing: trip end timestamp is not available.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    raw = ds.get("receipt_evidence")
+    if not isinstance(raw, list):
+        return {
+            "status": "MISSING",
+            "description": "No receipt evidence is available to check timing for.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    dated_receipts: list[tuple[str, float, Any, int]] = []
+    for i, rcp in enumerate(raw):
+        if not isinstance(rcp, dict):
+            continue
+        ocr = rcp.get("ocr_result")
+        if not isinstance(ocr, dict):
+            continue
+        amount = ocr.get("amount")
+        if not _is_number(amount):
+            continue
+        rd = ocr.get("receipt_date")
+        rdt = _parse_ts(rd)
+        if rdt is None:
+            continue
+        rid = rcp.get("receipt_id") or f"RCP-{i:03d}"
+        gap = _check_window(rdt, trip_ts, unit="seconds")
+        secs = gap["seconds"]
+        if secs is None:
+            continue
+        dated_receipts.append((rid, float(amount), rdt, secs))
+
+    if not dated_receipts:
+        return {
+            "status": "MISSING",
+            "description": "No readable receipt with a parseable date is available.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    # Add receipt evidence refs
+    for rid, amount, rdt, _ in dated_receipts:
+        evidence_refs.append(
+            _evidence_ref(rid, "RECEIPT", f"receipt {rid} SGD {amount:.2f}")
+        )
+
+    # Check for any receipt dated before trip end
+    before_receipts = [(rid, amount, rdt, secs) for rid, amount, rdt, secs in dated_receipts if secs < 0]
+    if before_receipts:
+        parts: list[str] = []
+        for rid, amount, rdt, secs in before_receipts:
+            gap_text = _format_gap(abs(secs))
+            parts.append(
+                f"Receipt {rid} (SGD {amount:.2f}) is dated {rdt.strftime('%d %b %H:%M')}, "
+                f"{gap_text} before trip end ({trip_ts.strftime('%d %b %H:%M')})."
+            )
+        return {
+            "status": "DISPUTED",
+            "description": " ".join(parts),
+            "evidence_refs": evidence_refs,
+            "details": {
+                "receipt_ids": [rid for rid, _, _, _ in before_receipts],
+                "confidence_level": 1.0,
+            },
+        }
+
+    parts = []
+    details_receipts: list[dict[str, Any]] = []
+    for rid, amount, rdt, secs in dated_receipts:
+        gap_text = _format_gap(secs)
+        parts.append(
+            f"Receipt {rid} (SGD {amount:.2f}) is dated {rdt.strftime('%d %b %H:%M')}, "
+            f"{gap_text} after trip end ({trip_ts.strftime('%d %b %H:%M')})."
+        )
+        details_receipts.append({"receipt_id": rid, "gap_seconds": secs})
+
+    return {
+        "status": "VERIFIED",
+        "description": " ".join(parts),
+        "evidence_refs": evidence_refs,
+        "details": {
+            "receipts": details_receipts,
+            "confidence_level": 1.0,
+        },
+    }
+
+
+def check_cleaning_photo_timing(data: dict[str, Any]) -> dict[str, Any]:
+    """State the time gap and distance between each photo and the drop-off.
+
+    For every image with a parseable ``exif_timestamp`` (using the same image
+    source as ``extract_images_from_context``), states the gap and distance as
+    a fact using ``time_rules.check_window`` and ``check_distance``.
+
+    - Photo taken **after** trip end -> VERIFIED.
+    - Photo taken **before** trip end -> DISPUTED.
+    - Only a missing/unparseable exif_timestamp -> MISSING.
+
+    No GPS -> location stated as "not available".
+    Must NOT conclude that any photo is within/outside a policy window.
+    """
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+
+    trip_ts = _trip_end_time(ds)
+    trip_data = ds.get("trip_data") or {}
+    if not isinstance(trip_data, dict):
+        trip_data = {}
+    dropoff = trip_data.get("dropoff_location")
+    dropoff_name = ""
+    if isinstance(dropoff, dict):
+        dropoff_name = dropoff.get("name", "")
+
+    evidence_refs: list[dict[str, Any]] = []
+    if trip_ts is not None:
+        evidence_refs.append(
+            _evidence_ref("TRIP-DATA", "TRIP_DATA", f"trip end {trip_ts.isoformat()}")
+        )
+
+    images = extract_images_from_context(data)
+    if not images:
+        return {
+            "status": "MISSING",
+            "description": "No image evidence with EXIF data is available.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    if trip_ts is None:
+        return {
+            "status": "MISSING",
+            "description": (
+                "Cannot determine photo timing: trip end timestamp is not available."
+            ),
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    timed_images: list[tuple[str, Any, Any, int]] = []
+    for img in images:
+        exif_ts = getattr(img, "exif_timestamp", None)
+        if not exif_ts:
+            continue
+        exif_dt = _parse_ts(exif_ts)
+        if exif_dt is None:
+            continue
+        img_id = getattr(img, "image_id", "IMG-???")
+        gap = _check_window(exif_dt, trip_ts, unit="seconds")
+        secs = gap["seconds"]
+        if secs is None:
+            continue
+        timed_images.append((img_id, exif_dt, img, secs))
+
+    if not timed_images:
+        return {
+            "status": "MISSING",
+            "description": "No image with a parseable EXIF timestamp is available.",
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    parts: list[str] = []
+    before_parts: list[str] = []
+    for img_id, exif_dt, img, secs in timed_images:
+        evidence_refs.append(
+            _evidence_ref(img_id, "IMAGE", f"EXIF time {exif_dt.isoformat()}")
+        )
+        gap_text = _format_gap(abs(secs))
+        word = "before" if secs < 0 else "after"
+        exif_gps = getattr(img, "exif_gps_location", None)
+        loc_text = "location not available"
+        if exif_gps is not None and isinstance(dropoff, dict):
+            # exif_gps may be an ExifGpsLocation dataclass or a dict.
+            gps_dict = (
+                exif_gps if isinstance(exif_gps, dict)
+                else {
+                    "latitude": getattr(exif_gps, "latitude", None),
+                    "longitude": getattr(exif_gps, "longitude", None),
+                }
+            )
+            dist = _check_distance(gps_dict, dropoff)
+            if dist["text"] != "not available":
+                loc_text = f"{dist['text']} from the drop-off point"
+                if dropoff_name:
+                    loc_text += f" ({dropoff_name})"
+
+        sentence = f"Photo {img_id} was taken {gap_text} {word} trip end, {loc_text}."
+        if secs < 0:
+            before_parts.append(sentence)
+        else:
+            parts.append(sentence)
+
+    if before_parts:
+        return {
+            "status": "DISPUTED",
+            "description": " ".join(before_parts + parts),
+            "evidence_refs": evidence_refs,
+            "details": {"confidence_level": 1.0},
+        }
+
+    return {
+        "status": "VERIFIED",
+        "description": " ".join(parts),
         "evidence_refs": evidence_refs,
         "details": {"confidence_level": 1.0},
     }

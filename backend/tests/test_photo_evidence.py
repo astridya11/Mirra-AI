@@ -559,7 +559,7 @@ def main() -> None:
             #    Build a minimal context wrapping the result.
             context = {"data_sources": {"image_evidence": [res]}}
             try:
-                from app.services.verification.image_analysis import extract_images_from_context
+                from backend.app.services.verification.image_analysis import extract_images_from_context
                 extracted = extract_images_from_context(context)
                 if len(extracted) != 1:
                     check_h_errors.append(

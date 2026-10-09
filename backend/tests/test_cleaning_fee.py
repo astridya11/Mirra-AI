@@ -38,6 +38,7 @@ from app.services.verification.report import (
     generate_prosecutor_report,
 )
 from backend.agents.prosecutor_agent import run_prosecutor_audit
+from backend.shared.claim_evidence import merge_claim_evidence
 from backend.shared.evidence_index import build_evidence_index
 
 
@@ -379,7 +380,11 @@ def _make_full_image(
 # DISP-004 → VERIFIED (recycled image), party_relevance DRIVER
 # ---------------------------------------------------------------------------
 def test_disp004_structured_image_recycled_verified(disp004_data):
-    result = check_cleaning_structured_image_evidence(disp004_data)
+    data = dict(disp004_data)
+    data["data_sources"] = merge_claim_evidence(
+        data.get("data_sources"), data.get("dispute_claim")
+    )
+    result = check_cleaning_structured_image_evidence(data)
     assert result["status"] == "VERIFIED"
     desc = result["description"]
     assert "Recycled image detected" in desc
@@ -399,6 +404,9 @@ def test_disp004_structured_image_recycled_verified(disp004_data):
 # ---------------------------------------------------------------------------
 def test_disp004_structured_image_exif_disputed(disp004_data):
     data = copy.deepcopy(disp004_data)
+    data["data_sources"] = merge_claim_evidence(
+        data.get("data_sources"), data.get("dispute_claim")
+    )
     data["data_sources"]["image_evidence"][0].pop("known_matches", None)
     result = check_cleaning_structured_image_evidence(data)
     assert result["status"] == "DISPUTED"
@@ -414,6 +422,9 @@ def test_disp004_structured_image_exif_disputed(disp004_data):
 # ---------------------------------------------------------------------------
 def test_structured_image_ai_generated_verified(disp004_data):
     data = copy.deepcopy(disp004_data)
+    data["data_sources"] = merge_claim_evidence(
+        data.get("data_sources"), data.get("dispute_claim")
+    )
     img = data["data_sources"]["image_evidence"][0]
     img.pop("known_matches", None)
     img["provider_result"]["is_ai_generated"] = True
@@ -808,7 +819,11 @@ def test_dispute_claim_source_used_when_present(disp003_data):
 
 def test_disp004_amount_check_verified(disp004_data):
     """DISP-004: disputed_amount 60 matches receipt total 60 -> VERIFIED."""
-    result = check_cleaning_claim_amount_consistency(disp004_data)
+    data = dict(disp004_data)
+    data["data_sources"] = merge_claim_evidence(
+        data.get("data_sources"), data.get("dispute_claim")
+    )
+    result = check_cleaning_claim_amount_consistency(data)
     assert result["status"] == "VERIFIED"
     assert "60.00" in result["description"]
     assert "matches" in result["description"].lower()

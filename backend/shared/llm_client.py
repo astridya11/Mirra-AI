@@ -7,6 +7,7 @@ DeepSeek chat-completions API in JSON-object response format.
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -14,6 +15,8 @@ import httpx
 from dotenv import load_dotenv
 
 # --- Environment / configuration -------------------------------------------------
+
+logger = logging.getLogger(__name__)
 
 # Resolve backend/.env relative to this file so the client works regardless of
 # the current working directory (important under uvicorn / pytest).
@@ -24,6 +27,24 @@ load_dotenv(_ENV_FILE)
 _API_KEY = os.getenv("DEEPSEEK_API_KEY")
 _MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
 _BASE_URL = "https://api.deepseek.com/v1/chat/completions"
+
+# Env-driven defaults (read once at import; invalid/missing -> fallback).
+_DEFAULT_TIMEOUT_S: float = 60.0
+_DEFAULT_MAX_RETRIES: int = 1
+
+_env_timeout = os.getenv("LLM_TIMEOUT_S")
+if _env_timeout:
+    try:
+        _DEFAULT_TIMEOUT_S = float(_env_timeout)
+    except (TypeError, ValueError):
+        pass
+
+_env_retries = os.getenv("LLM_MAX_RETRIES")
+if _env_retries:
+    try:
+        _DEFAULT_MAX_RETRIES = int(_env_retries)
+    except (TypeError, ValueError):
+        pass
 
 
 # --- Errors ---------------------------------------------------------------------
@@ -42,8 +63,8 @@ async def call_llm_json(
     thinking: bool = False,
     temperature: float = 0.1,
     reasoning_effort: str = "high",
-    max_retries: int = 2,
-    timeout_s: float = 120.0,
+    max_retries: int | None = None,
+    timeout_s: float | None = None,
 ) -> dict:
     """
     Call DeepSeek chat-completions and return parsed JSON from message.content.
@@ -55,7 +76,9 @@ async def call_llm_json(
         temperature: Sampling temperature (used only when thinking is False).
         reasoning_effort: Effort level for thinking mode ("high" / "medium" ...).
         max_retries: Number of retry attempts on transient failures.
+            If None, falls back to LLM_MAX_RETRIES env var or 1.
         timeout_s: Per-request timeout in seconds.
+            If None, falls back to LLM_TIMEOUT_S env var or 60.
 
     Returns:
         Parsed dict from the model's JSON response.
@@ -69,6 +92,12 @@ async def call_llm_json(
             "DEEPSEEK_API_KEY is not set. Please add it to backend/.env "
             "(e.g. DEEPSEEK_API_KEY=sk-...)."
         )
+
+    # Resolve None to env / module-level defaults.
+    if timeout_s is None:
+        timeout_s = _DEFAULT_TIMEOUT_S
+    if max_retries is None:
+        max_retries = _DEFAULT_MAX_RETRIES
 
     messages = [
         {"role": "system", "content": system_prompt},

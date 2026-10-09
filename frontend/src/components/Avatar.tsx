@@ -39,6 +39,11 @@ export function Avatar({ type, speaker, }: AvatarProps) {
     initials = "PA";
     bgClass = "bg-emerald-50";
     textClass = "text-emerald-700";
+  } else if (s?.includes("JUDGE")) {
+    avatarSrc = "/avatars/judge.png";
+    initials = "JG";
+    bgClass = "bg-[#EEF2FF]";
+    textClass = "text-[#4338CA]";
   } else if (type === "bot" || s?.includes("MIORA") || s?.includes("BOT")) {
     avatarSrc = "/avatars/bot.png";
     initials = "M";
