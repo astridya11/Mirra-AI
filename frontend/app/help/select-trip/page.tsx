@@ -40,7 +40,8 @@ function SelectTripContent() {
         console.error("Failed to load trips:", err);
 
         if (!cancelled) {
-          setError("Unable to load trips.");
+          // setError("Unable to load trips.");
+          router.push(`/login`);
         }
       } finally {
         if (!cancelled) {

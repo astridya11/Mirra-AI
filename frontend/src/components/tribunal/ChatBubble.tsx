@@ -155,11 +155,11 @@ function ChatBubbleImpl({
           </span>
         )}
 
-        {/* {msg.badge && (
-          <span className="px-1.5 py-0.2 text-[10px] bg-slate-100 text-slate-800 rounded font-normal">
+        {msg.badge && (
+          <span className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-800 rounded-xl font-normal">
             {msg.badge}
           </span>
-        )} */}
+        )}
       </div>
 
       {/* -----------------------------------------------------------------

@@ -299,8 +299,8 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
 
         {decision === "REQUEST_HUMAN_REVIEW" && (
           <div className="pt-1">
-            <div className="rounded-2xl bg-[#FFFBEB] px-4 py-2.5">
-              <span className="text-[14px] text-[#D97706]">
+            <div className="rounded-md bg-[#FFF6A9] leading-5 px-4 py-2.5">
+              <span className="leading-5 text-[14px] text-[#D97706]">
                 Your case has been escalated to our human review team. We'll get back to you soon.
               </span>
             </div>

@@ -115,6 +115,35 @@ function firstText(obj: Rec | null, keys: string[]): string {
   return "";
 }
 
+/**
+ * The completed_result API does not persist the initial audit report, so cache
+ * that report in this browser tab when its INITIAL_AUDIT SSE event arrives.
+ * sessionStorage is scoped to the current tab/session and is not permanent storage.
+ */
+function initialAuditStorageKey(caseId: string): string {
+  return `tribunal:${caseId}:initial-audit-report`;
+}
+
+function saveInitialAuditReport(caseId: string, report: string): void {
+  if (typeof window === "undefined" || !caseId || !report.trim()) return;
+  try {
+    window.sessionStorage.setItem(initialAuditStorageKey(caseId), report);
+  } catch (error) {
+    // Storage may be unavailable (e.g. browser privacy settings); streaming still works.
+    console.warn("Could not cache initial audit report in sessionStorage:", error);
+  }
+}
+
+function readInitialAuditReport(caseId: string): string {
+  if (typeof window === "undefined" || !caseId) return "";
+  try {
+    return window.sessionStorage.getItem(initialAuditStorageKey(caseId)) || "";
+  } catch (error) {
+    console.warn("Could not read initial audit report from sessionStorage:", error);
+    return "";
+  }
+}
+
 function speakerSide(speaker: string): BubbleSide {
   const s = speaker.toUpperCase();
   if (s.includes("DRIVER") || s.includes("POLICY")) return "right";
@@ -188,7 +217,12 @@ function extractTextContent(data: Rec | null): string {
   return text;
 }
 
-function extractMessageFromData(speaker: string, rawData: unknown, badge?: string): ChatMessage | null {
+function extractMessageFromData(
+  speaker: string,
+  rawData: unknown,
+  badge?: string,
+  hideTarget = false
+): ChatMessage | null {
   const data = (asRecord(rawData) || {}) as Rec;
   const text = extractTextContent(data);
 
@@ -204,7 +238,7 @@ function extractMessageFromData(speaker: string, rawData: unknown, badge?: strin
     speakerTitle: roleTitle(speaker),
     text,
     badge,
-    targetLabel: target ? targetName(target) : undefined,
+    targetLabel: !hideTarget && target ? targetName(target) : undefined,
   };
 }
 
@@ -262,22 +296,24 @@ export default function ProcessPage() {
 
           // 1. Round 1 Statements (Rider & Driver Argument Summary)
           if (result.round_1_statements?.rider_statement) {
-            const m = extractMessageFromData("RIDER_ADVOCATE", result.round_1_statements.rider_statement, "Round 1 Pleading");
+            const m = extractMessageFromData("RIDER_ADVOCATE", result.round_1_statements.rider_statement, "Round 1 Pleading", true);
             if (m) parsedMsgs.push(m);
           }
           if (result.round_1_statements?.driver_statement) {
-            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "Round 1 Pleading");
+            const m = extractMessageFromData("DRIVER_ADVOCATE", result.round_1_statements.driver_statement, "Round 1 Pleading", true);
             if (m) parsedMsgs.push(m);
           }
 
           // 2. Prosecutor Initial Audit Summary
-          if (result.prosecutor_findings?.prosecutor_summary) {
+          // This report is not in completed_result; restore the copy cached during SSE streaming.
+          const initialAuditSummary = readInitialAuditReport(caseId);
+          if (initialAuditSummary) {
             parsedMsgs.push({
               id: "init-audit",
               side: "left",
               speaker: "PROSECUTOR",
               speakerTitle: "Prosecutor",
-              text: result.prosecutor_findings.prosecutor_summary,
+              text: initialAuditSummary,
               badge: "Initial Audit",
             });
           }
@@ -317,6 +353,18 @@ export default function ProcessPage() {
                   targetLabel: "Prosecutor",
                 });
               }
+            });
+          }
+
+          // 3b. Prosecutor Final Audit Report Summary (Fixed Bug 1: Checked if round 2 report exists in static load)
+          if (result.round_2_cross_exam?.round2_completed && result.prosecutor_findings?.prosecutor_summary) {
+            parsedMsgs.push({
+              id: "final-report",
+              side: "left",
+              speaker: "PROSECUTOR",
+              speakerTitle: "Prosecutor",
+              text: result.prosecutor_findings.prosecutor_summary,
+              badge: "Final Audit Report",
             });
           }
 
@@ -407,10 +455,13 @@ export default function ProcessPage() {
           const data = asRecord(e.data) || asRecord(e.payload) || {};
           const speaker = String(e.speaker || data.speaker || "Agent");
 
+          const isRound1 = phase === "ROUND_1_PLEADINGS";
+
           const msg = extractMessageFromData(
             speaker,
             data,
-            phase === "ROUND_1_PLEADINGS" ? "Round 1 Pleadings" : subPhase === "CROSS_EXAM" ? "Cross Examination" : "Argument"
+            isRound1 ? "Round 1 Pleadings" : subPhase === "CROSS_EXAM" ? "Cross Examination" : "Argument",
+            isRound1
           );
 
           if (msg) {
@@ -458,8 +509,15 @@ export default function ProcessPage() {
               const isFinal = subPhase === "FINAL_REPORT";
 
               if (isInitial || isFinal) {
-                const badge = isInitial ? "Initial Evidence Audit Report" : "Final Audit Report";
+                const reportText = pf.prosecutor_summary as string;
+                const badge = isInitial ? "Initial Audit" : "Final Audit Report";
                 const msgId = `prosecutor-report-${subPhase}-${e.timestamp || Math.random()}`;
+
+                // Cache the initial report immediately so it can be restored if the
+                // completed case is reopened in this same browser tab/session.
+                if (isInitial) {
+                  saveInitialAuditReport(caseId, reportText);
+                }
 
                 setMessages((prev) => {
                   // 检查是否已经存在该 sub_phase 的报告，防止 SSE 重复推送
@@ -473,7 +531,7 @@ export default function ProcessPage() {
                       side: "left",
                       speaker: "PROSECUTOR",
                       speakerTitle: "Prosecutor",
-                      text: pf.prosecutor_summary as string,
+                      text: reportText,
                       badge,
                       subPhase,
                     },
@@ -550,7 +608,7 @@ export default function ProcessPage() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      <IOSHeader title="Mirra AI" />
+      <IOSHeader title="Mirra AI Tribunal" />
 
       {/* Dashed Progress Stepper */}
       <DashedProgressStepper currentStepIndex={currentStepIndex} />
