@@ -280,6 +280,21 @@ export interface ReceiptEvidenceInput {
    */
   uploaded_at?: string;
   ocr_result?: ReceiptOcrResult;
+  /**
+   * True when this receipt was matched to a receipt already submitted in a different case.
+   */
+  recycled_receipt_detected?: boolean;
+  /**
+   * Case ID of the prior case that already submitted an identical or near-duplicate receipt.
+   */
+  recycled_receipt_match_case_id?: string;
+  /**
+   * Why the receipt matched: IDENTICAL_FILE, NEAR_DUPLICATE_IMAGE, or SAME_MERCHANT_AMOUNT_DATE.
+   */
+  recycled_receipt_match_reason?:
+    | 'IDENTICAL_FILE'
+    | 'NEAR_DUPLICATE_IMAGE'
+    | 'SAME_MERCHANT_AMOUNT_DATE';
 }
 /**
  * Structured OCR result.  Omitted when the receipt could not be read.

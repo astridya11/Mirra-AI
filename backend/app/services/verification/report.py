@@ -19,6 +19,7 @@ from .checks_cleaning_fee import (
     check_cleaning_conflicting_party_accounts,
     check_cleaning_photo_reference_consistency,
     check_cleaning_photo_timing,
+    check_cleaning_receipt_reuse,
     check_cleaning_receipt_timing,
     check_cleaning_structured_image_evidence,
 )
@@ -63,6 +64,7 @@ CLEANING_FEE_CHECKS: list[CheckFn] = [
     check_cleaning_claim_amount_consistency,
     check_cleaning_claim_submission_delay,
     check_cleaning_receipt_timing,
+    check_cleaning_receipt_reuse,
     check_cleaning_photo_timing,
     check_cleaning_conflicting_party_accounts,
     check_cleaning_structured_image_evidence,

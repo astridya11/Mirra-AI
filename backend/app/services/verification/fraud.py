@@ -22,6 +22,7 @@ from typing import Any
 
 # --- Current-case image evidence weights ---
 _WEIGHT_RECYCLED_IMAGE: float = 0.40
+_WEIGHT_RECYCLED_RECEIPT: float = 0.40
 _WEIGHT_AI_GENERATED_MAX: float = 0.35
 _WEIGHT_EXIF_INCONSISTENT: float = 0.25
 _WEIGHT_MULTI_SIGNAL_BONUS: float = 0.10
@@ -55,11 +56,28 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def _count_current_signals(image_analyses: list[dict[str, Any]]) -> tuple[int, list[str]]:
+def _extract_receipts(context: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return receipt_evidence list from context.data_sources, or empty."""
+    ds = context.get("data_sources", {})
+    if not isinstance(ds, dict):
+        return []
+    raw = ds.get("receipt_evidence")
+    if not isinstance(raw, list):
+        return []
+    return [r for r in raw if isinstance(r, dict)]
+
+
+def _count_current_signals(
+    image_analyses: list[dict[str, Any]],
+    receipt_analyses: list[dict[str, Any]] | None = None,
+) -> tuple[int, list[str]]:
     """Count independent current-case fraud signals and collect risk-factor strings.
 
     Returns (signal_count, risk_factors).
     """
+    if receipt_analyses is None:
+        receipt_analyses = []
+
     factors: list[str] = []
     signal_count = 0
 
@@ -95,20 +113,42 @@ def _count_current_signals(image_analyses: list[dict[str, Any]]) -> tuple[int, l
                 f"EXIF mismatch risk signal: {img_id} metadata inconsistent with trip data"
             )
 
+    # D. Recycled receipt (independent signal, counted separately from image)
+    for receipt in receipt_analyses:
+        rcp_id = receipt.get("receipt_id", "unknown")
+        if receipt.get("recycled_receipt_detected") is True:
+            signal_count += 1
+            match_case = receipt.get("recycled_receipt_match_case_id")
+            if match_case:
+                factors.append(
+                    f"Receipt reuse risk signal detected: {rcp_id} matches prior case {match_case}"
+                )
+            else:
+                factors.append(
+                    f"Receipt reuse risk signal detected: {rcp_id} (matched prior case)"
+                )
+
     return signal_count, factors
 
 
-def _score_current_evidence(image_analyses: list[dict[str, Any]]) -> float:
-    """Compute raw score contribution from current-case image evidence."""
+def _score_current_evidence(
+    image_analyses: list[dict[str, Any]],
+    receipt_analyses: list[dict[str, Any]] | None = None,
+) -> float:
+    """Compute raw score contribution from current-case evidence."""
+    if receipt_analyses is None:
+        receipt_analyses = []
+
     score = 0.0
-    has_recycled = False
+    has_recycled_image = False
+    has_recycled_receipt = False
     has_ai = False
     has_exif_mismatch = False
 
     for analysis in image_analyses:
         if analysis.get("recycled_image_detected") is True:
             score += _WEIGHT_RECYCLED_IMAGE
-            has_recycled = True
+            has_recycled_image = True
 
         if analysis.get("is_ai_generated") is True:
             conf = analysis.get("ai_generated_confidence", 0.0)
@@ -120,8 +160,13 @@ def _score_current_evidence(image_analyses: list[dict[str, Any]]) -> float:
             score += _WEIGHT_EXIF_INCONSISTENT
             has_exif_mismatch = True
 
+    for receipt in receipt_analyses:
+        if receipt.get("recycled_receipt_detected") is True:
+            score += _WEIGHT_RECYCLED_RECEIPT
+            has_recycled_receipt = True
+
     # Multiple independent current signals bonus
-    independent_signals = sum([has_recycled, has_ai, has_exif_mismatch])
+    independent_signals = sum([has_recycled_image, has_recycled_receipt, has_ai, has_exif_mismatch])
     if independent_signals >= 2:
         score += _WEIGHT_MULTI_SIGNAL_BONUS
 
@@ -204,9 +249,12 @@ def _score_historical_profiles(profiles: list[dict[str, Any]]) -> tuple[float, l
     return score, factors, abuse_detected, abuse_description
 
 
-def has_current_case_signals(image_analyses: list[dict[str, Any]]) -> bool:
+def has_current_case_signals(
+    image_analyses: list[dict[str, Any]],
+    receipt_analyses: list[dict[str, Any]] | None = None,
+) -> bool:
     """Return True if any objective current-case fraud signal is present."""
-    count, _ = _count_current_signals(image_analyses)
+    count, _ = _count_current_signals(image_analyses, receipt_analyses)
     return count > 0
 
 
@@ -241,9 +289,12 @@ def assess_fraud_risk(
     All risk language uses "risk signal" / "detected" phrasing;
     it never describes risk as certainty or proven fraud.
     """
-    # 1. Current-case image evidence
-    current_signal_count, current_factors = _count_current_signals(image_analyses)
-    current_score = _score_current_evidence(image_analyses)
+    # 1. Current-case evidence (images + receipts)
+    receipt_analyses = _extract_receipts(context)
+    current_signal_count, current_factors = _count_current_signals(
+        image_analyses, receipt_analyses
+    )
+    current_score = _score_current_evidence(image_analyses, receipt_analyses)
     has_current_signals = current_signal_count > 0
 
     # 2. Historical profiles
@@ -280,6 +331,14 @@ def assess_fraud_risk(
             abuse_description = f"CURRENT evidence: image reuse detected; {abuse_description}"
         else:
             abuse_description = "CURRENT evidence: image reuse detected across cases"
+
+    # Current-case abuse signal (recycled receipt from another case)
+    if any(r.get("recycled_receipt_detected") is True for r in receipt_analyses):
+        abuse_detected = True
+        if abuse_description:
+            abuse_description = f"CURRENT evidence: receipt reuse detected; {abuse_description}"
+        else:
+            abuse_description = "CURRENT evidence: receipt reuse detected across cases"
 
     # 8. Collusion — conservative; no structured collusion graph available
     collusion_flag = False

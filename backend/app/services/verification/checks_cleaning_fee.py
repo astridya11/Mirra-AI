@@ -890,6 +890,108 @@ def check_cleaning_structured_image_evidence(data: dict[str, Any]) -> dict[str, 
     }
 
 
+def check_cleaning_receipt_reuse(data: dict[str, Any]) -> dict[str, Any]:
+    """Report whether any receipt has been recycled from a prior case.
+
+    For each receipt with ``recycled_receipt_detected`` true, states a fact:
+
+        "Recycled receipt: <receipt_id> matches a receipt already submitted
+         in case <case_id>."
+
+    Status VERIFIED, ``party_relevance`` "DRIVER".
+
+    When no receipt is recycled, returns the same "nothing found" shape that
+    ``check_cleaning_structured_image_evidence`` uses when no image evidence
+    is present (MISSING with a clear description).
+
+    Must NOT conclude intent, fault, or policy violation.
+    """
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+    receipt_evidence = ds.get("receipt_evidence")
+
+    if receipt_evidence is None:
+        return {
+            "status": "MISSING",
+            "description": (
+                "The frozen structured evidence record does not contain verifiable receipt "
+                "evidence for the cleaning-fee claim."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    if not isinstance(receipt_evidence, list):
+        return {
+            "status": "MISSING",
+            "description": (
+                "Structured receipt evidence is present but malformed (not a list)."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    if not receipt_evidence:
+        return {
+            "status": "MISSING",
+            "description": (
+                "The frozen structured evidence record contains an empty receipt-evidence list "
+                "for the cleaning-fee claim."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    recycled_receipts: list[dict[str, Any]] = []
+    evidence_refs: list[dict[str, Any]] = []
+
+    for i, rcp in enumerate(receipt_evidence):
+        if not isinstance(rcp, dict):
+            continue
+        if rcp.get("recycled_receipt_detected") is not True:
+            continue
+        rid = rcp.get("receipt_id") or f"RCP-{i:03d}"
+        match_case = rcp.get("recycled_receipt_match_case_id", "")
+        match_reason = rcp.get("recycled_receipt_match_reason", "")
+        recycled_receipts.append({
+            "receipt_id": rid,
+            "match_case_id": match_case,
+            "match_reason": match_reason,
+        })
+        evidence_refs.append(
+            _evidence_ref(rid, "RECEIPT", f"recycled receipt {rid}")
+        )
+
+    if not recycled_receipts:
+        return {
+            "status": "MISSING",
+            "description": (
+                "No recycled receipt was detected among the submitted receipts."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    parts: list[str] = []
+    for item in recycled_receipts:
+        rid = item["receipt_id"]
+        match_case = item["match_case_id"]
+        parts.append(
+            f"Recycled receipt: {rid} matches a receipt already submitted in case {match_case}."
+        )
+
+    return {
+        "status": "VERIFIED",
+        "description": " ".join(parts),
+        "evidence_refs": evidence_refs,
+        "details": {
+            "party_relevance": "DRIVER",
+            "confidence_level": 1.0,
+        },
+    }
+
+
 def check_cleaning_photo_reference_consistency(data: dict[str, Any]) -> dict[str, Any]:
     """Whether a photo reference in the claim is matched by structured image evidence.
 

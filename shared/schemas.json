@@ -1208,6 +1208,23 @@
         "ocr_result": {
           "$ref": "#/$defs/ReceiptOcrResult",
           "description": "Structured OCR result. Omitted when the receipt could not be read."
+        },
+        "recycled_receipt_detected": {
+          "type": "boolean",
+          "description": "True when this receipt was matched to a receipt already submitted in a different case."
+        },
+        "recycled_receipt_match_case_id": {
+          "type": "string",
+          "description": "Case ID of the prior case that already submitted an identical or near-duplicate receipt."
+        },
+        "recycled_receipt_match_reason": {
+          "type": "string",
+          "description": "Why the receipt matched: IDENTICAL_FILE, NEAR_DUPLICATE_IMAGE, or SAME_MERCHANT_AMOUNT_DATE.",
+          "enum": [
+            "IDENTICAL_FILE",
+            "NEAR_DUPLICATE_IMAGE",
+            "SAME_MERCHANT_AMOUNT_DATE"
+          ]
         }
       },
       "additionalProperties": false

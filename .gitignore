@@ -156,6 +156,7 @@ vite.config.ts.timestamp-*
 
 # disputes files
 backend/disputes
+backend/disputes/known_receipt_hashes.runtime.json
 
 # escalated files
 backend/escalated

@@ -880,14 +880,17 @@ def _compute_account_action(context: Dict[str, Any]) -> Dict[str, Any]:
     fabricated_evidence_present = any(
         a.get("is_ai_generated") is True or a.get("recycled_image_detected") is True
         for a in analyses
+    ) or any(
+        isinstance(r, dict) and r.get("recycled_receipt_detected") is True
+        for r in (data_sources.get("receipt_evidence") or [])
     )
     if fabricated_evidence_present or any(
-        _contains_any(_fact_text(f), ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image"))
+        _contains_any(_fact_text(f), ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image", "recycled receipt"))
         for f in verified_facts
     ):
         _confirmed_violation(
             "FABRICATED_EVIDENCE_CONFIRMED",
-            ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image"),
+            ("fabricated evidence", "recycled image", "ai-generated", "ai generated", "synthetic image", "recycled receipt"),
         )
 
     # Safety severity is determined from the verified fact because
