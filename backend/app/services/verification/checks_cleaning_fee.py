@@ -992,6 +992,119 @@ def check_cleaning_receipt_reuse(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def check_cleaning_receipt_authenticity(data: dict[str, Any]) -> dict[str, Any]:
+    """Report AI-generation and edit-software findings on receipts.
+
+    For each receipt with ``receipt_ai_generated_detected`` true → DISPUTED
+    (a risk signal, not proof), ``party_relevance`` "DRIVER", statement:
+
+        "Receipt <receipt_id> shows signs of being AI-generated (<source>,
+         confidence <x.xx>)."
+
+    For each receipt with ``receipt_edit_software`` set → DISPUTED, statement:
+
+        "Receipt <receipt_id> metadata shows it was edited with <software>."
+
+    When neither is found, returns the same "nothing found" shape that
+    ``check_cleaning_receipt_reuse`` uses (MISSING with a clear description).
+
+    Must NOT conclude intent, fault, or policy violation.
+    """
+    ds = data.get("data_sources", {})
+    if not isinstance(ds, dict):
+        ds = {}
+    receipt_evidence = ds.get("receipt_evidence")
+
+    if receipt_evidence is None:
+        return {
+            "status": "MISSING",
+            "description": (
+                "The frozen structured evidence record does not contain verifiable receipt "
+                "evidence for authenticity checks."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    if not isinstance(receipt_evidence, list):
+        return {
+            "status": "MISSING",
+            "description": (
+                "Structured receipt evidence is present but malformed (not a list)."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    if not receipt_evidence:
+        return {
+            "status": "MISSING",
+            "description": (
+                "The frozen structured evidence record contains an empty receipt-evidence list "
+                "for authenticity checks."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    ai_sentences: list[str] = []
+    edit_sentences: list[str] = []
+    evidence_refs: list[dict[str, Any]] = []
+
+    for i, rcp in enumerate(receipt_evidence):
+        if not isinstance(rcp, dict):
+            continue
+        rid = rcp.get("receipt_id") or f"RCP-{i:03d}"
+
+        if rcp.get("receipt_ai_generated_detected") is True:
+            source = rcp.get("receipt_ai_generated_source", "")
+            confidence = rcp.get("receipt_ai_generated_confidence")
+            if _is_number(confidence):
+                ai_sentences.append(
+                    f"Receipt {rid} shows signs of being AI-generated "
+                    f"({source}, confidence {float(confidence):.2f})."
+                )
+            else:
+                ai_sentences.append(
+                    f"Receipt {rid} shows signs of being AI-generated ({source})."
+                )
+            evidence_refs.append(
+                _evidence_ref(rid, "RECEIPT", f"AI-generated receipt {rid}")
+            )
+
+        edit_sw = rcp.get("receipt_edit_software")
+        if isinstance(edit_sw, str) and edit_sw.strip():
+            edit_sentences.append(
+                f"Receipt {rid} metadata shows it was edited with {edit_sw}."
+            )
+            if not any(r.get("evidence_id") == rid for r in evidence_refs):
+                evidence_refs.append(
+                    _evidence_ref(rid, "RECEIPT", f"edited receipt {rid}")
+                )
+
+    if not ai_sentences and not edit_sentences:
+        return {
+            "status": "MISSING",
+            "description": (
+                "No AI-generated or edited-software markers were detected among "
+                "the submitted receipts."
+            ),
+            "evidence_refs": [],
+            "details": {"confidence_level": 1.0},
+        }
+
+    parts = list(ai_sentences) + list(edit_sentences)
+    return {
+        "status": "DISPUTED",
+        "description": " ".join(parts),
+        "evidence_refs": evidence_refs,
+        "details": {
+            "party_relevance": "DRIVER",
+            "confidence_level": 1.0,
+        },
+    }
+
+
 def check_cleaning_photo_reference_consistency(data: dict[str, Any]) -> dict[str, Any]:
     """Whether a photo reference in the claim is matched by structured image evidence.
 

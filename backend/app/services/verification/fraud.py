@@ -128,6 +128,16 @@ def _count_current_signals(
                     f"Receipt reuse risk signal detected: {rcp_id} (matched prior case)"
                 )
 
+        # E. AI-generated receipt (independent signal, weighted like AI image)
+        if receipt.get("receipt_ai_generated_detected") is True:
+            conf = receipt.get("receipt_ai_generated_confidence", 0.0)
+            if _is_number(conf):
+                signal_count += 1
+                factors.append(
+                    f"AI-generated receipt risk signal detected: {rcp_id} "
+                    f"(confidence {float(conf):.2f})"
+                )
+
     return signal_count, factors
 
 
@@ -142,7 +152,8 @@ def _score_current_evidence(
     score = 0.0
     has_recycled_image = False
     has_recycled_receipt = False
-    has_ai = False
+    has_ai_image = False
+    has_ai_receipt = False
     has_exif_mismatch = False
 
     for analysis in image_analyses:
@@ -154,7 +165,7 @@ def _score_current_evidence(
             conf = analysis.get("ai_generated_confidence", 0.0)
             if _is_number(conf):
                 score += float(conf) * _WEIGHT_AI_GENERATED_MAX
-                has_ai = True
+                has_ai_image = True
 
         if analysis.get("exif_consistent_with_trip") is False:
             score += _WEIGHT_EXIF_INCONSISTENT
@@ -165,8 +176,17 @@ def _score_current_evidence(
             score += _WEIGHT_RECYCLED_RECEIPT
             has_recycled_receipt = True
 
+        if receipt.get("receipt_ai_generated_detected") is True:
+            conf = receipt.get("receipt_ai_generated_confidence", 0.0)
+            if _is_number(conf):
+                score += float(conf) * _WEIGHT_AI_GENERATED_MAX
+                has_ai_receipt = True
+
     # Multiple independent current signals bonus
-    independent_signals = sum([has_recycled_image, has_recycled_receipt, has_ai, has_exif_mismatch])
+    independent_signals = sum([
+        has_recycled_image, has_recycled_receipt,
+        has_ai_image, has_ai_receipt, has_exif_mismatch,
+    ])
     if independent_signals >= 2:
         score += _WEIGHT_MULTI_SIGNAL_BONUS
 

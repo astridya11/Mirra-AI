@@ -480,6 +480,33 @@ def _detect_ai_hint(img: Image.Image, raw_bytes: bytes) -> bool:
     return False
 
 
+def detect_ai_generator_markers(img: Image.Image, raw_bytes: bytes) -> bool:
+    """Public wrapper around ``_detect_ai_hint`` for reuse by other modules.
+
+    Returns True if a known AI-image generator name appears in the EXIF
+    Software tag or the raw file bytes.  No behaviour change.
+    """
+    return _detect_ai_hint(img, raw_bytes)
+
+
+def extract_exif_software(img: Image.Image) -> str | None:
+    """Return the EXIF Software tag value, or None if absent/unreadable.
+
+    Public wrapper so receipt_evidence.py can read the same Software tag
+    that photo_evidence.py already inspects for AI markers.
+    """
+    exif_obj = _get_raw_exif(img)
+    if exif_obj is None:
+        return None
+    try:
+        software = exif_obj.get(_TAG_SOFTWARE)
+    except Exception:
+        return None
+    if isinstance(software, str) and software.strip():
+        return software
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Vision provider hook
 # ---------------------------------------------------------------------------

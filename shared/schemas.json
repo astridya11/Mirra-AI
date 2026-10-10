@@ -1225,6 +1225,28 @@
             "NEAR_DUPLICATE_IMAGE",
             "SAME_MERCHANT_AMOUNT_DATE"
           ]
+        },
+        "receipt_ai_generated_detected": {
+          "type": "boolean",
+          "description": "True when the receipt image shows signs of being AI-generated or synthetically produced."
+        },
+        "receipt_ai_generated_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence (0.0-1.0) that the receipt is AI-generated."
+        },
+        "receipt_ai_generated_source": {
+          "type": "string",
+          "description": "Which layer detected the AI signal: METADATA (generator marker in EXIF/bytes) or VISION (vision model).",
+          "enum": [
+            "METADATA",
+            "VISION"
+          ]
+        },
+        "receipt_edit_software": {
+          "type": "string",
+          "description": "Name of editing software detected in the EXIF Software tag (e.g. Photoshop, Lightroom, Canva). Recorded as a fact only, not a fraud signal."
         }
       },
       "additionalProperties": false

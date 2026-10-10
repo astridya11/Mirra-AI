@@ -36,6 +36,10 @@ from typing import Any
 
 from PIL import Image
 
+from backend.shared.photo_evidence import (
+    detect_ai_generator_markers,
+    extract_exif_software,
+)
 from backend.shared.vision_client import call_vision_json
 
 # ---------------------------------------------------------------------------
@@ -51,6 +55,17 @@ _THIS_DIR = Path(__file__).resolve().parent  # backend/shared/
 _BACKEND_DIR = _THIS_DIR.parent  # backend/
 _MOCK_EVIDENCE_DIR = _BACKEND_DIR / "mock_evidence"
 _DEFAULT_ANNOTATIONS_PATH = _MOCK_EVIDENCE_DIR / "receipt_annotations.json"
+
+# Known editing-software names to detect in EXIF Software / XMP.
+# Used only to record an edit-software fact — NOT a fraud signal.
+_EDIT_SOFTWARE_MARKERS = (
+    "photoshop",
+    "lightroom",
+    "canva",
+    "snapseed",
+    "picsart",
+    "gimp",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +211,11 @@ _RECEIPT_SYSTEM_PROMPT = (
     '"currency": ISO 4217 currency code (default "SGD"), '
     '"merchant_name": string, '
     '"receipt_date": ISO 8601 date-time or null, '
-    '"ocr_confidence": float between 0 and 1}. '
+    '"ocr_confidence": float between 0 and 1, '
+    '"is_ai_generated": bool (true if the receipt image appears to be '
+    'AI-generated or synthetically produced rather than a real photo), '
+    '"ai_generated_confidence": float between 0 and 1 (confidence that the '
+    'receipt is AI-generated; 0 if clearly a real photo)}. '
     "If the image is not a receipt or the total amount is not legible, "
     'return {"readable": false}. Never guess numbers.'
 )
@@ -210,6 +229,10 @@ def _run_ocr(file_path: str | Path) -> dict[str, Any] | None:
     usable OCR data).  The ``readable`` key and any null-valued fields are
     dropped before returning.  The result goes through the same validation
     as annotations via ``_build_ocr_result``.
+
+    When the vision response includes ``is_ai_generated`` /
+    ``ai_generated_confidence``, those keys are passed through so that
+    ``build_receipt_evidence`` can apply them as the VISION source.
     """
     raw = call_vision_json(
         _RECEIPT_SYSTEM_PROMPT,
@@ -221,11 +244,69 @@ def _run_ocr(file_path: str | Path) -> dict[str, Any] | None:
     if raw.get("readable") is False:
         return None
     result: dict[str, Any] = {}
-    for key in ("amount", "currency", "merchant_name", "receipt_date", "ocr_confidence"):
+    for key in (
+        "amount", "currency", "merchant_name", "receipt_date", "ocr_confidence",
+    ):
         val = raw.get(key)
         if val is not None:
             result[key] = val
+    # Pass through vision AI fields if present.
+    is_ai = raw.get("is_ai_generated")
+    if isinstance(is_ai, bool):
+        result["is_ai_generated"] = is_ai
+    ai_conf = raw.get("ai_generated_confidence")
+    if _is_valid_confidence(ai_conf):
+        result["ai_generated_confidence"] = float(ai_conf)
     return result or None
+
+
+# ---------------------------------------------------------------------------
+# Receipt AI / edit-software metadata detection (always on, no API)
+# ---------------------------------------------------------------------------
+
+def _detect_edit_software(software_str: str | None) -> str | None:
+    """Return the matched editing-software name, or None.
+
+    Scans the EXIF Software tag value for known editors (Photoshop,
+    Lightroom, Canva, Snapseed, PicsArt, GIMP).  Returns the display
+    name (title-cased) of the first match.
+    """
+    if not isinstance(software_str, str) or not software_str.strip():
+        return None
+    lowered = software_str.lower()
+    for marker in _EDIT_SOFTWARE_MARKERS:
+        if marker in lowered:
+            # Return a readable display name.
+            return marker.title()
+    return None
+
+
+def _detect_receipt_ai_metadata(
+    img: Image.Image,
+    raw_bytes: bytes,
+) -> tuple[bool, str | None]:
+    """Run the always-on metadata layer for AI generation and edit software.
+
+    Returns ``(ai_detected, edit_software)``.
+
+    - ``ai_detected``: True when a known AI-generator marker appears in
+      the EXIF Software tag or raw bytes (same scan as photos).
+    - ``edit_software``: the name of a known editing tool found in the
+      EXIF Software tag, or None.
+    """
+    try:
+        ai_detected = detect_ai_generator_markers(img, raw_bytes)
+    except Exception:
+        ai_detected = False
+
+    try:
+        software_str = extract_exif_software(img)
+    except Exception:
+        software_str = None
+
+    edit_software = _detect_edit_software(software_str)
+
+    return ai_detected, edit_software
 
 
 # ---------------------------------------------------------------------------
@@ -277,13 +358,26 @@ def build_receipt_evidence(
     except Exception:
         return base
 
-    # 2. OCR result: try _run_ocr first; fall back to annotation.
+    # 2. AI / edit-software metadata layer (always on, no API).
+    ai_metadata_detected, edit_software = _detect_receipt_ai_metadata(img, raw_bytes)
+
+    # 3. OCR result: try _run_ocr first; fall back to annotation.
+    #    _run_ocr also returns is_ai_generated / ai_generated_confidence
+    #    from the vision layer when use_vision is true.
     ocr_raw: dict[str, Any] | None = None
+    vision_ai: dict[str, Any] | None = None
 
     if use_vision:
         provider_result = _run_ocr(file_path)
         if provider_result is not None:
             ocr_raw = provider_result
+            # Extract vision AI fields (if present) before _build_ocr_result
+            # strips them (it only keeps OCR fields).
+            vision_ai = {}
+            if "is_ai_generated" in provider_result:
+                vision_ai["is_ai_generated"] = provider_result["is_ai_generated"]
+            if "ai_generated_confidence" in provider_result:
+                vision_ai["ai_generated_confidence"] = provider_result["ai_generated_confidence"]
 
     if ocr_raw is None:
         if annotation is None:
@@ -294,6 +388,37 @@ def build_receipt_evidence(
     ocr_result = _build_ocr_result(ocr_raw)
     if ocr_result is not None:
         base["ocr_result"] = ocr_result
+
+    # 4. Determine final AI-generated result (metadata overrides vision).
+    ai_detected = False
+    ai_confidence: float | None = None
+    ai_source: str | None = None
+
+    if ai_metadata_detected:
+        ai_detected = True
+        ai_confidence = 0.9
+        ai_source = "METADATA"
+    elif (
+        isinstance(vision_ai, dict)
+        and vision_ai.get("is_ai_generated") is True
+    ):
+        ai_detected = True
+        conf = vision_ai.get("ai_generated_confidence")
+        if _is_valid_confidence(conf):
+            ai_confidence = float(conf)
+        else:
+            ai_confidence = 0.5
+        ai_source = "VISION"
+
+    if ai_detected:
+        base["receipt_ai_generated_detected"] = True
+        if ai_confidence is not None:
+            base["receipt_ai_generated_confidence"] = ai_confidence
+        if ai_source is not None:
+            base["receipt_ai_generated_source"] = ai_source
+
+    if edit_software is not None:
+        base["receipt_edit_software"] = edit_software
 
     return base
 
