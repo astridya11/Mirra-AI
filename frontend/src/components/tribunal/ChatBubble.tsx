@@ -123,8 +123,10 @@ function ChatBubbleImpl({
     bubbleClass = "bg-[#FFEBCD] text-slate-800 rounded-tl-none";
   } else if (s.includes("POLICY")) {
     bubbleClass = "bg-[#4682B4] text-white rounded-tr-none";
+  } else if (s.includes("JUDGE")) {
+    bubbleClass = "bg-[#DDF6D2] text-slate-800 rounded-tl-none";
   } else {
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tr-none";
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
   }
 
   return (
@@ -305,8 +307,10 @@ export const TypingBubble = memo(function TypingBubble({
     bubbleClass = "bg-[#FFEBCD] text-slate-800 rounded-tl-none";
   } else if (s.includes("POLICY")) {
     bubbleClass = "bg-[#4682B4] text-white rounded-tr-none";
+  } else if (s.includes("JUDGE")) {
+    bubbleClass = "bg-[#DDF6D2] text-slate-800 rounded-tl-none";
   } else {
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tr-none";
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
   }
 
   return (

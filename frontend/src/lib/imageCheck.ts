@@ -15,7 +15,7 @@ export function imageCheckMessages(res: ImageCheckResponse | null): ChatMessage[
     speakerTitle: "Prosecutor",
     imageUrl: backendUrl(img.image_url),
     text: img.summary,
-    badge: `Evidence Check · ${img.status}`,
+    badge: `Image Analysis`,
   }));
 }
 
@@ -32,10 +32,10 @@ export function verdictImageMessages(res: ImageCheckResponse | null): ChatMessag
     .map((img) => ({
       id: `verdict-image-${img.image_id}`,
       side: "left" as const,
-      speaker: "PROSECUTOR",
-      speakerTitle: "Prosecutor",
+      speaker: "JUDGE",
+      speakerTitle: "Judge",
       imageUrl: `${backendUrl(img.verdict_image_url!)}?t=${Date.now()}`,
-      text: img.summary,
+      text: "The evidences have been taken into account, and I have rendered my verdict.",
       badge: "Evidence Verdict",
     }));
 }

@@ -156,4 +156,6 @@ vite.config.ts.timestamp-*
 
 # disputes files
 backend/disputes
-backend/data/disputes
+
+# escalated files
+backend/escalated

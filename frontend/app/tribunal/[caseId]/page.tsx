@@ -156,6 +156,7 @@ function roleTitle(speaker: string): string {
   if (s.includes("RIDER") || speaker.includes("乘客")) return "Rider Advocate";
   if (s.includes("DRIVER") || speaker.includes("司机")) return "Driver Advocate";
   if (s.includes("POLICY") || speaker.includes("政策")) return "Policy Consultant";
+  if (s.includes("JUDGE") || speaker.includes("法官")) return "Judge";
   return speaker;
 }
 
@@ -388,6 +389,17 @@ export default function ProcessPage() {
           for (const m of vMsgs) {
             if (!existingIds.has(m.id)) parsedMsgs.push(m);
           }
+          if (vMsgs.length == 0)
+          {
+            parsedMsgs.push({
+              id: "verdict-non-image",
+              side: "left",
+              speaker: "JUDGE",
+              speakerTitle: "Judge",
+              text: `The evidences have been taken into account, and I have rendered my verdict.`,
+              badge: "Evidence Verdict",
+            });
+          }
 
           setMessages(parsedMsgs);
           setCurrentStepIndex(STEPS.length - 1);
@@ -434,7 +446,7 @@ export default function ProcessPage() {
           } else if (phase === "POLICY_CONSULTATION") {
             setActiveTypingConfig(getRoleConfig("POLICY_CONSULTANT", "right", "Policy Consultant"));
           } else if (phase === "JUDGE_DELIBERATION") {
-            setActiveTypingConfig(getRoleConfig("JUDGE", "right", "Judge"));
+            setActiveTypingConfig(getRoleConfig("JUDGE", "left", "Judge"));
           }
         }
 
@@ -574,6 +586,32 @@ export default function ProcessPage() {
             }
           }
 
+          if (phase === "JUDGE_DELIBERATION") {
+            getImageCheck(caseId).then((icRes) => {
+              const vMsgs = verdictImageMessages(icRes);
+              if (vMsgs.length > 0) {
+                setMessages((prev) => {
+                  const existing = new Set(prev.map((m) => m.id));
+                  return [...prev, ...vMsgs.filter((m) => !existing.has(m.id))];
+                });
+              }
+              else
+              {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: `verdict-non-image-${Math.random().toString(36).substring(2, 9)}`,
+                    side: "left",
+                    speaker: "JUDGE",
+                    speakerTitle: "Judge",
+                    text: "The evidences have been taken into account, and I have rendered my verdict.",
+                    badge: "Evidence Verdict",
+                  },
+                ]);
+              }
+            });
+          }
+
           // 当整个阶段/子阶段明确完成时，关闭当前 Typing 动画
           setActiveTypingConfig(null);
         }
@@ -582,15 +620,6 @@ export default function ProcessPage() {
         setIsFinished(true);
         setCurrentStepIndex(STEPS.length - 1);
         setActiveTypingConfig(null);
-        getImageCheck(caseId).then((icRes) => {
-          const vMsgs = verdictImageMessages(icRes);
-          if (vMsgs.length > 0) {
-            setMessages((prev) => {
-              const existing = new Set(prev.map((m) => m.id));
-              return [...prev, ...vMsgs.filter((m) => !existing.has(m.id))];
-            });
-          }
-        });
       },
       onError: () => {
         setError("Real-time stream connection interrupted. Please try again.");

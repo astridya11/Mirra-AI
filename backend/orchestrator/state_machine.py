@@ -967,10 +967,7 @@ class PipelineEngine:
 
         # 8. If escalated, create an escalated case file at backend/escalated/{case_id}.json
         if is_escalated:
-            case_id = (
-                getattr(self.ctx.dispute_claim, "case_id", None)
-                or getattr(self.ctx.case_metadata, "case_id", None)
-            )
+            case_id = self.ctx.dispute_claim.get("case_id") or self.ctx.case_metadata.get("case_id")
             
             # 确保 backend/escalated 目录存在
             escalated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../escalated"))
@@ -983,11 +980,11 @@ class PipelineEngine:
                 "escalation_reasons": reasons,
                 "confidence_score": confidence,
                 "priority_level": priority_level,
-                "trip_id": getattr(self.ctx.case_metadata, "trip_id", self.ctx.dispute_claim.get("trip_id")),
-                "rider_id": getattr(self.ctx.case_metadata, "rider_id"),
-                "driver_id": getattr(self.ctx.case_metadata, "driver_id"),
-                "filed_by": getattr(self.ctx.dispute_claim, "filed_by"),
-                "dispute_type": getattr(self.ctx.dispute_claim, "dispute_type"),
+                "trip_id": self.ctx.case_metadata.get("trip_id") or self.ctx.dispute_claim.get("trip_id"),
+                "rider_id": self.ctx.case_metadata.get("rider_id"),
+                "driver_id": self.ctx.case_metadata.get("driver_id"),
+                "filed_by": self.ctx.dispute_claim.get("filed_by"),
+                "dispute_type": self.ctx.dispute_claim.get("dispute_type"),
                 "escalated_at": now,
             }
 
