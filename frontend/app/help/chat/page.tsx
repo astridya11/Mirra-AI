@@ -38,6 +38,7 @@ import { createDispute, CreateDisputePayload, getCompletedResult, submitPartyDec
 import { startRecording, transcribeVoice, type RecordingHandle } from "@/src/lib/voice";
 import type { CaseResult, JudgeVerdict, RecommendedAction } from "@/src/types";
 import { Avatar } from "@/src/components/Avatar";
+import { useAuth } from "@/src/context/AuthContext";
 
 // ==========================================
 // Issue helpers
@@ -107,9 +108,15 @@ function isAutomated(result: CaseResult): boolean {
 }
 
 /** Get the user-facing explanation text from the judge verdict. */
-function getVerdictExplanation(verdict: JudgeVerdict | undefined): string {
+function getVerdictExplanation(
+  verdict: JudgeVerdict | undefined,
+  party: "RIDER" | "DRIVER" | "SUPPORT" | undefined,
+): string {
   if (!verdict?.explanations) return "";
-  return verdict.explanations.explanation_for_rider || "";
+  const riderText = verdict.explanations.explanation_for_rider || "";
+  const driverText = verdict.explanations.explanation_for_driver || "";
+  const primary = party === "DRIVER" ? driverText : riderText;
+  return primary || (party === "DRIVER" ? riderText : driverText);
 }
 
 /** Format the recommended action for user display. */
@@ -165,6 +172,7 @@ interface VerdictCardProps {
 
 function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const [decision, setDecision] = useState<"ACCEPT" | "REQUEST_HUMAN_REVIEW" | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +216,7 @@ function VerdictCard({ verdict, caseId, onDecisionChange }: VerdictCardProps) {
     }
   }, [caseId, decision, submitting, onDecisionChange]);
 
-  const explanation = getVerdictExplanation(verdict);
+  const explanation = getVerdictExplanation(verdict, user?.party);
   const actionText = formatAction(verdict.recommended_action);
   const summary = verdictSummary(verdict);
 
