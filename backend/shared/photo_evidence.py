@@ -511,14 +511,18 @@ def extract_exif_software(img: Image.Image) -> str | None:
 # Vision provider hook
 # ---------------------------------------------------------------------------
 
+# Vision-derived confidence >= this threshold → is_ai_generated = True.
+AI_GENERATED_THRESHOLD = 0.7
+
 _PHOTO_SYSTEM_PROMPT = (
     "You inspect photos of a ride-hailing car interior for a cleaning-fee "
     "claim. Return ONLY JSON with these keys: "
     '{"stain_damage_classification": one of LIQUID_SPILL, VOMIT, '
     "FOOD_RESIDUE, PHYSICAL_DAMAGE, DIRT_MUD, NO_DAMAGE_DETECTED, OTHER, "
     '"damage_severity": MINOR, MODERATE, or SEVERE (or null), '
-    '"is_ai_generated": bool, '
-    '"ai_generated_confidence": float between 0 and 1, '
+    '"ai_generated_confidence": probability between 0 and 1 that this photo '
+    "is AI-generated or synthetic (0 = certainly a real camera photo, "
+    "1 = certainly generated), "
     '"stain_regions": a list (max 3) of boxes '
     '{"x1","y1","x2","y2"} as fractions 0..1 of image width/height '
     "(origin top-left) around each stain or damaged area. "
@@ -600,12 +604,24 @@ def _run_vision(file_path: str | Path) -> tuple[dict[str, Any] | None, list[dict
     for key in (
         "stain_damage_classification",
         "damage_severity",
-        "is_ai_generated",
-        "ai_generated_confidence",
     ):
         val = raw.get(key)
         if val is not None:
             result[key] = val
+
+    # Derive is_ai_generated solely from ai_generated_confidence, ignoring
+    # any is_ai_generated the model may still return.  Missing/invalid
+    # confidence defaults to False / 0.0 — never drop the stain
+    # classification because of the AI fields.
+    confidence = raw.get("ai_generated_confidence")
+    if _is_valid_confidence(confidence):
+        conf_f = float(confidence)
+        result["ai_generated_confidence"] = conf_f
+        result["is_ai_generated"] = conf_f >= AI_GENERATED_THRESHOLD
+    else:
+        result["ai_generated_confidence"] = 0.0
+        result["is_ai_generated"] = False
+
     stain_regions = _validate_stain_regions(raw.get("stain_regions"))
     return (result or None), stain_regions
 

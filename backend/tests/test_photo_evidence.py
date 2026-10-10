@@ -25,6 +25,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_DIR.parent))  # so `backend...` imports work
 
 from backend.shared.photo_evidence import build_image_evidence  # noqa: E402
+import backend.shared.photo_evidence as _photo_mod  # noqa: E402
 
 # --- Schema loading -----------------------------------------------------------
 
@@ -621,8 +622,242 @@ def main() -> None:
             print(f"  - known_matches: {result_i.get('known_matches', '(absent)')}")
 
         # ===================================================================
-        # Summary
+        # CHECK j: vision confidence 0.85 → is_ai_generated True
         # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK j: vision confidence 0.85 → is_ai_generated True")
+        print("=" * 70)
+        check_j_errors: list[str] = []
+
+        path_j = _make_jpeg_with_exif(Path(tmp_dir) / "j.jpg", pattern="a")
+        _vision_resp_j = {
+            "stain_damage_classification": "VOMIT",
+            "damage_severity": "SEVERE",
+            "ai_generated_confidence": 0.85,
+            "stain_regions": [{"x1": 0.1, "y1": 0.1, "x2": 0.3, "y2": 0.3}],
+        }
+
+        _orig_call = _photo_mod.call_vision_json
+        try:
+            _photo_mod.call_vision_json = lambda *a, **kw: dict(_vision_resp_j)  # type: ignore
+            result_j = build_image_evidence(
+                str(path_j), "IMG-J", "mock://j.jpg", use_vision=True
+            )
+        finally:
+            _photo_mod.call_vision_json = _orig_call  # type: ignore
+
+        pr_j = result_j.get("provider_result")
+        if not isinstance(pr_j, dict):
+            check_j_errors.append(f"provider_result missing, got {pr_j!r}")
+        else:
+            if pr_j.get("is_ai_generated") is not True:
+                check_j_errors.append(f"is_ai_generated: {pr_j.get('is_ai_generated')!r}, expected True")
+            if pr_j.get("ai_generated_confidence") != 0.85:
+                check_j_errors.append(f"ai_generated_confidence: {pr_j.get('ai_generated_confidence')!r}, expected 0.85")
+            if pr_j.get("stain_damage_classification") != "VOMIT":
+                check_j_errors.append(f"classification: {pr_j.get('stain_damage_classification')!r}, expected VOMIT")
+
+        if check_j_errors:
+            print("\nCHECK j RESULT: FAIL")
+            for e in check_j_errors:
+                print(f"  - {e}")
+            errors.extend(check_j_errors)
+        else:
+            print("\nCHECK j RESULT: PASS")
+            print(f"  - is_ai_generated: {pr_j['is_ai_generated']}")
+            print(f"  - ai_generated_confidence: {pr_j['ai_generated_confidence']}")
+
+        # ===================================================================
+        # CHECK k: vision confidence 0.4 → is_ai_generated False
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK k: vision confidence 0.4 → is_ai_generated False")
+        print("=" * 70)
+        check_k_errors: list[str] = []
+
+        path_k = _make_jpeg_with_exif(Path(tmp_dir) / "k.jpg", pattern="d")
+        _vision_resp_k = {
+            "stain_damage_classification": "LIQUID_SPILL",
+            "damage_severity": "MINOR",
+            "ai_generated_confidence": 0.4,
+            "stain_regions": [],
+        }
+
+        _orig_call = _photo_mod.call_vision_json
+        try:
+            _photo_mod.call_vision_json = lambda *a, **kw: dict(_vision_resp_k)  # type: ignore
+            result_k = build_image_evidence(
+                str(path_k), "IMG-K", "mock://k.jpg", use_vision=True
+            )
+        finally:
+            _photo_mod.call_vision_json = _orig_call  # type: ignore
+
+        pr_k = result_k.get("provider_result")
+        if not isinstance(pr_k, dict):
+            check_k_errors.append(f"provider_result missing, got {pr_k!r}")
+        else:
+            if pr_k.get("is_ai_generated") is not False:
+                check_k_errors.append(f"is_ai_generated: {pr_k.get('is_ai_generated')!r}, expected False")
+            if pr_k.get("ai_generated_confidence") != 0.4:
+                check_k_errors.append(f"ai_generated_confidence: {pr_k.get('ai_generated_confidence')!r}, expected 0.4")
+            if pr_k.get("stain_damage_classification") != "LIQUID_SPILL":
+                check_k_errors.append(f"classification: {pr_k.get('stain_damage_classification')!r}, expected LIQUID_SPILL")
+
+        if check_k_errors:
+            print("\nCHECK k RESULT: FAIL")
+            for e in check_k_errors:
+                print(f"  - {e}")
+            errors.extend(check_k_errors)
+        else:
+            print("\nCHECK k RESULT: PASS")
+            print(f"  - is_ai_generated: {pr_k['is_ai_generated']}")
+            print(f"  - ai_generated_confidence: {pr_k['ai_generated_confidence']}")
+
+        # ===================================================================
+        # CHECK l: model says is_ai_generated true but confidence 0.2 → False
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK l: model is_ai_generated true, confidence 0.2 → False")
+        print("=" * 70)
+        check_l_errors: list[str] = []
+
+        path_l = _make_jpeg_with_exif(Path(tmp_dir) / "l.jpg", pattern="e")
+        _vision_resp_l = {
+            "stain_damage_classification": "FOOD_RESIDUE",
+            "damage_severity": "MODERATE",
+            "is_ai_generated": True,
+            "ai_generated_confidence": 0.2,
+            "stain_regions": [],
+        }
+
+        _orig_call = _photo_mod.call_vision_json
+        try:
+            _photo_mod.call_vision_json = lambda *a, **kw: dict(_vision_resp_l)  # type: ignore
+            result_l = build_image_evidence(
+                str(path_l), "IMG-L", "mock://l.jpg", use_vision=True
+            )
+        finally:
+            _photo_mod.call_vision_json = _orig_call  # type: ignore
+
+        pr_l = result_l.get("provider_result")
+        if not isinstance(pr_l, dict):
+            check_l_errors.append(f"provider_result missing, got {pr_l!r}")
+        else:
+            if pr_l.get("is_ai_generated") is not False:
+                check_l_errors.append(f"is_ai_generated: {pr_l.get('is_ai_generated')!r}, expected False (confidence 0.2 below threshold)")
+            if pr_l.get("ai_generated_confidence") != 0.2:
+                check_l_errors.append(f"ai_generated_confidence: {pr_l.get('ai_generated_confidence')!r}, expected 0.2")
+            if pr_l.get("stain_damage_classification") != "FOOD_RESIDUE":
+                check_l_errors.append(f"classification: {pr_l.get('stain_damage_classification')!r}, expected FOOD_RESIDUE")
+
+        if check_l_errors:
+            print("\nCHECK l RESULT: FAIL")
+            for e in check_l_errors:
+                print(f"  - {e}")
+            errors.extend(check_l_errors)
+        else:
+            print("\nCHECK l RESULT: PASS")
+            print(f"  - is_ai_generated: {pr_l['is_ai_generated']}")
+            print(f"  - ai_generated_confidence: {pr_l['ai_generated_confidence']}")
+
+        # ===================================================================
+        # CHECK m: confidence missing → False/0.0, classification present
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK m: confidence missing → False/0.0, classification present")
+        print("=" * 70)
+        check_m_errors: list[str] = []
+
+        path_m = _make_jpeg_with_exif(Path(tmp_dir) / "m.jpg", pattern="a")
+        _vision_resp_m = {
+            "stain_damage_classification": "DIRT_MUD",
+            "damage_severity": "SEVERE",
+            # ai_generated_confidence intentionally absent
+            "is_ai_generated": True,  # should be ignored
+            "stain_regions": [],
+        }
+
+        _orig_call = _photo_mod.call_vision_json
+        try:
+            _photo_mod.call_vision_json = lambda *a, **kw: dict(_vision_resp_m)  # type: ignore
+            result_m = build_image_evidence(
+                str(path_m), "IMG-M", "mock://m.jpg", use_vision=True
+            )
+        finally:
+            _photo_mod.call_vision_json = _orig_call  # type: ignore
+
+        pr_m = result_m.get("provider_result")
+        if not isinstance(pr_m, dict):
+            check_m_errors.append(f"provider_result missing, got {pr_m!r}")
+        else:
+            if pr_m.get("is_ai_generated") is not False:
+                check_m_errors.append(f"is_ai_generated: {pr_m.get('is_ai_generated')!r}, expected False")
+            if pr_m.get("ai_generated_confidence") != 0.0:
+                check_m_errors.append(f"ai_generated_confidence: {pr_m.get('ai_generated_confidence')!r}, expected 0.0")
+            if pr_m.get("stain_damage_classification") != "DIRT_MUD":
+                check_m_errors.append(f"classification: {pr_m.get('stain_damage_classification')!r}, expected DIRT_MUD")
+
+        if check_m_errors:
+            print("\nCHECK m RESULT: FAIL")
+            for e in check_m_errors:
+                print(f"  - {e}")
+            errors.extend(check_m_errors)
+        else:
+            print("\nCHECK m RESULT: PASS")
+            print(f"  - is_ai_generated: {pr_m['is_ai_generated']}")
+            print(f"  - ai_generated_confidence: {pr_m['ai_generated_confidence']}")
+            print(f"  - stain_damage_classification: {pr_m['stain_damage_classification']}")
+
+        # ===================================================================
+        # CHECK n: metadata hint overrides vision → True/0.9
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK n: metadata hint overrides vision → True/0.9")
+        print("=" * 70)
+        check_n_errors: list[str] = []
+
+        path_n = _make_jpeg_with_exif(
+            Path(tmp_dir) / "n.jpg",
+            software="Midjourney",
+            pattern="a",
+        )
+        _vision_resp_n = {
+            "stain_damage_classification": "OTHER",
+            "damage_severity": "MINOR",
+            "ai_generated_confidence": 0.1,  # low — but metadata overrides
+            "stain_regions": [],
+        }
+
+        _orig_call = _photo_mod.call_vision_json
+        try:
+            _photo_mod.call_vision_json = lambda *a, **kw: dict(_vision_resp_n)  # type: ignore
+            result_n = build_image_evidence(
+                str(path_n), "IMG-N", "mock://n.jpg", use_vision=True
+            )
+        finally:
+            _photo_mod.call_vision_json = _orig_call  # type: ignore
+
+        pr_n = result_n.get("provider_result")
+        if not isinstance(pr_n, dict):
+            check_n_errors.append(f"provider_result missing, got {pr_n!r}")
+        else:
+            if pr_n.get("is_ai_generated") is not True:
+                check_n_errors.append(f"is_ai_generated: {pr_n.get('is_ai_generated')!r}, expected True (metadata override)")
+            if pr_n.get("ai_generated_confidence") != 0.9:
+                check_n_errors.append(f"ai_generated_confidence: {pr_n.get('ai_generated_confidence')!r}, expected 0.9 (metadata override)")
+            if pr_n.get("stain_damage_classification") != "OTHER":
+                check_n_errors.append(f"classification: {pr_n.get('stain_damage_classification')!r}, expected OTHER")
+
+        if check_n_errors:
+            print("\nCHECK n RESULT: FAIL")
+            for e in check_n_errors:
+                print(f"  - {e}")
+            errors.extend(check_n_errors)
+        else:
+            print("\nCHECK n RESULT: PASS")
+            print(f"  - is_ai_generated: {pr_n['is_ai_generated']}")
+            print(f"  - ai_generated_confidence: {pr_n['ai_generated_confidence']}")
+
         if errors:
             print("\n" + "=" * 70)
             print("SOME CHECKS FAILED")
