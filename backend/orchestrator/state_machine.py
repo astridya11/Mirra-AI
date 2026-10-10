@@ -21,6 +21,8 @@ prosecutor_agent) need only:
 Schema reference: shared/schemas.json
 """
 
+import json
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -870,9 +872,9 @@ class PipelineEngine:
         ESCALATED_HUMAN_REVIEW.
 
         Criteria for escalation:
-          1. confidence_score < 0.75
-          2. safety_threat_detected == True (from bonus_modules.escalation_protocol)
-          3. fraud_risk_level == HIGH (from bonus_modules.escalation_protocol)
+         1. confidence_score < 0.75
+         2. safety_threat_detected == True (from bonus_modules.escalation_protocol)
+         3. fraud_risk_level == HIGH (from bonus_modules.escalation_protocol)
         #   4. safety threat keywords in chat transcript
         """
         verdict = self.ctx.judge_verdict
@@ -951,14 +953,50 @@ class PipelineEngine:
             "resolved_at": now,
         }
 
-        # Update escalation_protocol with final values
-        escalation_proto["is_escalated"] = is_escalated
-        escalation_proto["escalation_reasons"] = reasons
-        escalation_proto["priority_level"] = (
+        # Determine priority level first
+        priority_level = (
             "URGENT" if safety_threat or fraud_risk_level == "HIGH"
             else "HIGH_PRIORITY" if is_escalated
             else "STANDARD"
         )
+
+        # Update escalation_protocol with final values
+        escalation_proto["is_escalated"] = is_escalated
+        escalation_proto["escalation_reasons"] = reasons
+        escalation_proto["priority_level"] = priority_level
+
+        # 8. If escalated, create an escalated case file at backend/escalated/{case_id}.json
+        if is_escalated:
+            case_id = (
+                getattr(self.ctx.dispute_claim, "case_id", None)
+                or getattr(self.ctx.case_metadata, "case_id", None)
+            )
+            
+            # 确保 backend/escalated 目录存在
+            escalated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../escalated"))
+            os.makedirs(escalated_dir, exist_ok=True)
+
+            case_file_path = os.path.join(escalated_dir, f"{case_id}.json")
+            
+            escalated_case_data = {
+                "case_id": case_id,
+                "escalation_reasons": reasons,
+                "confidence_score": confidence,
+                "priority_level": priority_level,
+                "trip_id": getattr(self.ctx.case_metadata, "trip_id", self.ctx.dispute_claim.get("trip_id")),
+                "rider_id": getattr(self.ctx.case_metadata, "rider_id"),
+                "driver_id": getattr(self.ctx.case_metadata, "driver_id"),
+                "filed_by": getattr(self.ctx.dispute_claim, "filed_by"),
+                "dispute_type": getattr(self.ctx.dispute_claim, "dispute_type"),
+                "escalated_at": now,
+            }
+
+            try:
+                with open(case_file_path, "w", encoding="utf-8") as f:
+                    json.dump(escalated_case_data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                # 可根据项目需求添加日志记录
+                pass
 
         return {
             "route": route.value if hasattr(route, "value") else str(route),

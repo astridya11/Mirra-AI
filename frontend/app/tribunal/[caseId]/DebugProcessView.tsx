@@ -1,17 +1,15 @@
 "use client";
 
 /**
- * DebugProcessView — the original detailed tribunal debug panel.
- *
- * Preserved under ?debug=1 for development and testing.
- * Shows raw JSON, prosecutor findings, policy suggestions, judge details, etc.
- *
- * This is NOT the user-facing view — see page.tsx for the new minimal UI.
+ * DebugProcessView — Modern Enterprise SaaS Dashboard UI
+ * 
+ * Auto-loads case data on mount and displays it in a clean, tabbed dashboard.
+ * Primary accent color: #E84360. 
+ * Light theme, shadowless cards, clean borders.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { streamPipeline } from "@/src/lib/api";
-import type { PipelineEvent } from "@/src/types";
+import React, { useEffect, useMemo, useState } from "react";
+import { getCompletedResult } from "@/src/lib/api"; 
 import { useParams } from "next/navigation";
 
 // ==========================================
@@ -21,7 +19,6 @@ import { useParams } from "next/navigation";
 export type StepKey =
   | "INIT_CLAIM"
   | "ROUND_1_PLEADINGS"
-  | "ROUND_2_AUDIT"
   | "ROUND_2_CROSS_EXAM"
   | "ROUND_2_REPORT"
   | "POLICY_CONSULTATION"
@@ -46,12 +43,11 @@ export interface FeedEvent {
 const STEPS: { id: StepKey; name: string; short: string }[] = [
   { id: "INIT_CLAIM", name: "1. 初始立案申诉", short: "初始立案" },
   { id: "ROUND_1_PLEADINGS", name: "2. 第一轮辩论", short: "第一轮辩论" },
-  { id: "ROUND_2_AUDIT", name: "3a. 初始证据审计与欺诈筛查", short: "初始证据审计与欺诈筛查" },
   { id: "ROUND_2_CROSS_EXAM", name: "3b. 交叉质询", short: "交叉质询" },
-  { id: "ROUND_2_REPORT", name: "3c. 第二轮调查与检察官报告", short: "第二轮调查与检察官报告" },
-  { id: "POLICY_CONSULTATION", name: "4. 政策条款检索", short: "政策条款检索" },
-  { id: "JUDGE_DELIBERATION", name: "5. 法官裁决审理", short: "法官裁决审理" },
-  { id: "EXECUTION_ROUTER", name: "6. 执行路由分配", short: "执行路由分配" },
+  { id: "ROUND_2_REPORT", name: "3c. 最终调查报告", short: "最终报告" },
+  { id: "POLICY_CONSULTATION", name: "4. 政策条款检索", short: "政策检索" },
+  { id: "JUDGE_DELIBERATION", name: "5. 法官裁决审理", short: "裁决审理" },
+  { id: "EXECUTION_ROUTER", name: "6. 执行路由分配", short: "执行路由" },
 ];
 
 // ==========================================
@@ -160,7 +156,6 @@ const PHASE_TO_STEP: Record<string, StepKey> = {
 };
 
 const SUB_PHASE_TO_STEP: Record<string, StepKey> = {
-  INITIAL_AUDIT: "ROUND_2_AUDIT",
   CROSS_EXAM: "ROUND_2_CROSS_EXAM",
   FINAL_REPORT: "ROUND_2_REPORT",
 };
@@ -173,33 +168,19 @@ function isAgentConversation(e: FeedEvent): boolean {
   );
 }
 
-function classifyEvents(events: FeedEvent[]): StepKey[] {
-  let stage: "AUDIT" | "CROSS" | "REPORT" = "AUDIT";
-  let last: StepKey = "INIT_CLAIM";
-
-  return events.map((e) => {
-    const phase = e.phase ?? "";
-
-    if (phase === "ROUND_2_PROSECUTOR_AUDIT" || phase.startsWith("ROUND_2")) {
-      if (e.sub_phase && SUB_PHASE_TO_STEP[e.sub_phase]) {
-        stage =
-          e.sub_phase === "INITIAL_AUDIT" ? "AUDIT" : e.sub_phase === "CROSS_EXAM" ? "CROSS" : "REPORT";
-        last = SUB_PHASE_TO_STEP[e.sub_phase];
-        return last;
-      }
-      if (isAgentConversation(e)) stage = "CROSS";
-      else if (e.event_type === "PHASE_STARTED" && stage === "CROSS") stage = "REPORT";
-      last = stage === "AUDIT" ? "ROUND_2_AUDIT" : stage === "CROSS" ? "ROUND_2_CROSS_EXAM" : "ROUND_2_REPORT";
-      return last;
+function classifyEvent(e: FeedEvent): StepKey {
+  const phase = e.phase ?? "";
+  if (phase === "ROUND_2_PROSECUTOR_AUDIT" || phase.startsWith("ROUND_2")) {
+    if (e.sub_phase && SUB_PHASE_TO_STEP[e.sub_phase]) {
+      return SUB_PHASE_TO_STEP[e.sub_phase];
     }
-
-    if (PHASE_TO_STEP[phase]) {
-      last = PHASE_TO_STEP[phase];
-      return last;
-    }
-
-    return last;
-  });
+    if (isAgentConversation(e)) return "ROUND_2_CROSS_EXAM";
+    return "ROUND_2_REPORT"; // fallback
+  }
+  if (PHASE_TO_STEP[phase]) {
+    return PHASE_TO_STEP[phase];
+  }
+  return "INIT_CLAIM"; // fallback
 }
 
 interface NormalizedMessage {
@@ -258,19 +239,19 @@ function normalizeMessage(e: FeedEvent): NormalizedMessage {
 
 const ROLE_STYLE = {
   prosecutor: {
-    box: "bg-amber-950/20 border-amber-500/30 text-amber-100",
+    box: "bg-blue-50/50 border-blue-200 text-blue-900",
     title: "🔍 检察官 Prosecutor",
   },
   rider: {
-    box: "bg-blue-950/20 border-blue-500/30 text-blue-100",
+    box: "bg-purple-50/50 border-purple-200 text-purple-900",
     title: "🛵 乘客代理 Rider Advocate",
   },
   driver: {
-    box: "bg-emerald-950/20 border-emerald-500/30 text-emerald-100",
+    box: "bg-emerald-50/50 border-emerald-200 text-emerald-900",
     title: "🚗 司机代理 Driver Advocate",
   },
   other: {
-    box: "bg-slate-900 border-slate-700 text-slate-200",
+    box: "bg-gray-50 border-gray-200 text-gray-900",
     title: "🤖 Agent",
   },
 };
@@ -292,22 +273,23 @@ function roleName(raw: string): string {
 }
 
 // ==========================================
-// GENERIC DATA RENDERER
+// GENERIC DATA RENDERER (Light Theme)
 // ==========================================
 
-const Chip: React.FC<{ children: React.ReactNode; tone?: "blue" | "amber" | "green" | "red" | "slate" }> = ({
+const Chip: React.FC<{ children: React.ReactNode; tone?: "primary" | "blue" | "amber" | "green" | "red" | "gray" }> = ({
   children,
-  tone = "slate",
+  tone = "gray",
 }) => {
   const tones = {
-    blue: "bg-blue-500/15 text-blue-300 border-blue-500/30",
-    amber: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-    green: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-    red: "bg-red-500/15 text-red-300 border-red-500/30",
-    slate: "bg-slate-800 text-slate-300 border-slate-700",
+    primary: "bg-[#E84360]/10 text-[#E84360] border-[#E84360]/20",
+    blue: "bg-blue-50 text-blue-700 border-blue-200",
+    amber: "bg-amber-50 text-amber-700 border-amber-200",
+    green: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    red: "bg-red-50 text-red-700 border-red-200",
+    gray: "bg-gray-100 text-gray-700 border-gray-200",
   };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded border text-[11px] font-medium ${tones[tone]}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${tones[tone]}`}>
       {children}
     </span>
   );
@@ -315,19 +297,19 @@ const Chip: React.FC<{ children: React.ReactNode; tone?: "blue" | "amber" | "gre
 
 const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ value, skip = [], depth = 0 }) => {
   if (value === null || value === undefined || value === "") {
-    return <span className="text-slate-500">—</span>;
+    return <span className="text-gray-400">—</span>;
   }
   if (typeof value === "boolean") {
-    return <Chip tone={value ? "amber" : "slate"}>{value ? "是" : "否"}</Chip>;
+    return <Chip tone={value ? "primary" : "gray"}>{value ? "是" : "否"}</Chip>;
   }
   if (typeof value === "number") {
-    return <span className="text-slate-100 font-mono">{value}</span>;
+    return <span className="text-gray-900 font-mono">{value}</span>;
   }
   if (typeof value === "string") {
-    return <span className="text-slate-200 whitespace-pre-wrap leading-5">{value}</span>;
+    return <span className="text-gray-800 whitespace-pre-wrap leading-relaxed">{value}</span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-slate-500">（空）</span>;
+    if (value.length === 0) return <span className="text-gray-400">（空）</span>;
     const allPrimitive = value.every((v) => v === null || typeof v !== "object");
     if (allPrimitive) {
       return (
@@ -339,9 +321,9 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
       );
     }
     return (
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         {value.map((v, i) => (
-          <div key={i} className="p-2 rounded border border-slate-700/60 bg-slate-950/50">
+          <div key={i} className="p-3 rounded-lg border border-gray-100 bg-gray-50/50">
             <DataView value={v} depth={depth + 1} />
           </div>
         ))}
@@ -350,12 +332,12 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
   }
   const obj = value as Rec;
   const entries = Object.entries(obj).filter(([k]) => !skip.includes(k));
-  if (entries.length === 0) return <span className="text-slate-500">（空）</span>;
+  if (entries.length === 0) return <span className="text-gray-400">（空）</span>;
   return (
-    <dl className="space-y-1.5">
+    <dl className="space-y-2">
       {entries.map(([k, v]) => (
         <div key={k} className={depth === 0 ? "grid grid-cols-[8.5rem_1fr] gap-x-3" : "grid grid-cols-[7rem_1fr] gap-x-2"}>
-          <dt className="text-slate-400">{label(k)}</dt>
+          <dt className="text-gray-500 font-medium">{label(k)}</dt>
           <dd className="min-w-0">
             <DataView value={v} depth={depth + 1} />
           </dd>
@@ -365,29 +347,24 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
   );
 };
 
-const Panel: React.FC<{ title: string; tone?: "amber" | "blue" | "slate" | "green"; children: React.ReactNode }> = ({
+const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({
   title,
-  tone = "slate",
   children,
 }) => {
-  const tones = {
-    amber: "bg-amber-950/20 border-amber-500/30 text-amber-300",
-    blue: "bg-blue-950/20 border-blue-500/30 text-blue-300",
-    green: "bg-emerald-950/20 border-emerald-500/30 text-emerald-300",
-    slate: "bg-slate-950/60 border-slate-700/60 text-slate-300",
-  };
   return (
-    <div className={`p-3 rounded-lg border space-y-2.5 text-xs ${tones[tone]}`}>
-      <div className="font-bold text-sm">{title}</div>
-      <div className="text-slate-200 space-y-2.5">{children}</div>
+    <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-4 text-sm">
+      <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">{title}</div>
+      <div className="text-gray-700 space-y-4">{children}</div>
     </div>
   );
 };
 
 const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary = "查看原始数据" }) => (
-  <details className="text-[11px] text-slate-500">
-    <summary className="cursor-pointer hover:text-slate-300">{summary}</summary>
-    <pre className="mt-1 p-2 bg-slate-950/80 rounded overflow-x-auto text-slate-400">
+  <details className="text-[11px] text-gray-500 group">
+    <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors select-none">
+      {summary}
+    </summary>
+    <pre className="mt-2 p-3 bg-gray-50 border border-gray-100 rounded-lg overflow-x-auto text-gray-600 font-mono text-[10px]">
       {JSON.stringify(value, null, 2)}
     </pre>
   </details>
@@ -404,52 +381,52 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
   const isQuestion = msg.messageType === "QUESTION";
   const isResponse = msg.messageType === "RESPONSE";
   const inCrossExam = event.sub_phase === "CROSS_EXAM" || isQuestion || isResponse;
-  const indent = isResponse ? "ml-6 md:ml-10" : "";
+  const indent = isResponse ? "ml-6 md:ml-12" : "";
 
   return (
-    <div className={`my-3 ${indent}`}>
+    <div className={`my-4 ${indent}`}>
       <div className={`p-4 rounded-xl border ${style.box}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-black/5">
           <span className="font-semibold text-sm flex flex-wrap items-center gap-2">
             {role === "other" ? `🤖 ${msg.speaker}` : style.title}
             {inCrossExam && msg.messageType && (
-              <Chip tone={isQuestion ? "amber" : "green"}>
+              <Chip tone={isQuestion ? "primary" : "green"}>
                 {isQuestion ? "质询问题" : "答辩回应"}
                 {msg.turn !== undefined ? ` · 第 ${msg.turn} 轮` : ""}
               </Chip>
             )}
             {msg.target && (
-              <span className="text-xs font-normal text-slate-400">
+              <span className="text-xs font-normal text-gray-500">
                 {isQuestion ? "质询对象：" : "回应对象："}
                 {roleName(msg.target)}
               </span>
             )}
           </span>
-          {event.timestamp && <span className="text-xs text-slate-400">{formatTime(event.timestamp)}</span>}
+          {event.timestamp && <span className="text-xs text-gray-400">{formatTime(event.timestamp)}</span>}
         </div>
 
-        <div className="text-sm leading-5 whitespace-pre-wrap">
-          {msg.text || <span className="italic text-slate-500">（该 Agent 未返回文本内容）</span>}
+        <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
+          {msg.text || <span className="italic text-gray-400">（该 Agent 未返回文本内容）</span>}
         </div>
 
         {isQuestion && (msg.category || msg.evidenceContext) && (
-          <div className="mt-3 pt-2 border-t border-white/10 text-xs space-y-1 text-slate-300">
+          <div className="mt-4 pt-3 border-t border-black/5 text-xs space-y-2 text-gray-600 bg-white/50 rounded-lg p-3">
             {msg.category && msg.category !== "OTHER" && (
               <div>
-                <span className="text-slate-400">类别：</span>
+                <span className="text-gray-500 font-medium mr-2">类别：</span>
                 {msg.category}
               </div>
             )}
             {msg.evidenceContext && (
               <div>
-                <span className="text-slate-400">相关证据：</span>
+                <span className="text-gray-500 font-medium mr-2">相关证据：</span>
                 {msg.evidenceContext}
               </div>
             )}
           </div>
         )}
 
-        <div className="mt-2">
+        <div className="mt-3">
           <RawJson value={msg.raw} summary="Agent 原始输出" />
         </div>
       </div>
@@ -460,14 +437,13 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
 const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({ questions, responses }) => {
   if (questions.length === 0) {
     return (
-      <div className="my-3 p-3 rounded-lg border border-slate-700 bg-slate-900/60 text-xs text-slate-400">
-        检察官本轮没有提出质询问题（generateQuestion 在第 1 轮就返回了 done）。
+      <div className="my-4 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-500 text-center">
+        检察官本轮没有提出质询问题。
       </div>
     );
   }
   return (
     <div className="my-2">
-      <div className="text-[11px] text-slate-500 mb-1">以下为根据交叉质询记录还原的 Q&amp;A</div>
       {questions.map((q, i) => {
         const r = responses.find((x) => x.question_id === q.question_id) ?? responses[i];
         const target = q.directed_to ?? q.target ?? "";
@@ -505,17 +481,17 @@ const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({
 // ==========================================
 
 const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" | "red" }> = ({ title, facts, tone }) => (
-  <div>
-    <div className="text-slate-400 mb-1">
+  <div className="mt-4">
+    <div className="text-gray-700 font-medium mb-2 flex items-center gap-2">
       {title} <Chip tone={tone}>{facts.length}</Chip>
     </div>
-    <ul className="space-y-1">
+    <ul className="space-y-2">
       {facts.map((f, i) => {
         const rec = asRecord(f);
         const text = rec ? firstText(rec, ["description", "fact", "text", "content"]) : String(f);
         return (
-          <li key={rec?.fact_id ?? i} className="p-2 rounded bg-slate-900/80 border border-slate-700/50 text-slate-300">
-            {rec?.fact_id && <span className="text-slate-500 mr-2 font-mono">{rec.fact_id}</span>}
+          <li key={rec?.fact_id ?? i} className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-gray-700">
+            {rec?.fact_id && <span className="text-gray-400 mr-2 font-mono text-xs">{rec.fact_id}</span>}
             {text || <DataView value={rec} />}
           </li>
         );
@@ -539,13 +515,13 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
   const fraud = escalation?.fraud_risk_level;
 
   return (
-    <Panel title={title} tone="amber">
+    <Panel title={title}>
       {findings && !isEmpty(findings) ? (
         <>
           {typeof findings.prosecutor_summary === "string" && findings.prosecutor_summary && (
-            <div>
-              <div className="text-slate-400 mb-1">检察官总结</div>
-              <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap text-slate-200">
+            <div className="mb-4">
+              <div className="text-gray-500 font-medium mb-2">检察官总结</div>
+              <p className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800">
                 {findings.prosecutor_summary}
               </p>
             </div>
@@ -555,16 +531,18 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
               Array.isArray(findings[k]) && findings[k].length > 0 && <FactList key={k} title={t} facts={findings[k]} tone={tone} />
           )}
           {Object.keys(findings).some((k) => !shown.includes(k) && !isEmpty(findings[k])) && (
-            <DataView value={findings} skip={shown} />
+            <div className="mt-6 pt-4 border-t border-gray-100">
+              <DataView value={findings} skip={shown} />
+            </div>
           )}
         </>
       ) : (
-        <div className="text-slate-500 italic">检察官尚未返回审计发现。</div>
+        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">检察官尚未返回审计发现。</div>
       )}
 
       {escalation && (
-        <div className="pt-2 border-t border-amber-500/15 flex flex-wrap items-center gap-2">
-          <span className="text-slate-400">风险信号：</span>
+        <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
+          <span className="text-gray-600 font-medium">风险信号：</span>
           {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>欺诈风险 {fraud}</Chip>}
           {escalation.safety_threat_detected && <Chip tone="red">检测到安全威胁</Chip>}
           {escalation.missing_crucial_evidence && <Chip tone="amber">缺少关键证据</Chip>}
@@ -573,7 +551,11 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
           )}
         </div>
       )}
-      {bonus && !isEmpty(bonus) && <RawJson value={bonus} summary="安全与欺诈检测模块（bonus_modules）" />}
+      {bonus && !isEmpty(bonus) && (
+        <div className="mt-4">
+          <RawJson value={bonus} summary="安全与欺诈检测模块（bonus_modules）" />
+        </div>
+      )}
     </Panel>
   );
 };
@@ -587,11 +569,11 @@ const KNOWN_PRECEDENTS = ["matched_precedents", "precedents", "similar_precedent
 
 const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => {
   if (typeof suggestion === "string") {
-    return <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap">{suggestion}</p>;
+    return <p className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">{suggestion}</p>;
   }
   const s = asRecord(suggestion);
   if (!s || isEmpty(s)) {
-    return <div className="text-slate-500 italic">政策顾问没有返回 suggestion（policy_consultation.suggestion 为空）。</div>;
+    return <div className="text-gray-400 italic text-center p-4">政策顾问没有返回可用数据。</div>;
   }
 
   const ruling = pick(s, KNOWN_RULING);
@@ -604,14 +586,14 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
   const used = [ruling, action, reason, conf, clauses, precedents].filter(Boolean).map((x) => (x as [string, any])[0]);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       {(ruling || conf) && (
-        <div className="p-2.5 rounded border border-blue-400/30 bg-blue-900/30 flex flex-wrap items-center gap-3">
-          <span className="font-semibold text-blue-200">💡 政策建议裁决</span>
-          {ruling && <Chip tone="blue">{String(ruling[1])}</Chip>}
+        <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center gap-3">
+          <span className="font-semibold text-[#E84360]">💡 政策建议裁决</span>
+          {ruling && <Chip tone="primary">{String(ruling[1])}</Chip>}
           {conf && (
-            <span className="text-slate-300">
-              置信度 <span className="font-mono text-blue-200">{String(conf[1])}</span>
+            <span className="text-gray-600 text-sm">
+              置信度 <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
             </span>
           )}
         </div>
@@ -619,8 +601,8 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {action && (
         <div>
-          <div className="text-slate-400 mb-1">建议措施</div>
-          <div className="p-2.5 rounded bg-slate-900/80 border border-slate-700/50">
+          <div className="text-gray-500 font-medium mb-2">建议措施</div>
+          <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={action[1]} />
           </div>
         </div>
@@ -628,35 +610,35 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {reason && (
         <div>
-          <div className="text-slate-400 mb-1">建议依据</div>
-          <p className="p-2.5 rounded bg-slate-900/80 leading-5 whitespace-pre-wrap">
+          <div className="text-gray-500 font-medium mb-2">建议依据</div>
+          <div className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">
             {typeof reason[1] === "string" ? reason[1] : <DataView value={reason[1]} />}
-          </p>
+          </div>
         </div>
       )}
 
       {clauses && Array.isArray(clauses[1]) && (
         <div>
-          <div className="text-slate-400 mb-1">
+          <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
             适用政策条款 <Chip tone="blue">{clauses[1].length}</Chip>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-3">
             {clauses[1].map((c: any, i: number) => {
               const rec = asRecord(c);
-              if (!rec) return <div key={i} className="p-2 rounded bg-slate-900/80">{String(c)}</div>;
+              if (!rec) return <div key={i} className="p-3 rounded-lg bg-gray-50 border border-gray-100">{String(c)}</div>;
               const body = firstText(rec, ["clause_text", "content", "text", "description", "summary"]);
               const why = firstText(rec, ["relevance", "relevance_reason", "reason", "rationale"]);
               const shownKeys = ["clause_id", "title", "clause_title", "clause_text", "content", "text", "description", "summary", "relevance", "relevance_reason", "reason", "rationale"];
               return (
-                <div key={rec.clause_id ?? i} className="p-2.5 rounded bg-slate-900/80 border border-slate-700/50">
-                  <div className="font-semibold text-blue-300">
-                    {rec.clause_id && <span className="font-mono mr-2">{rec.clause_id}</span>}
+                <div key={rec.clause_id ?? i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm">
+                  <div className="font-semibold text-gray-900">
+                    {rec.clause_id && <span className="font-mono text-gray-400 mr-2 text-xs">{rec.clause_id}</span>}
                     {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : `条款 ${i + 1}`)}
                   </div>
-                  {body && <div className="text-slate-300 mt-1 leading-5 whitespace-pre-wrap">{body}</div>}
-                  {why && <div className="text-slate-400 mt-1">适用理由：{why}</div>}
+                  {body && <div className="text-gray-700 mt-2 leading-relaxed whitespace-pre-wrap">{body}</div>}
+                  {why && <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">适用理由：{why}</div>}
                   {Object.keys(rec).some((k) => !shownKeys.includes(k) && !isEmpty(rec[k])) && (
-                    <div className="mt-1.5 pt-1.5 border-t border-slate-700/50">
+                    <div className="mt-3 pt-3 border-t border-gray-100">
                       <DataView value={rec} skip={shownKeys} depth={1} />
                     </div>
                   )}
@@ -669,12 +651,12 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {precedents && Array.isArray(precedents[1]) && (
         <div>
-          <div className="text-slate-400 mb-1">
-            参考历史判例 <Chip tone="blue">{precedents[1].length}</Chip>
+          <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
+            参考历史判例 <Chip tone="gray">{precedents[1].length}</Chip>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-3">
             {precedents[1].map((p: any, i: number) => (
-              <div key={i} className="p-2.5 rounded bg-slate-900/80 border border-slate-700/50 text-slate-300">
+              <div key={i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm text-gray-700">
                 {typeof p === "string" ? p : <DataView value={p} depth={1} />}
               </div>
             ))}
@@ -683,7 +665,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       )}
 
       {Object.keys(s).some((k) => !used.includes(k) && !isEmpty(s[k])) && (
-        <div className="pt-2 border-t border-blue-500/15">
+        <div className="pt-4 border-t border-gray-100">
           <DataView value={s} skip={used} />
         </div>
       )}
@@ -694,17 +676,21 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
   const request = asRecord(data.request);
   return (
-    <Panel title="⚖️ 政策条款与建议 (Policy Consultation)" tone="blue">
+    <Panel title="⚖️ 政策条款与建议 (Policy Consultation)">
       <PolicySuggestionView suggestion={data.suggestion} />
       {request && (
-        <details className="text-[11px] text-slate-400">
-          <summary className="cursor-pointer hover:text-slate-200">咨询请求（Policy Consultation Request）</summary>
-          <div className="mt-2 p-2 rounded bg-slate-950/70 space-y-1.5">
+        <details className="mt-4 text-[11px] text-gray-500">
+          <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors">
+            咨询请求（Policy Consultation Request）
+          </summary>
+          <div className="mt-2 p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={request} />
           </div>
         </details>
       )}
-      <RawJson value={data} summary="政策咨询原始数据" />
+      <div className="mt-2">
+        <RawJson value={data} summary="政策咨询原始数据" />
+      </div>
     </Panel>
   );
 };
@@ -712,16 +698,20 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
 const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   const action = asRecord(data.recommended_action);
   return (
-    <Panel title="🧑‍⚖️ 法官裁决 (Judge Verdict)" tone="slate">
-      <div className="flex flex-wrap items-center gap-2">
-        {data.ruling_type && <Chip tone="blue">{String(data.ruling_type)}</Chip>}
+    <Panel title="🧑‍⚖️ 法官裁决 (Judge Verdict)">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        {data.ruling_type && <Chip tone="primary">{String(data.ruling_type)}</Chip>}
         {data.confidence_score !== undefined && (
           <Chip tone={Number(data.confidence_score) >= 0.75 ? "green" : "amber"}>
             置信度 {Number(data.confidence_score).toFixed(2)}
           </Chip>
         )}
       </div>
-      {action && <DataView value={action} />}
+      {action && (
+        <div className="mb-4 p-4 rounded-lg bg-gray-50 border border-gray-100">
+          <DataView value={action} />
+        </div>
+      )}
       <DataView value={data} skip={["ruling_type", "confidence_score", "recommended_action"]} />
     </Panel>
   );
@@ -730,124 +720,23 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
   return (
-    <Panel title="🚦 执行路由 (Execution Router)" tone={escalated ? "amber" : "green"}>
-      <div className="flex flex-wrap items-center gap-2">
+    <Panel title="🚦 执行路由 (Execution Router)">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         {data.route && <Chip tone={escalated ? "amber" : "green"}>{String(data.route)}</Chip>}
         {data.confidence_score !== undefined && <Chip>置信度 {Number(data.confidence_score).toFixed(2)}</Chip>}
       </div>
       {Array.isArray(data.escalation_reasons) && data.escalation_reasons.length > 0 && (
-        <ul className="list-disc list-inside space-y-0.5 text-slate-300">
-          {data.escalation_reasons.map((r: string, i: number) => (
-            <li key={i}>{r}</li>
-          ))}
-        </ul>
+        <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-100">
+          <div className="text-amber-800 font-medium mb-2">升级原因：</div>
+          <ul className="list-disc list-inside space-y-1 text-amber-700">
+            {data.escalation_reasons.map((r: string, i: number) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </div>
       )}
       <DataView value={data} skip={["route", "confidence_score", "escalation_reasons"]} />
     </Panel>
-  );
-};
-
-// ==========================================
-// 阶段事件卡片
-// ==========================================
-
-const PhaseFeedItem: React.FC<{
-  event: FeedEvent;
-  step: StepKey;
-  isLive: boolean;
-  showTranscriptFallback: boolean;
-}> = ({ event, step, isLive, showTranscriptFallback }) => {
-  const isCompleted = event.event_type === "PHASE_COMPLETED";
-  const data = asRecord(event.data);
-
-  const crossSource = asRecord(data?.round_2_cross_exam) ?? data;
-  const fbQuestions: Rec[] = Array.isArray(crossSource?.targeted_questions) ? crossSource!.targeted_questions : [];
-  const fbResponses: Rec[] = Array.isArray(crossSource?.targeted_responses) ? crossSource!.targeted_responses : [];
-
-  let details: React.ReactNode = null;
-  if (isCompleted && data) {
-    switch (step) {
-      case "INIT_CLAIM":
-        details = (
-          <Panel title="📁 案件信息" tone="slate">
-            <DataView value={data} skip={["status"]} />
-          </Panel>
-        );
-        break;
-      case "ROUND_2_AUDIT":
-        details = (
-          <ProsecutorView
-            title="📋 检察官初始证据审计与欺诈筛查报告"
-            findings={asRecord(data.prosecutor_findings)}
-            bonus={asRecord(data.bonus_modules)}
-          />
-        );
-        break;
-      case "ROUND_2_CROSS_EXAM":
-        details = showTranscriptFallback ? (
-          <CrossExamTranscript questions={fbQuestions} responses={fbResponses} />
-        ) : typeof data.questions_asked === "number" && data.questions_asked === 0 ? (
-          <div className="p-3 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-400">
-            检察官本轮没有提出质询问题。
-          </div>
-        ) : null;
-        break;
-      case "ROUND_2_REPORT":
-        details = (
-          <>
-            {showTranscriptFallback && <CrossExamTranscript questions={fbQuestions} responses={fbResponses} />}
-            <ProsecutorView
-              title="📜 检察官最终报告 (Prosecutor Report)"
-              findings={asRecord(data.prosecutor_findings)}
-              bonus={asRecord(data.bonus_modules)}
-            />
-          </>
-        );
-        break;
-      case "POLICY_CONSULTATION":
-        details = <PolicyView data={data} />;
-        break;
-      case "JUDGE_DELIBERATION":
-        details = <JudgeView data={data} />;
-        break;
-      case "EXECUTION_ROUTER":
-        details = <ExecutionView data={data} />;
-        break;
-      default:
-        details = null;
-    }
-  }
-
-  if (!isCompleted) {
-    return (
-      <div className="my-2 flex items-center gap-2 text-xs text-slate-400">
-        <span className={`w-2 h-2 rounded-full ${isLive ? "bg-blue-400 animate-pulse" : "bg-slate-600"}`} />
-        <span>{event.label || event.phase}</span>
-        {event.timestamp && <span className="text-slate-600">{formatTime(event.timestamp)}</span>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="my-4 p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-      <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-        <span className="w-2 h-2 rounded-full bg-emerald-400" />
-        <span>{event.label || event.phase}</span>
-        {event.timestamp && <span className="ml-auto text-xs text-slate-500">{formatTime(event.timestamp)}</span>}
-      </div>
-      {details && <div className="mt-3 space-y-3">{details}</div>}
-    </div>
-  );
-};
-
-const StepHeader: React.FC<{ step: StepKey }> = ({ step }) => {
-  const meta = STEPS.find((s) => s.id === step);
-  return (
-    <div className="mt-6 mb-1 flex items-center gap-3 text-xs font-semibold text-slate-400">
-      <span className="h-px flex-1 bg-slate-800" />
-      <span>{meta?.name ?? step}</span>
-      <span className="h-px flex-1 bg-slate-800" />
-    </div>
   );
 };
 
@@ -856,160 +745,267 @@ const StepHeader: React.FC<{ step: StepKey }> = ({ step }) => {
 // ==========================================
 
 export function DebugProcessView({ caseId }: { caseId: string }) {
-  const [isRunning, setIsRunning] = useState(false);
-  const [isFinished, setIsFinished] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<FeedEvent[]>([]);
-  const feedEndRef = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
+  const [activeTab, setActiveTab] = useState<StepKey>("INIT_CLAIM");
 
   useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
+    async function loadData() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await getCompletedResult(caseId);
+        if (!result) throw new Error("API 未返回有效数据 (Empty Response)");
 
-  useEffect(() => () => cleanupRef.current?.(), []);
+        const synthesizedEvents: FeedEvent[] = [];
 
-  const handleStartPipeline = useCallback(() => {
-    cleanupRef.current?.();
-    setIsRunning(true);
-    setIsFinished(false);
-    setError(null);
-    setEvents([]);
+        // 1. INIT_CLAIM
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "INIT_CLAIM",
+          label: "Dispute Filed",
+          data: {
+            ...result.case_metadata,
+            ...result.dispute_claim,
+            ...result.data_sources,
+          },
+        });
 
-    cleanupRef.current = streamPipeline(caseId, {
-      onEvent: (event: PipelineEvent) => {
-        setEvents((prev) => [...prev, event as unknown as FeedEvent]);
-      },
-      onComplete: (result) => {
-        setIsRunning(false);
-        setIsFinished(true);
-        console.log("Pipeline processing complete, result:", result);
-      },
-      onError: (err) => {
-        setIsRunning(false);
-        setError("实时连接中断，请检查后端日志（某个 Agent 调用可能抛出了异常）后重试。");
-        console.error("Pipeline SSE stream error:", err);
-      },
-    });
+        // 2. ROUND 1 PLEADINGS
+        const statements = result.agent_conversation?.filter((m: any) => m.message_type === "STATEMENT") || [];
+        statements.forEach((msg: any) => {
+          synthesizedEvents.push({
+            event_type: "AGENT_CONVERSATION",
+            phase: "ROUND_1_PLEADINGS",
+            speaker: msg.speaker,
+            message_type: msg.message_type,
+            timestamp: msg.timestamp,
+            data: msg,
+          });
+        });
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "ROUND_1_PLEADINGS",
+        });
+
+        // 3. ROUND 2 INITIAL AUDIT
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "ROUND_2_PROSECUTOR_AUDIT",
+          sub_phase: "INITIAL_AUDIT",
+          data: {
+            prosecutor_findings: result.prosecutor_findings,
+            bonus_modules: result.bonus_modules,
+          },
+        });
+
+        // 4. ROUND 2 CROSS EXAM
+        const crossExams = result.agent_conversation?.filter((m: any) => m.message_type !== "STATEMENT") || [];
+        crossExams.forEach((msg: any) => {
+          synthesizedEvents.push({
+            event_type: "AGENT_CONVERSATION",
+            phase: "ROUND_2_PROSECUTOR_AUDIT",
+            sub_phase: "CROSS_EXAM",
+            speaker: msg.speaker,
+            message_type: msg.message_type,
+            timestamp: msg.timestamp,
+            data: msg,
+          });
+        });
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "ROUND_2_PROSECUTOR_AUDIT",
+          sub_phase: "CROSS_EXAM",
+          data: { round_2_cross_exam: result.round_2_cross_exam },
+        });
+
+        // 5. ROUND 2 FINAL REPORT
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "ROUND_2_PROSECUTOR_AUDIT",
+          sub_phase: "FINAL_REPORT",
+          data: {
+            prosecutor_findings: result.prosecutor_findings,
+            bonus_modules: result.bonus_modules,
+            round_2_cross_exam: result.round_2_cross_exam,
+          },
+        });
+
+        // 6. POLICY CONSULTATION
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "POLICY_CONSULTATION",
+          data: result.policy_consultation,
+        });
+
+        // 7. JUDGE DELIBERATION
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "JUDGE_DELIBERATION",
+          data: result.judge_verdict,
+        });
+
+        // 8. EXECUTION ROUTER
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "EXECUTION_ROUTER",
+          data: {
+            route: result.case_metadata?.resolution_channel,
+            confidence_score: result.judge_verdict?.confidence_score,
+            escalation_reasons: result.bonus_modules?.escalation_protocol?.escalation_reasons,
+            ...result.judge_verdict?.execution_payload,
+          },
+        });
+
+        setEvents(synthesizedEvents);
+      } catch (err) {
+        setError("无法获取案件数据，请检查网络或后端日志。");
+        console.error("Fetch complete result error:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
   }, [caseId]);
 
-  const stepKeys = useMemo(() => classifyEvents(events), [events]);
-
-  const activeStep: StepKey | null = events.length > 0 ? stepKeys[stepKeys.length - 1] : null;
-
-  const messageCount = useMemo(() => {
-    const counts: Partial<Record<StepKey, number>> = {};
-    events.forEach((e, i) => {
-      if (isAgentConversation(e)) counts[stepKeys[i]] = (counts[stepKeys[i]] ?? 0) + 1;
+  // 区分事件到对应的 Step
+  const eventsByStep = useMemo(() => {
+    const map: Record<StepKey, FeedEvent[]> = {
+      INIT_CLAIM: [],
+      ROUND_1_PLEADINGS: [],
+      ROUND_2_CROSS_EXAM: [],
+      ROUND_2_REPORT: [],
+      POLICY_CONSULTATION: [],
+      JUDGE_DELIBERATION: [],
+      EXECUTION_ROUTER: [],
+    };
+    events.forEach((e) => {
+      const step = classifyEvent(e);
+      if (map[step]) map[step].push(e);
     });
-    return counts;
-  }, [events, stepKeys]);
+    return map;
+  }, [events]);
 
-  const hasLiveCrossExam = (messageCount.ROUND_2_CROSS_EXAM ?? 0) > 0;
-  const fallbackHostIndex = useMemo(() => {
-    if (hasLiveCrossExam) return -1;
-    const idx = events.findIndex((e, i) => {
-      if (e.event_type !== "PHASE_COMPLETED") return false;
-      if (stepKeys[i] !== "ROUND_2_CROSS_EXAM" && stepKeys[i] !== "ROUND_2_REPORT") return false;
-      const d = asRecord(e.data);
-      const src = asRecord(d?.round_2_cross_exam) ?? d;
-      return Array.isArray(src?.targeted_questions) || Array.isArray(src?.targeted_responses);
-    });
-    return idx;
-  }, [events, stepKeys, hasLiveCrossExam]);
-
-  const activeIndex = activeStep ? STEPS.findIndex((s) => s.id === activeStep) : -1;
+  const activeEvents = eventsByStep[activeTab] || [];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
-      <header className="max-w-6xl mx-auto mb-8 flex justify-between items-center border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-amber-400 bg-clip-text text-transparent">
-            Mirra AI Dispute Tribunal Process (DEBUG)
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">智能仲裁庭实时推理、审计与质询监控</p>
+    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans flex flex-col">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <span className="w-2 h-6 bg-[#E84360] rounded-sm inline-block"></span>
+              Mirra AI Tribunal <span className="text-gray-400 font-normal">|</span> Customer Support
+            </h1>
+            <p className="text-sm text-gray-500 mt-1 ml-4">案件编号: {caseId}</p>
+          </div>
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <svg className="animate-spin h-4 w-4 text-[#E84360]" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              数据加载中...
+            </div>
+          )}
         </div>
-        <button
-          onClick={handleStartPipeline}
-          disabled={isRunning}
-          className={`px-5 py-2.5 rounded-lg font-medium text-sm transition-all ${
-            isRunning
-              ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-              : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30"
-          }`}
-        >
-          {isRunning ? "流程运行中..." : isFinished ? "重新运行仲裁流程" : "启动仲裁流程 (Start Stream)"}
-        </button>
       </header>
 
-      <main className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="md:col-span-1 bg-slate-900/50 p-4 rounded-xl border border-slate-800 h-fit md:sticky md:top-6">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">流程节点</h2>
-          <nav className="space-y-2">
-            {STEPS.map((step, i) => {
-              const isActive = activeStep === step.id && !isFinished;
-              const isDone = isFinished || (activeIndex > i && events.length > 0);
-              const count = messageCount[step.id];
+      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex flex-col md:flex-row gap-8">
+        
+        {/* 左侧 Tabs 导航 */}
+        <aside className="md:w-64 flex-shrink-0">
+          <nav className="space-y-1 sticky top-24">
+            {STEPS.map((step) => {
+              const isActive = activeTab === step.id;
+              const hasData = eventsByStep[step.id]?.length > 0;
               return (
-                <div
+                <button
                   key={step.id}
-                  className={`p-2.5 rounded-lg text-xs font-medium transition-all flex items-center justify-between gap-2 ${
+                  onClick={() => setActiveTab(step.id)}
+                  disabled={isLoading || !hasData}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-sm font-medium rounded-lg transition-all ${
                     isActive
-                      ? "bg-blue-600/20 text-blue-300 border border-blue-500/40"
-                      : isDone
-                      ? "text-emerald-300/90 bg-emerald-950/20 border border-emerald-500/20"
-                      : "text-slate-400 bg-slate-900/30 border border-transparent"
+                      ? "bg-[#E84360]/10 text-[#E84360] border border-[#E84360]/20"
+                      : hasData
+                      ? "text-gray-600 hover:bg-gray-100 border border-transparent"
+                      : "text-gray-400 cursor-not-allowed border border-transparent"
                   }`}
                 >
-                  <span>
-                    {isDone && !isActive ? "✓ " : ""}
-                    {step.name}
-                  </span>
-                  {count ? <Chip tone={isActive ? "blue" : "slate"}>{count}</Chip> : null}
-                </div>
+                  <span className="truncate">{step.name}</span>
+                  {hasData && isActive && <span className="w-1.5 h-1.5 rounded-full bg-[#E84360]"></span>}
+                </button>
               );
             })}
           </nav>
-        </div>
+        </aside>
 
-        <div className="md:col-span-3 bg-slate-900/30 p-4 rounded-xl border border-slate-800 min-h-[600px] flex flex-col">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">
-            实时事件与 Agent 质询对话流
-          </h2>
-
-          {error && (
-            <div className="mb-3 p-3 rounded-lg border border-red-500/40 bg-red-950/30 text-red-200 text-xs">{error}</div>
+        {/* 右侧内容区 */}
+        <section className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 md:p-8 min-h-[600px]">
+          {error ? (
+            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+              {error}
+            </div>
+          ) : isLoading ? (
+            <div className="h-full flex flex-col items-center justify-center text-gray-400">
+              <span className="loading-spinner mb-4"></span>
+              正在拉取仲裁数据...
+            </div>
+          ) : activeEvents.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+              该阶段暂无数据
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <h2 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-4 mb-6">
+                {STEPS.find(s => s.id === activeTab)?.name}
+              </h2>
+              {activeEvents.map((event, idx) => {
+                const data = asRecord(event.data);
+                if (isAgentConversation(event)) {
+                  return <AgentMessageCard key={idx} event={event} />;
+                }
+                
+                // 处理 PHASE_COMPLETED 的具体渲染逻辑
+                if (event.event_type === "PHASE_COMPLETED" && data) {
+                  switch (activeTab) {
+                    case "INIT_CLAIM":
+                      return (
+                        <Panel key={idx} title="📁 案件基础信息">
+                          <DataView value={data} skip={["status"]} />
+                        </Panel>
+                      );
+                    case "ROUND_2_CROSS_EXAM":
+                      const crossSource = asRecord(data?.round_2_cross_exam) ?? data;
+                      const fbQuestions = Array.isArray(crossSource?.targeted_questions) ? crossSource!.targeted_questions : [];
+                      const fbResponses = Array.isArray(crossSource?.targeted_responses) ? crossSource!.targeted_responses : [];
+                      return <CrossExamTranscript key={idx} questions={fbQuestions} responses={fbResponses} />;
+                    case "ROUND_2_REPORT":
+                      return (
+                        <ProsecutorView
+                          key={idx}
+                          title="📜 检察官最终报告 (Prosecutor Report)"
+                          findings={asRecord(data.prosecutor_findings)}
+                          bonus={asRecord(data.bonus_modules)}
+                        />
+                      );
+                    case "POLICY_CONSULTATION":
+                      return <PolicyView key={idx} data={data} />;
+                    case "JUDGE_DELIBERATION":
+                      return <JudgeView key={idx} data={data} />;
+                    case "EXECUTION_ROUTER":
+                      return <ExecutionView key={idx} data={data} />;
+                    default:
+                      return null;
+                  }
+                }
+                return null;
+              })}
+            </div>
           )}
-
-          <div className="flex-1 overflow-y-auto max-h-[75vh] pr-2">
-            {events.length === 0 ? (
-              <div className="text-center text-slate-500 my-20 text-sm">
-                点击上方"启动仲裁流程"按钮开始接收 SSE 实时推送
-              </div>
-            ) : (
-              events.map((event, idx) => {
-                const step = stepKeys[idx];
-                const showHeader = idx === 0 || stepKeys[idx - 1] !== step;
-                return (
-                  <React.Fragment key={idx}>
-                    {showHeader && <StepHeader step={step} />}
-                    {isAgentConversation(event) ? (
-                      <AgentMessageCard event={event} />
-                    ) : (
-                      <PhaseFeedItem
-                        event={event}
-                        step={step}
-                        isLive={isRunning && idx === events.length - 1}
-                        showTranscriptFallback={idx === fallbackHostIndex}
-                      />
-                    )}
-                  </React.Fragment>
-                );
-              })
-            )}
-            <div ref={feedEndRef} />
-          </div>
-        </div>
+        </section>
       </main>
     </div>
   );

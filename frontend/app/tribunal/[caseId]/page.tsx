@@ -248,9 +248,7 @@ function extractMessageFromData(
 
 export default function ProcessPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const caseId = (params?.caseId as string) || "";
-  const isDebug = searchParams.get("debug") === "1";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -283,7 +281,7 @@ export default function ProcessPage() {
 
   // Static Load for Completed Cases
   useEffect(() => {
-    if (isDebug || !caseId) return;
+    if (!caseId) return;
     let cancelled = false;
 
     (async () => {
@@ -405,11 +403,11 @@ export default function ProcessPage() {
     return () => {
       cancelled = true;
     };
-  }, [caseId, isDebug]);
+  }, [caseId]);
 
   // Handle SSE Realtime Streaming
   useEffect(() => {
-    if (isDebug || !caseId || isFinished || isLoading || startedRef.current) return;
+    if (!caseId || isFinished || isLoading || startedRef.current) return;
 
     startedRef.current = true;
     setError(null);
@@ -600,11 +598,7 @@ export default function ProcessPage() {
     });
 
     return () => cleanupRef.current?.();
-  }, [caseId, isDebug, isFinished, isLoading]);
-
-  if (isDebug) {
-    return <DebugProcessView caseId={caseId} />;
-  }
+  }, [caseId, isFinished, isLoading]);
 
   return (
     <div className="flex flex-col h-screen bg-white">

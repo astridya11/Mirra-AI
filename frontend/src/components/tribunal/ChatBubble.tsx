@@ -124,20 +124,20 @@ function ChatBubbleImpl({
   } else if (s.includes("POLICY")) {
     bubbleClass = "bg-[#4682B4] text-white rounded-tr-none";
   } else {
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tr-none";
   }
 
   return (
     <>
       <div
-        className={`flex flex-col my-2.5 ${
+        className={`flex flex-col my-3 ${
           isRight ? "items-end" : "items-start"
         }`}
       >
         {/* Speaker Header */}
 
         <div
-          className={`flex items-center gap-1.5 mb-1 px-1 text-[12px] text-gray-500 ${
+          className={`flex items-center gap-1.5 mb-2 px-1 text-[12px] text-gray-500 ${
             isRight ? "flex-row-reverse" : ""
           }`}
         >
@@ -152,7 +152,7 @@ function ChatBubbleImpl({
           )}
 
           {msg.targetLabel && (
-            <span className="text-gray-400">
+            <span className="text-gray-400 text-[11px] inline-block w-min break-words leading-[1.15]">
               {msg.targetLabel}
             </span>
           )}
@@ -306,17 +306,17 @@ export const TypingBubble = memo(function TypingBubble({
   } else if (s.includes("POLICY")) {
     bubbleClass = "bg-[#4682B4] text-white rounded-tr-none";
   } else {
-    bubbleClass = "bg-gray-100 text-slate-800 rounded-tl-none";
+    bubbleClass = "bg-gray-100 text-slate-800 rounded-tr-none";
   }
 
   return (
     <div
-      className={`flex flex-col my-2.5 transition-all duration-300 animate-fadeIn ${
+      className={`flex flex-col my-3 transition-all duration-300 animate-fadeIn ${
         isRight ? "items-end" : "items-start"
       }`}
     >
       <div
-        className={`flex items-center gap-1.5 mb-1 px-1 text-[11px] text-gray-400 ${
+        className={`flex items-center gap-1.5 mb-2 px-1 text-[11px] text-gray-400 ${
           isRight ? "flex-row-reverse" : ""
         }`}
       >
