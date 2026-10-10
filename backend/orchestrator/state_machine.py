@@ -882,12 +882,6 @@ class PipelineEngine:
         reasons: List[str] = []
         now = datetime.now(_SGT).isoformat()
 
-        # 1. Confidence threshold check
-        if confidence < CONFIDENCE_THRESHOLD:
-            reasons.append(
-                f"The verdict confidence ({confidence:.2f}) is below the auto-execution threshold ({CONFIDENCE_THRESHOLD})"
-            )
-
         _SAFETY_DISPUTE_TYPES = {
             "SAFETY_ALERT", 
             "UNSAFE_DRIVING", 
@@ -909,7 +903,7 @@ class PipelineEngine:
         dispute_type = (self.ctx.case_metadata.get("dispute_type") or "").strip()
         dispute_description = (self.ctx.dispute_claim.get("description") or "").lower()
 
-        # 2. Safety threat flag from escalation_protocol
+        # 1. Safety threat flag from escalation_protocol
         bonus = self.ctx.bonus_modules
         escalation_proto = bonus.get("escalation_protocol", {})
         safety_threat = (
@@ -921,17 +915,17 @@ class PipelineEngine:
         if safety_threat:
             reasons.append("Security threat detection result marked as True")
 
-        # 3. Fraud risk level
+        # 2. Fraud risk level
         fraud_risk_level = escalation_proto.get("fraud_risk_level", "LOW")
         if fraud_risk_level == "HIGH":
             reasons.append("The in-depth investigation component has identified a high risk of fraud")
 
-        # 4. Missing crucial evidence
+        # 3. Missing crucial evidence
         missing_crucial_evidence = escalation_proto.get("missing_crucial_evidence", False)
         if missing_crucial_evidence:
             reasons.append("Missing crucial evidence")
 
-        # 5. Amount threshold check, if > 20, escalate to human review. if > 50, escalate to human review and mark as HIGH_PRIORITY
+        # 4. Amount threshold check, if > 20, escalate to human review. if > 50, escalate to human review and mark as HIGH_PRIORITY
         AMOUNT_THRESHOLD = 20
         HIGH_PRIORITY_THRESHOLD = 50
         recommended_action = verdict.get("recommended_action", {})
@@ -947,7 +941,13 @@ class PipelineEngine:
         if account_action != "NONE":
             reasons.append("It is recommended that penalties such as account suspension and point deductions be imposed; these require manual review")
 
-        # 7. If the party has requested human review
+        # 7. Confidence threshold check
+        if confidence < CONFIDENCE_THRESHOLD:
+            reasons.append(
+                f"The verdict confidence ({confidence:.2f}) is below the auto-execution threshold ({CONFIDENCE_THRESHOLD})"
+            )
+
+        # 8. If the party has requested human review
         party_requested_human = escalation_proto.get("party_requested_human", False)
         if party_requested_human:
             reasons.append("The party involved is dissatisfied with the automated decision and requests a manual review")

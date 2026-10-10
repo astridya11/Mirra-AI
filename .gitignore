@@ -159,3 +159,6 @@ backend/disputes
 
 # escalated files
 backend/escalated
+
+# SLA routing files
+routing_state.json

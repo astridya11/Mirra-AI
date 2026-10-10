@@ -11,6 +11,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getCompletedResult } from "@/src/lib/api"; 
 import { useParams } from "next/navigation";
+import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
 
 // ==========================================
 // TYPES
@@ -19,7 +20,7 @@ import { useParams } from "next/navigation";
 export type StepKey =
   | "CASE_SUMMARY"
   | "INIT_CLAIM"
-  | "ROUND_1_PLEADINGS"
+  | "ROUND_1_STATEMENTS"
   | "ROUND_2_CROSS_EXAM"
   | "ROUND_2_REPORT"
   | "POLICY_CONSULTATION"
@@ -44,7 +45,7 @@ export interface FeedEvent {
 const STEPS: { id: StepKey; name: string}[] = [
   { id: "CASE_SUMMARY", name: "Case Summary" },
   { id: "INIT_CLAIM", name: "Dispute Filed" },
-  { id: "ROUND_1_PLEADINGS", name: "Round 1 Pleadings"},
+  { id: "ROUND_1_STATEMENTS", name: "Round 1 Statements"},
   { id: "ROUND_2_CROSS_EXAM", name: "Cross Examination" },
   { id: "ROUND_2_REPORT", name: "Final Audit Report" },
   { id: "POLICY_CONSULTATION", name: "Policy & Precedent Research" },
@@ -152,7 +153,7 @@ const label = (k: string) => FIELD_LABELS[k] ?? k;
 const PHASE_TO_STEP: Record<string, StepKey> = {
   CASE_SUMMARY: "CASE_SUMMARY",
   INIT_CLAIM: "INIT_CLAIM",
-  ROUND_1_PLEADINGS: "ROUND_1_PLEADINGS",
+  ROUND_1_STATEMENTS: "ROUND_1_STATEMENTS",
   POLICY_CONSULTATION: "POLICY_CONSULTATION",
   JUDGE_DELIBERATION: "JUDGE_DELIBERATION",
   EXECUTION_ROUTER: "EXECUTION_ROUTER",
@@ -504,6 +505,123 @@ const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" 
   </div>
 );
 
+const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
+  const statementsObj = data.round_1_statements || data.statements || data;
+  const riderStmt = asRecord(statementsObj.rider_statement) || asRecord(statementsObj.RIDER) || asRecord(Array.isArray(statementsObj) ? statementsObj.find((x: any) => x?.party === "RIDER" || x?.agent_role === "RIDER_ADVOCATE") : null);
+  const driverStmt = asRecord(statementsObj.driver_statement) || asRecord(statementsObj.DRIVER) || asRecord(Array.isArray(statementsObj) ? statementsObj.find((x: any) => x?.party === "DRIVER" || x?.agent_role === "DRIVER_ADVOCATE") : null);
+
+  const renderStatementCard = (title: string, stmt: Rec | null, role: "rider" | "driver") => {
+    if (!stmt) return null;
+    const style = ROLE_STYLE[role];
+    const outcome = stmt.requested_outcome;
+    const amount = stmt.requested_amount;
+    const currency = stmt.currency || "SGD";
+    const evidenceRefs = Array.isArray(stmt.evidence_references) ? stmt.evidence_references : [];
+
+    return (
+      <div className={`p-5 rounded-xl border ${style.box} space-y-4`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-base">{style.title}</span>
+            <Chip tone={role === "rider" ? "primary" : "green"}>
+              {role === "rider" ? "Rider Advocate" : "Driver Advocate"}
+            </Chip>
+          </div>
+          {outcome && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500 font-medium">Requested:</span>
+              <Chip tone="primary">
+                {String(outcome)} {amount !== undefined && amount !== null ? `($${amount} ${currency})` : ""}
+              </Chip>
+            </div>
+          )}
+        </div>
+
+        {stmt.argument_summary && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Argument Summary</div>
+            <div className="p-3.5 rounded-lg bg-white/80 border border-black/5 text-gray-800 text-sm leading-relaxed font-medium">
+              {String(stmt.argument_summary)}
+            </div>
+          </div>
+        )}
+
+        {stmt.detailed_argument && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detailed Argument</div>
+            <div className="p-3.5 rounded-lg bg-white/60 border border-black/5 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
+              {String(stmt.detailed_argument)}
+            </div>
+          </div>
+        )}
+
+        {evidenceRefs.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-2">
+              <span>Cited Evidence References</span>
+              <Chip tone="gray">{evidenceRefs.length}</Chip>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {evidenceRefs.map((ev: any, i: number) => {
+                const evRec = asRecord(ev);
+                const evId = evRec?.evidence_id || `EV-${i}`;
+                const sourceType = evRec?.source_type || "EVIDENCE";
+                const desc = evRec?.description || String(ev);
+                return (
+                  <div key={i} className="p-2.5 rounded-lg bg-white/70 border border-black/5 text-xs space-y-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-mono font-semibold text-gray-900">{evId}</span>
+                      <Chip tone="blue">{sourceType}</Chip>
+                    </div>
+                    <p className="text-gray-600 line-clamp-2">{desc}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {stmt.submitted_at && (
+          <div className="text-[11px] text-gray-400 text-right pt-2 border-t border-black/5">
+            Submitted at: {new Date(stmt.submitted_at).toLocaleString()}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (!riderStmt && !driverStmt) {
+    return (
+      <Panel title="⚖️ Round 1 Statements (Initial Statements)">
+        <div className="text-gray-400 italic text-center p-6 bg-gray-50 rounded-lg">
+          No Round 1 Statements data available.
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 flex items-center gap-3">
+        <span className="text-blue-600 text-lg">⚖️</span>
+        <div>
+          <span className="font-bold text-blue-900 text-sm">Round 1 Statements Overview</span>
+          <p className="text-xs text-blue-700 mt-0.5">Formal initial statements and evidence citations submitted by the Rider and Driver Advocates.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {renderStatementCard("Rider Statement", riderStmt, "rider")}
+        {renderStatementCard("Driver Statement", driverStmt, "driver")}
+      </div>
+
+      <div className="pt-2">
+        <RawJson value={data} summary="Round 1 Statements Raw Data" />
+      </div>
+    </div>
+  );
+};
+
 const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title: string }> = ({
   findings,
   bonus,
@@ -716,7 +834,7 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
           <DataView value={action} />
         </div>
       )}
-      <DataView value={data} skip={["ruling_type", "confidence_score", "recommended_action"]} />
+      <DataView value={data} skip={["ruling_type", "confidence_score", "recommended_action", "verified_fact_references", "policy_clauses_applied", "precedent_references", "execution_payload"]} />
     </Panel>
   );
 };
@@ -846,13 +964,24 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
         </div>
       )}
 
-      {findings.prosecutor_summary && (
+      {/* {findings.prosecutor_summary && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
             🔍 Prosecutor Core Audit Summary
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {findings.prosecutor_summary}
+          </p>
+        </div>
+      )} */}
+
+      {verdict.reasoning_summary && (
+        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
+          <div className="font-semibold text-blue-900">
+            🔍 Judge Verdict Reasoning Summary
+          </div>
+          <p className="text-sm text-blue-900 leading-relaxed">
+            {verdict.reasoning_summary}
           </p>
         </div>
       )}
@@ -904,47 +1033,48 @@ export default function CustomerSupportCaseViewPage() {
           },
         });
 
-        // 2. ROUND 1 PLEADINGS
+        // 2. Round 1 Statements
         const statements = result.agent_conversation?.filter((m: any) => m.message_type === "STATEMENT") || [];
-        statements.forEach((msg: any) => {
-          synthesizedEvents.push({
-            event_type: "AGENT_CONVERSATION",
-            phase: "ROUND_1_PLEADINGS",
-            speaker: msg.speaker,
-            message_type: msg.message_type,
-            timestamp: msg.timestamp,
-            data: msg,
-          });
-        });
+        // statements.forEach((msg: any) => {
+        //   synthesizedEvents.push({
+        //     event_type: "AGENT_CONVERSATION",
+        //     phase: "ROUND_1_STATEMENTS",
+        //     speaker: msg.speaker,
+        //     message_type: msg.message_type,
+        //     timestamp: msg.timestamp,
+        //     data: msg,
+        //   });
+        // });
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
-          phase: "ROUND_1_PLEADINGS",
+          phase: "ROUND_1_STATEMENTS",
+          data: result.round_1_statements ?? { statements },
         });
 
-        // 3. ROUND 2 INITIAL AUDIT
-        synthesizedEvents.push({
-          event_type: "PHASE_COMPLETED",
-          phase: "ROUND_2_PROSECUTOR_AUDIT",
-          sub_phase: "INITIAL_AUDIT",
-          data: {
-            prosecutor_findings: result.prosecutor_findings,
-            bonus_modules: result.bonus_modules,
-          },
-        });
+        // 3. ROUND 2 INITIAL AUDIT, commented because case metadata only keep the final report
+        // synthesizedEvents.push({
+        //   event_type: "PHASE_COMPLETED",
+        //   phase: "ROUND_2_PROSECUTOR_AUDIT",
+        //   sub_phase: "INITIAL_AUDIT",
+        //   data: {
+        //     prosecutor_findings: result.prosecutor_findings,
+        //     bonus_modules: result.bonus_modules,
+        //   },
+        // });
 
         // 4. ROUND 2 CROSS EXAM
         const crossExams = result.agent_conversation?.filter((m: any) => m.message_type !== "STATEMENT") || [];
-        crossExams.forEach((msg: any) => {
-          synthesizedEvents.push({
-            event_type: "AGENT_CONVERSATION",
-            phase: "ROUND_2_PROSECUTOR_AUDIT",
-            sub_phase: "CROSS_EXAM",
-            speaker: msg.speaker,
-            message_type: msg.message_type,
-            timestamp: msg.timestamp,
-            data: msg,
-          });
-        });
+        // crossExams.forEach((msg: any) => {
+        //   synthesizedEvents.push({
+        //     event_type: "AGENT_CONVERSATION",
+        //     phase: "ROUND_2_PROSECUTOR_AUDIT",
+        //     sub_phase: "CROSS_EXAM",
+        //     speaker: msg.speaker,
+        //     message_type: msg.message_type,
+        //     timestamp: msg.timestamp,
+        //     data: msg,
+        //   });
+        // });
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "ROUND_2_PROSECUTOR_AUDIT",
@@ -1006,7 +1136,7 @@ export default function CustomerSupportCaseViewPage() {
     const map: Record<StepKey, FeedEvent[]> = {
       CASE_SUMMARY: [],
       INIT_CLAIM: [],
-      ROUND_1_PLEADINGS: [],
+      ROUND_1_STATEMENTS: [],
       ROUND_2_CROSS_EXAM: [],
       ROUND_2_REPORT: [],
       POLICY_CONSULTATION: [],
@@ -1050,7 +1180,9 @@ export default function CustomerSupportCaseViewPage() {
         
         {/* 左侧 Tabs 导航 */}
         <aside className="md:w-64 flex-shrink-0">
-          <nav className="space-y-1 sticky top-24">
+          <div className="sticky top-24 space-y-4">
+            <ReviewSlaPanel caseId={caseId} />
+          <nav className="space-y-1">
             {STEPS.map((step) => {
               const isActive = activeTab === step.id;
               const hasData = eventsByStep[step.id]?.length > 0;
@@ -1073,6 +1205,7 @@ export default function CustomerSupportCaseViewPage() {
               );
             })}
           </nav>
+          </div>
         </aside>
 
         {/* 右侧内容区 */}
@@ -1112,6 +1245,8 @@ export default function CustomerSupportCaseViewPage() {
                           <DataView value={data} skip={["status"]} />
                         </Panel>
                       );
+                    case "ROUND_1_STATEMENTS":
+                      return <Round1StatementsView key={idx} data={data} />;
                     case "ROUND_2_CROSS_EXAM":
                       const crossSource = asRecord(data?.round_2_cross_exam) ?? data;
                       const fbQuestions = Array.isArray(crossSource?.targeted_questions) ? crossSource!.targeted_questions : [];
