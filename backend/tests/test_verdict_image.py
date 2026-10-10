@@ -464,11 +464,12 @@ def main() -> None:
             print("  - returned None for unknown image_id")
 
         # ===================================================================
-        # CHECK h: APPROVED + escalated channel + no human decision
-        #          -> stamp APPROVED, sub "PENDING HUMAN CONFIRMATION"
+        # CHECK h: pending human + judge APPROVED -> UNDER_REVIEW,
+        #          title "· Escalated for human review",
+        #          sub "PENDING HUMAN CONFIRMATION"
         # ===================================================================
         print("\n" + "=" * 70)
-        print("CHECK h: APPROVED + escalated + no human -> PENDING HUMAN CONFIRMATION")
+        print("CHECK h: pending human + judge APPROVED -> UNDER_REVIEW, Escalated for human review")
         print("=" * 70)
         check_h_errors: list[str] = []
 
@@ -502,14 +503,19 @@ def main() -> None:
         if args_h is None:
             check_h_errors.append("render args is None")
         else:
-            if args_h.get("stamp") != "APPROVED":
+            if args_h.get("stamp") != "UNDER_REVIEW":
                 check_h_errors.append(
-                    f"stamp: got {args_h.get('stamp')!r}, expected APPROVED"
+                    f"stamp: got {args_h.get('stamp')!r}, expected UNDER_REVIEW"
                 )
             sub_h = args_h.get("stamp_sub") or ""
             if sub_h != "PENDING HUMAN CONFIRMATION":
                 check_h_errors.append(
                     f"stamp_sub: got {sub_h!r}, expected 'PENDING HUMAN CONFIRMATION'"
+                )
+            title_h = args_h.get("title") or ""
+            if "Escalated for human review" not in title_h:
+                check_h_errors.append(
+                    f"title: got {title_h!r}, expected to contain 'Escalated for human review'"
                 )
 
         if check_h_errors:
@@ -521,6 +527,7 @@ def main() -> None:
             print("\nCHECK h RESULT: PASS")
             print(f"  - stamp: {args_h['stamp']}")
             print(f"  - stamp_sub: {args_h['stamp_sub']}")
+            print(f"  - title: {args_h['title']}")
 
         # ===================================================================
         # CHECK i: REJECTED fully automated -> sub starts "MIRRA AI"
@@ -651,6 +658,196 @@ def main() -> None:
             print("\nCHECK j RESULT: PASS")
             print(f"  - stamp: {args_j['stamp']}")
             print(f"  - stamp_sub: {args_j['stamp_sub']}")
+
+        # ===================================================================
+        # CHECK k: pending human + judge ESCALATED -> UNDER_REVIEW,
+        #          title "· Escalated for human review",
+        #          sub "PENDING HUMAN CONFIRMATION"
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK k: pending human + judge ESCALATED -> UNDER_REVIEW, Escalated for human review")
+        print("=" * 70)
+        check_k_errors: list[str] = []
+
+        case_k = _make_case(
+            case_metadata={
+                "case_id": "DISP-004",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "ESCALATED_HUMAN_REVIEW",
+            },
+            dispute_claim={
+                "case_id": "DISP-004",
+                "image_evidence": [
+                    {"image_id": "IMG-001", "image_url": "/evidence/DISP-004/IMG-001.jpg"},
+                ],
+                "receipt_evidence": [],
+            },
+            judge_verdict={
+                "ruling_type": "ESCALATED",
+                "deliberated_at": "2026-09-25T22:30:00+08:00",
+                "recommended_action": {
+                    "action_type": "ESCALATED_NO_ACTION",
+                    "cleaning_fee_amount": 0,
+                    "currency": "SGD",
+                    "account_action": "NONE",
+                    "penalty_target": "NONE",
+                },
+            },
+        )
+        args_k = build_verdict_render_args(case_k, "IMG-001")
+
+        if args_k is None:
+            check_k_errors.append("render args is None")
+        else:
+            if args_k.get("stamp") != "UNDER_REVIEW":
+                check_k_errors.append(
+                    f"stamp: got {args_k.get('stamp')!r}, expected UNDER_REVIEW"
+                )
+            sub_k = args_k.get("stamp_sub") or ""
+            if sub_k != "PENDING HUMAN CONFIRMATION":
+                check_k_errors.append(
+                    f"stamp_sub: got {sub_k!r}, expected 'PENDING HUMAN CONFIRMATION'"
+                )
+            title_k = args_k.get("title") or ""
+            if "Escalated for human review" not in title_k:
+                check_k_errors.append(
+                    f"title: got {title_k!r}, expected to contain 'Escalated for human review'"
+                )
+
+        if check_k_errors:
+            print("\nCHECK k RESULT: FAIL")
+            for e in check_k_errors:
+                print(f"  - {e}")
+            errors.extend(check_k_errors)
+        else:
+            print("\nCHECK k RESULT: PASS")
+            print(f"  - stamp: {args_k['stamp']}")
+            print(f"  - stamp_sub: {args_k['stamp_sub']}")
+            print(f"  - title: {args_k['title']}")
+
+        # ===================================================================
+        # CHECK l: human MODIFIED with cleaning_fee_amount 40
+        #          -> stamp APPROVED, title ends ": SGD 40.00",
+        #          sub "CONFIRMED BY HUMAN · <date>"
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK l: human MODIFIED cleaning_fee_amount 40 -> APPROVED, SGD 40.00")
+        print("=" * 70)
+        check_l_errors: list[str] = []
+
+        case_l = _make_case(
+            case_metadata={
+                "case_id": "DISP-005",
+                "dispute_type": "CLEANING_FEE",
+                "resolution_channel": "ESCALATED_HUMAN_REVIEW",
+            },
+            dispute_claim={
+                "case_id": "DISP-005",
+                "image_evidence": [
+                    {"image_id": "IMG-001", "image_url": "/evidence/DISP-005/IMG-001.jpg"},
+                ],
+                "receipt_evidence": [],
+            },
+            judge_verdict={
+                "ruling_type": "APPROVED",
+                "deliberated_at": "2026-09-25T22:30:00+08:00",
+                "recommended_action": {
+                    "action_type": "REFUND",
+                    "cleaning_fee_amount": 60.0,
+                    "currency": "SGD",
+                    "account_action": "NONE",
+                    "penalty_target": "NONE",
+                },
+                "execution_payload": {
+                    "human_confirmation_details": {
+                        "reviewer_id": "REV-002",
+                        "approval_decision": "MODIFIED",
+                        "approval_timestamp": "2026-09-26T10:00:00+08:00",
+                        "modified_action": {
+                            "action_type": "REFUND",
+                            "refund_amount": 40,
+                            "currency": "SGD",
+                            "ruling_type": "APPROVED",
+                            "cleaning_fee_amount": 40,
+                        },
+                    },
+                },
+            },
+        )
+        args_l = build_verdict_render_args(case_l, "IMG-001")
+
+        if args_l is None:
+            check_l_errors.append("render args is None")
+        else:
+            if args_l.get("stamp") != "APPROVED":
+                check_l_errors.append(
+                    f"stamp: got {args_l.get('stamp')!r}, expected APPROVED"
+                )
+            title_l = args_l.get("title") or ""
+            if not title_l.endswith(": SGD 40.00"):
+                check_l_errors.append(
+                    f"title: got {title_l!r}, expected to end with ': SGD 40.00'"
+                )
+            sub_l = args_l.get("stamp_sub") or ""
+            if not sub_l.startswith("CONFIRMED BY HUMAN"):
+                check_l_errors.append(
+                    f"stamp_sub: got {sub_l!r}, expected to start with 'CONFIRMED BY HUMAN'"
+                )
+            if "26 SEP 2026" not in sub_l:
+                check_l_errors.append(
+                    f"stamp_sub: got {sub_l!r}, expected to contain '26 SEP 2026'"
+                )
+
+        if check_l_errors:
+            print("\nCHECK l RESULT: FAIL")
+            for e in check_l_errors:
+                print(f"  - {e}")
+            errors.extend(check_l_errors)
+        else:
+            print("\nCHECK l RESULT: PASS")
+            print(f"  - stamp: {args_l['stamp']}")
+            print(f"  - title: {args_l['title']}")
+            print(f"  - stamp_sub: {args_l['stamp_sub']}")
+
+        # ===================================================================
+        # CHECK m: fully automated APPROVED -> unchanged (MIRRA AI · date)
+        # ===================================================================
+        print("\n" + "=" * 70)
+        print("CHECK m: fully automated APPROVED -> unchanged (MIRRA AI · date)")
+        print("=" * 70)
+        check_m_errors: list[str] = []
+
+        case_m = _make_approved_case()
+        args_m = build_verdict_render_args(case_m, "IMG-001")
+
+        if args_m is None:
+            check_m_errors.append("render args is None")
+        else:
+            if args_m.get("stamp") != "APPROVED":
+                check_m_errors.append(
+                    f"stamp: got {args_m.get('stamp')!r}, expected APPROVED"
+                )
+            title_m = args_m.get("title") or ""
+            if "SGD 60.00" not in title_m:
+                check_m_errors.append(
+                    f"title: got {title_m!r}, expected to contain 'SGD 60.00'"
+                )
+            sub_m = args_m.get("stamp_sub") or ""
+            if not sub_m.startswith("MIRRA AI"):
+                check_m_errors.append(
+                    f"stamp_sub: got {sub_m!r}, expected to start with 'MIRRA AI'"
+                )
+
+        if check_m_errors:
+            print("\nCHECK m RESULT: FAIL")
+            for e in check_m_errors:
+                print(f"  - {e}")
+            errors.extend(check_m_errors)
+        else:
+            print("\nCHECK m RESULT: PASS")
+            print(f"  - stamp: {args_m['stamp']}")
+            print(f"  - title: {args_m['title']}")
+            print(f"  - stamp_sub: {args_m['stamp_sub']}")
 
         # ===================================================================
         # Summary

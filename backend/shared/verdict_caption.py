@@ -97,8 +97,13 @@ def _resolve_stamp(case: dict) -> tuple[str | None, str]:
     is_pending_human = is_human_review_channel and not human_decision
 
     # --- stamp ---
+    # While a case is pending human review (escalated channel, no human
+    # decision yet), the stamp is always UNDER_REVIEW, regardless of the
+    # judge's ruling_type.
     stamp: str | None = None
-    if ruling_type in ("APPROVED", "PARTIAL_REFUND"):
+    if is_pending_human:
+        stamp = "UNDER_REVIEW"
+    elif ruling_type in ("APPROVED", "PARTIAL_REFUND"):
         stamp = "APPROVED"
     elif ruling_type == "REJECTED":
         stamp = "REJECTED"
@@ -136,6 +141,23 @@ def _resolve_title(case: dict, stamp: str | None) -> str:
     action = jv.get("recommended_action") or {}
     amount = action.get("cleaning_fee_amount")
 
+    # After a human decision, use the human's modified amount if one was given.
+    ep = jv.get("execution_payload") or {}
+    hc = ep.get("human_confirmation_details") or {}
+    human_decision = hc.get("approval_decision") or ""
+    if human_decision:
+        modified = hc.get("modified_action") or {}
+        if isinstance(modified, dict):
+            # Prefer modified_action.cleaning_fee_amount; fall back to
+            # modified_action.recommended_action.cleaning_fee_amount.
+            mod_amount = modified.get("cleaning_fee_amount")
+            if mod_amount is None:
+                mod_recommended = modified.get("recommended_action") or {}
+                if isinstance(mod_recommended, dict):
+                    mod_amount = mod_recommended.get("cleaning_fee_amount")
+            if mod_amount is not None:
+                amount = mod_amount
+
     if stamp == "APPROVED":
         amt_str = ""
         if isinstance(amount, (int, float)) and not isinstance(amount, bool):
@@ -149,7 +171,7 @@ def _resolve_title(case: dict, stamp: str | None) -> str:
     elif stamp == "REJECTED":
         return f"{case_id} · Cleaning fee rejected"
     elif stamp == "UNDER_REVIEW":
-        return f"{case_id} · Under human review"
+        return f"{case_id} · Escalated for human review"
     else:
         return f"{case_id} · Analysis pending"
 
