@@ -17,6 +17,7 @@ import { useParams } from "next/navigation";
 // ==========================================
 
 export type StepKey =
+  | "CASE_SUMMARY"
   | "INIT_CLAIM"
   | "ROUND_1_PLEADINGS"
   | "ROUND_2_CROSS_EXAM"
@@ -41,6 +42,7 @@ export interface FeedEvent {
 }
 
 const STEPS: { id: StepKey; name: string}[] = [
+  { id: "CASE_SUMMARY", name: "Case Summary" },
   { id: "INIT_CLAIM", name: "Dispute Filed" },
   { id: "ROUND_1_PLEADINGS", name: "Round 1 Pleadings"},
   { id: "ROUND_2_CROSS_EXAM", name: "Cross Examination" },
@@ -88,66 +90,67 @@ function formatTime(ts?: string): string {
 }
 
 const FIELD_LABELS: Record<string, string> = {
-  status: "状态",
-  dispute_type: "纠纷类型",
-  rider_id: "乘客 ID",
-  driver_id: "司机 ID",
-  frozen_at: "证据冻结时间",
-  prosecutor_summary: "检察官总结",
-  verified_facts: "已核实事实",
-  disputed_facts: "存在争议的事实",
-  missing_facts: "缺失的事实",
-  missing_evidence: "缺失的证据",
-  fact_id: "事实编号",
-  description: "描述",
-  source: "来源",
-  fraud_risk_level: "欺诈风险等级",
-  fraud_risk_score: "欺诈风险评分",
-  escalation_protocol: "升级协议",
-  safety_threat_detected: "检测到安全威胁",
-  missing_crucial_evidence: "缺少关键证据",
-  party_requested_human: "当事人请求人工审核",
-  is_escalated: "是否升级",
-  escalation_reasons: "升级原因",
-  priority_level: "优先级",
-  request_id: "请求编号",
-  verified_fact_ids: "已核实事实编号",
-  requested_at: "请求时间",
-  suggested_ruling: "建议裁决",
-  suggested_ruling_type: "建议裁决",
-  ruling_type: "裁决类型",
-  recommended_action: "建议措施",
-  suggested_action: "建议措施",
-  refund_amount: "退款金额",
-  cleaning_fee_amount: "清洁费金额",
-  account_action: "账户处理",
-  applicable_clauses: "适用条款",
-  clause_id: "条款编号",
-  clause_text: "条款内容",
-  matched_precedents: "匹配判例",
-  precedents: "历史判例",
-  confidence: "置信度",
-  confidence_score: "置信度",
-  reasoning: "推理依据",
-  rationale: "理由",
-  explanation: "裁决说明",
-  route: "路由结果",
-  requires_human_signoff: "需要人工签核",
-  execution_payload: "执行载荷",
-  execution_status: "执行状态",
-  transaction_id: "交易编号",
-  auto_executed_at: "自动执行时间",
-  case_final_status: "案件最终状态",
-  resolved_at: "结案时间",
-  question_text: "问题",
-  evidence_context: "相关证据",
-  category: "类别",
-  directed_to: "质询对象",
+  status: "Status",
+  dispute_type: "Dispute Type",
+  rider_id: "Rider ID",
+  driver_id: "Driver ID",
+  frozen_at: "Evidence Frozen At",
+  prosecutor_summary: "Prosecutor Summary",
+  verified_facts: "Verified Facts",
+  disputed_facts: "Disputed Facts",
+  missing_facts: "Missing Facts",
+  missing_evidence: "Missing Evidence",
+  fact_id: "Fact ID",
+  description: "Description",
+  source: "Source",
+  fraud_risk_level: "Fraud Risk Level",
+  fraud_risk_score: "Fraud Risk Score",
+  escalation_protocol: "Escalation Protocol",
+  safety_threat_detected: "Safety Threat Detected",
+  missing_crucial_evidence: "Missing Crucial Evidence",
+  party_requested_human: "Party Requested Human Review",
+  is_escalated: "Is Escalated",
+  escalation_reasons: "Escalation Reasons",
+  priority_level: "Priority Level",
+  request_id: "Request ID",
+  verified_fact_ids: "Verified Fact IDs",
+  requested_at: "Requested At",
+  suggested_ruling: "Suggested Ruling",
+  suggested_ruling_type: "Suggested Ruling Type",
+  ruling_type: "Ruling Type",
+  recommended_action: "Recommended Action",
+  suggested_action: "Suggested Action",
+  refund_amount: "Refund Amount",
+  cleaning_fee_amount: "Cleaning Fee Amount",
+  account_action: "Account Action",
+  applicable_clauses: "Applicable Clauses",
+  clause_id: "Clause ID",
+  clause_text: "Clause Text",
+  matched_precedents: "Matched Precedents",
+  precedents: "Precedents",
+  confidence: "Confidence",
+  confidence_score: "Confidence Score",
+  reasoning: "Reasoning",
+  rationale: "Rationale",
+  explanation: "Explanation",
+  route: "Route",
+  requires_human_signoff: "Requires Human Signoff",
+  execution_payload: "Execution Payload",
+  execution_status: "Execution Status",
+  transaction_id: "Transaction ID",
+  auto_executed_at: "Auto Executed At",
+  case_final_status: "Case Final Status",
+  resolved_at: "Resolved At",
+  question_text: "Question",
+  evidence_context: "Evidence Context",
+  category: "Category",
+  directed_to: "Directed To",
 };
 
 const label = (k: string) => FIELD_LABELS[k] ?? k;
 
 const PHASE_TO_STEP: Record<string, StepKey> = {
+  CASE_SUMMARY: "CASE_SUMMARY",
   INIT_CLAIM: "INIT_CLAIM",
   ROUND_1_PLEADINGS: "ROUND_1_PLEADINGS",
   POLICY_CONSULTATION: "POLICY_CONSULTATION",
@@ -170,6 +173,7 @@ function isAgentConversation(e: FeedEvent): boolean {
 
 function classifyEvent(e: FeedEvent): StepKey {
   const phase = e.phase ?? "";
+  if (phase === "CASE_SUMMARY") return "CASE_SUMMARY";
   if (phase === "ROUND_2_PROSECUTOR_AUDIT" || phase.startsWith("ROUND_2")) {
     if (e.sub_phase && SUB_PHASE_TO_STEP[e.sub_phase]) {
       return SUB_PHASE_TO_STEP[e.sub_phase];
@@ -240,15 +244,15 @@ function normalizeMessage(e: FeedEvent): NormalizedMessage {
 const ROLE_STYLE = {
   prosecutor: {
     box: "bg-blue-50/50 border-blue-200 text-blue-900",
-    title: "🔍 检察官 Prosecutor",
+    title: "🔍 Prosecutor",
   },
   rider: {
     box: "bg-purple-50/50 border-purple-200 text-purple-900",
-    title: "🛵 乘客代理 Rider Advocate",
+    title: "🛵 Rider Advocate",
   },
   driver: {
     box: "bg-emerald-50/50 border-emerald-200 text-emerald-900",
-    title: "🚗 司机代理 Driver Advocate",
+    title: "🚗 Driver Advocate",
   },
   other: {
     box: "bg-gray-50 border-gray-200 text-gray-900",
@@ -266,9 +270,9 @@ function roleOf(speaker: string): keyof typeof ROLE_STYLE {
 
 function roleName(raw: string): string {
   const r = roleOf(raw);
-  if (r === "prosecutor") return "检察官";
-  if (r === "rider") return "乘客代理";
-  if (r === "driver") return "司机代理";
+  if (r === "prosecutor") return "Prosecutor";
+  if (r === "rider") return "Rider Advocate";
+  if (r === "driver") return "Driver Advocate";
   return raw || "—";
 }
 
@@ -300,7 +304,7 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
     return <span className="text-gray-400">—</span>;
   }
   if (typeof value === "boolean") {
-    return <Chip tone={value ? "primary" : "gray"}>{value ? "是" : "否"}</Chip>;
+    return <Chip tone={value ? "primary" : "gray"}>{value ? "Yes" : "No"}</Chip>;
   }
   if (typeof value === "number") {
     return <span className="text-gray-900 font-mono">{value}</span>;
@@ -309,7 +313,7 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
     return <span className="text-gray-800 whitespace-pre-wrap leading-relaxed">{value}</span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-gray-400">（空）</span>;
+    if (value.length === 0) return <span className="text-gray-400">(Empty)</span>;
     const allPrimitive = value.every((v) => v === null || typeof v !== "object");
     if (allPrimitive) {
       return (
@@ -332,11 +336,11 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
   }
   const obj = value as Rec;
   const entries = Object.entries(obj).filter(([k]) => !skip.includes(k));
-  if (entries.length === 0) return <span className="text-gray-400">（空）</span>;
+  if (entries.length === 0) return <span className="text-gray-400">(Empty)</span>;
   return (
     <dl className="space-y-2">
       {entries.map(([k, v]) => (
-        <div key={k} className={depth === 0 ? "grid grid-cols-[8.5rem_1fr] gap-x-3" : "grid grid-cols-[7rem_1fr] gap-x-2"}>
+        <div key={k} className={depth === 0 ? "grid grid-cols-[10rem_1fr] gap-x-3" : "grid grid-cols-[8.5rem_1fr] gap-x-2"}>
           <dt className="text-gray-500 font-medium">{label(k)}</dt>
           <dd className="min-w-0">
             <DataView value={v} depth={depth + 1} />
@@ -359,7 +363,7 @@ const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({
   );
 };
 
-const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary = "查看原始数据" }) => (
+const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary = "View Raw Data" }) => (
   <details className="text-[11px] text-gray-500 group">
     <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors select-none">
       {summary}
@@ -391,13 +395,13 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
             {role === "other" ? `🤖 ${msg.speaker}` : style.title}
             {inCrossExam && msg.messageType && (
               <Chip tone={isQuestion ? "primary" : "green"}>
-                {isQuestion ? "质询问题" : "答辩回应"}
-                {msg.turn !== undefined ? ` · 第 ${msg.turn} 轮` : ""}
+                {isQuestion ? "Question" : "Response"}
+                {msg.turn !== undefined ? ` · Round ${msg.turn}` : ""}
               </Chip>
             )}
             {msg.target && (
               <span className="text-xs font-normal text-gray-500">
-                {isQuestion ? "质询对象：" : "回应对象："}
+                {isQuestion ? "Directed to: " : "Responding to: "}
                 {roleName(msg.target)}
               </span>
             )}
@@ -406,20 +410,20 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
         </div>
 
         <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
-          {msg.text || <span className="italic text-gray-400">（该 Agent 未返回文本内容）</span>}
+          {msg.text || <span className="italic text-gray-400">(This Agent did not return text content)</span>}
         </div>
 
         {isQuestion && (msg.category || msg.evidenceContext) && (
           <div className="mt-4 pt-3 border-t border-black/5 text-xs space-y-2 text-gray-600 bg-white/50 rounded-lg p-3">
             {msg.category && msg.category !== "OTHER" && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">类别：</span>
+                <span className="text-gray-500 font-medium mr-2">Category:</span>
                 {msg.category}
               </div>
             )}
             {msg.evidenceContext && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">相关证据：</span>
+                <span className="text-gray-500 font-medium mr-2">Evidence Context:</span>
                 {msg.evidenceContext}
               </div>
             )}
@@ -427,7 +431,7 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
         )}
 
         <div className="mt-3">
-          <RawJson value={msg.raw} summary="Agent 原始输出" />
+          <RawJson value={msg.raw} summary="Agent Raw Output" />
         </div>
       </div>
     </div>
@@ -438,7 +442,7 @@ const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({
   if (questions.length === 0) {
     return (
       <div className="my-4 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-500 text-center">
-        检察官本轮没有提出质询问题。
+        The Prosecutor did not raise any questions in this round.
       </div>
     );
   }
@@ -506,9 +510,9 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
   title,
 }) => {
   const factKeys: [string, string, "green" | "amber" | "red"][] = [
-    ["verified_facts", "已核实事实", "green"],
-    ["disputed_facts", "存在争议的事实", "amber"],
-    ["missing_facts", "缺失的事实", "red"],
+    ["verified_facts", "Verified Facts", "green"],
+    ["disputed_facts", "Disputed Facts", "amber"],
+    ["missing_facts", "Missing Facts", "red"],
   ];
   const shown = ["prosecutor_summary", ...factKeys.map((f) => f[0])];
   const escalation = asRecord(bonus?.escalation_protocol);
@@ -520,7 +524,7 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
         <>
           {typeof findings.prosecutor_summary === "string" && findings.prosecutor_summary && (
             <div className="mb-4">
-              <div className="text-gray-500 font-medium mb-2">检察官总结</div>
+              <div className="text-gray-500 font-medium mb-2">Prosecutor Summary</div>
               <p className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800">
                 {findings.prosecutor_summary}
               </p>
@@ -537,23 +541,23 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
           )}
         </>
       ) : (
-        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">检察官尚未返回审计发现。</div>
+        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">The Prosecutor has not returned audit findings yet.</div>
       )}
 
       {escalation && (
         <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
-          <span className="text-gray-600 font-medium">风险信号：</span>
-          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>欺诈风险 {fraud}</Chip>}
-          {escalation.safety_threat_detected && <Chip tone="red">检测到安全威胁</Chip>}
-          {escalation.missing_crucial_evidence && <Chip tone="amber">缺少关键证据</Chip>}
+          <span className="text-gray-600 font-medium">Risk Signals:</span>
+          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>Fraud Risk {fraud}</Chip>}
+          {escalation.safety_threat_detected && <Chip tone="red">Safety Threat Detected</Chip>}
+          {escalation.missing_crucial_evidence && <Chip tone="amber">Missing Crucial Evidence</Chip>}
           {!escalation.safety_threat_detected && !escalation.missing_crucial_evidence && fraud !== "HIGH" && (
-            <Chip tone="green">无升级信号</Chip>
+            <Chip tone="green">No Escalation Signals</Chip>
           )}
         </div>
       )}
       {bonus && !isEmpty(bonus) && (
         <div className="mt-4">
-          <RawJson value={bonus} summary="安全与欺诈检测模块（bonus_modules）" />
+          <RawJson value={bonus} summary="Safety & Fraud Detection Module (bonus_modules)" />
         </div>
       )}
     </Panel>
@@ -573,7 +577,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
   }
   const s = asRecord(suggestion);
   if (!s || isEmpty(s)) {
-    return <div className="text-gray-400 italic text-center p-4">政策顾问没有返回可用数据。</div>;
+    return <div className="text-gray-400 italic text-center p-4">The Policy Advisor did not return available data.</div>;
   }
 
   const ruling = pick(s, KNOWN_RULING);
@@ -589,11 +593,11 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
     <div className="space-y-6">
       {(ruling || conf) && (
         <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center gap-3">
-          <span className="font-semibold text-[#E84360]">💡 政策建议裁决</span>
+          <span className="font-semibold text-[#E84360]">💡 Suggested Policy Ruling</span>
           {ruling && <Chip tone="primary">{String(ruling[1])}</Chip>}
           {conf && (
             <span className="text-gray-600 text-sm">
-              置信度 <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
+              Confidence <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
             </span>
           )}
         </div>
@@ -601,7 +605,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {action && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">建议措施</div>
+          <div className="text-gray-500 font-medium mb-2">Recommended Action</div>
           <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={action[1]} />
           </div>
@@ -610,7 +614,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {reason && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">建议依据</div>
+          <div className="text-gray-500 font-medium mb-2">Reasoning Rationale</div>
           <div className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">
             {typeof reason[1] === "string" ? reason[1] : <DataView value={reason[1]} />}
           </div>
@@ -620,7 +624,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       {clauses && Array.isArray(clauses[1]) && (
         <div>
           <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            适用政策条款 <Chip tone="blue">{clauses[1].length}</Chip>
+            Applicable Policy Clauses <Chip tone="blue">{clauses[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {clauses[1].map((c: any, i: number) => {
@@ -633,10 +637,10 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
                 <div key={rec.clause_id ?? i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm">
                   <div className="font-semibold text-gray-900">
                     {rec.clause_id && <span className="font-mono text-gray-400 mr-2 text-xs">{rec.clause_id}</span>}
-                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : `条款 ${i + 1}`)}
+                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : `Clause ${i + 1}`)}
                   </div>
                   {body && <div className="text-gray-700 mt-2 leading-relaxed whitespace-pre-wrap">{body}</div>}
-                  {why && <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">适用理由：{why}</div>}
+                  {why && <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">Relevance Reason: {why}</div>}
                   {Object.keys(rec).some((k) => !shownKeys.includes(k) && !isEmpty(rec[k])) && (
                     <div className="mt-3 pt-3 border-t border-gray-100">
                       <DataView value={rec} skip={shownKeys} depth={1} />
@@ -652,7 +656,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       {precedents && Array.isArray(precedents[1]) && (
         <div>
           <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            参考历史判例 <Chip tone="gray">{precedents[1].length}</Chip>
+            Reference Historical Precedents <Chip tone="gray">{precedents[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {precedents[1].map((p: any, i: number) => (
@@ -676,12 +680,12 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
   const request = asRecord(data.request);
   return (
-    <Panel title="⚖️ 政策条款与建议 (Policy Consultation)">
+    <Panel title="⚖️ Policy Clauses & Recommendations (Policy Consultation)">
       <PolicySuggestionView suggestion={data.suggestion} />
       {request && (
         <details className="mt-4 text-[11px] text-gray-500">
           <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors">
-            咨询请求（Policy Consultation Request）
+            Consultation Request (Policy Consultation Request)
           </summary>
           <div className="mt-2 p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={request} />
@@ -689,7 +693,7 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
         </details>
       )}
       <div className="mt-2">
-        <RawJson value={data} summary="政策咨询原始数据" />
+        <RawJson value={data} summary="Policy Consultation Raw Data" />
       </div>
     </Panel>
   );
@@ -698,12 +702,12 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
 const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   const action = asRecord(data.recommended_action);
   return (
-    <Panel title="🧑‍⚖️ 法官裁决 (Judge Verdict)">
+    <Panel title="🧑‍⚖️ Judge Verdict">
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {data.ruling_type && <Chip tone="primary">{String(data.ruling_type)}</Chip>}
         {data.confidence_score !== undefined && (
           <Chip tone={Number(data.confidence_score) >= 0.75 ? "green" : "amber"}>
-            置信度 {Number(data.confidence_score).toFixed(2)}
+            Confidence {Number(data.confidence_score).toFixed(2)}
           </Chip>
         )}
       </div>
@@ -720,14 +724,14 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
   return (
-    <Panel title="🚦 执行路由 (Execution Router)">
+    <Panel title="🚦 Execution Router">
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {data.route && <Chip tone={escalated ? "amber" : "green"}>{String(data.route)}</Chip>}
-        {data.confidence_score !== undefined && <Chip>置信度 {Number(data.confidence_score).toFixed(2)}</Chip>}
+        {data.confidence_score !== undefined && <Chip>Confidence {Number(data.confidence_score).toFixed(2)}</Chip>}
       </div>
       {Array.isArray(data.escalation_reasons) && data.escalation_reasons.length > 0 && (
         <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-100">
-          <div className="text-amber-800 font-medium mb-2">升级原因：</div>
+          <div className="text-amber-800 font-medium mb-2">Escalation Reasons:</div>
           <ul className="list-disc list-inside space-y-1 text-amber-700">
             {data.escalation_reasons.map((r: string, i: number) => (
               <li key={i}>{r}</li>
@@ -737,6 +741,122 @@ const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
       )}
       <DataView value={data} skip={["route", "confidence_score", "escalation_reasons"]} />
     </Panel>
+  );
+};
+
+// ==========================================
+// CASE SUMMARY VIEW (Added for Human Support at first glance)
+// ==========================================
+
+const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
+  const metadata = asRecord(data.case_metadata) || {};
+  const claim = asRecord(data.dispute_claim) || {};
+  const findings = asRecord(data.prosecutor_findings) || {};
+  const bonus = asRecord(data.bonus_modules) || {};
+  const escalation = asRecord(bonus.escalation_protocol) || {};
+  const verdict = asRecord(data.judge_verdict) || {};
+  const action = asRecord(verdict.recommended_action) || {};
+
+  const reasons = escalation.escalation_reasons || [];
+  const priority = escalation.priority_level || "STANDARD";
+  const confidence = verdict.confidence_score ?? findings.confidence_score ?? 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="w-3 h-3 rounded-full bg-[#E84360] animate-pulse"></span>
+          <div>
+            <span className="font-bold text-gray-900 text-base">Executive Case Summary</span>
+            <p className="text-xs text-gray-500 mt-0.5">At-a-glance overview of core case info, AI verdict, escalation reasons & key risks to reduce human support workload.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Chip tone={priority === "URGENT" ? "red" : priority === "HIGH_PRIORITY" ? "amber" : "primary"}>
+            Priority: {priority}
+          </Chip>
+          <Chip tone={confidence >= 0.75 ? "green" : "amber"}>
+            Confidence: {Number(confidence).toFixed(2)}
+          </Chip>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
+          <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
+            🛵 Basic Info & Dispute Claim
+          </div>
+          <div className="text-sm space-y-2">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Dispute Type:</span>
+              <span className="font-medium text-gray-800">{metadata.dispute_type || claim.dispute_type || "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Rider ID:</span>
+              <span className="font-mono text-gray-800">{metadata.rider_id || claim.rider_id || "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Driver ID:</span>
+              <span className="font-mono text-gray-800">{metadata.driver_id || claim.driver_id || "—"}</span>
+            </div>
+            <div className="pt-2 border-t border-gray-100">
+              <span className="text-gray-500 block mb-1">Dispute Description / Claim:</span>
+              <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed max-h-32 overflow-y-auto">
+                {claim.description || metadata.description || "No detailed description"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
+          <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
+            🧑‍⚖️ AI Verdict & Recommended Actions
+          </div>
+          <div className="text-sm space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500">Suggested Ruling Type:</span>
+              <Chip tone="primary">{verdict.ruling_type || verdict.suggested_ruling_type || "—"}</Chip>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Refund Amount:</span>
+              <span className="font-mono font-medium text-gray-900">${action.refund_amount ?? 0}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Cleaning Fee Amount:</span>
+              <span className="font-mono font-medium text-gray-900">${action.cleaning_fee_amount ?? 0}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Account Action:</span>
+              <span className="font-mono font-medium text-gray-900">{action.account_action || "NONE"}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {Array.isArray(reasons) && reasons.length > 0 && (
+        <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-2">
+          <div className="font-semibold text-amber-900">
+            ⚠️ Human Review Escalation Reasons / Risk Warnings
+          </div>
+          <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
+            {reasons.map((r: string, i: number) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {findings.prosecutor_summary && (
+        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
+          <div className="font-semibold text-blue-900">
+            🔍 Prosecutor Core Audit Summary
+          </div>
+          <p className="text-sm text-blue-900 leading-relaxed">
+            {findings.prosecutor_summary}
+          </p>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -751,7 +871,7 @@ export default function CustomerSupportCaseViewPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<FeedEvent[]>([]);
-  const [activeTab, setActiveTab] = useState<StepKey>("INIT_CLAIM");
+  const [activeTab, setActiveTab] = useState<StepKey>("CASE_SUMMARY");
 
   useEffect(() => {
     if (!caseId) return;
@@ -761,9 +881,16 @@ export default function CustomerSupportCaseViewPage() {
       setError(null);
       try {
         const result = await getCompletedResult(caseId);
-        if (!result) throw new Error("API 未返回有效数据 (Empty Response)");
+        if (!result) throw new Error("API did not return valid data (Empty Response)");
 
         const synthesizedEvents: FeedEvent[] = [];
+
+        // 0. CASE_SUMMARY (Added for executive overview at first glance)
+        synthesizedEvents.push({
+          event_type: "PHASE_COMPLETED",
+          phase: "CASE_SUMMARY",
+          data: result,
+        });
 
         // 1. INIT_CLAIM
         synthesizedEvents.push({
@@ -865,7 +992,7 @@ export default function CustomerSupportCaseViewPage() {
 
         setEvents(synthesizedEvents);
       } catch (err) {
-        setError("无法获取案件数据，请检查网络或后端日志。");
+        setError("Failed to fetch case data, please check network or backend logs.");
         console.error("Fetch complete result error:", err);
       } finally {
         setIsLoading(false);
@@ -877,6 +1004,7 @@ export default function CustomerSupportCaseViewPage() {
   // 区分事件到对应的 Step
   const eventsByStep = useMemo(() => {
     const map: Record<StepKey, FeedEvent[]> = {
+      CASE_SUMMARY: [],
       INIT_CLAIM: [],
       ROUND_1_PLEADINGS: [],
       ROUND_2_CROSS_EXAM: [],
@@ -904,7 +1032,7 @@ export default function CustomerSupportCaseViewPage() {
               <span className="w-2 h-6 bg-[#E84360] rounded-sm inline-block"></span>
               Mirra AI Tribunal <span className="text-gray-400 font-normal">|</span> Customer Support
             </h1>
-            <p className="text-sm text-gray-500 mt-1 ml-4">案件编号: {caseId}</p>
+            <p className="text-sm text-gray-500 mt-1 ml-4">Case ID: {caseId}</p>
           </div>
           {isLoading && (
             <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -912,7 +1040,7 @@ export default function CustomerSupportCaseViewPage() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              数据加载中...
+              Loading data...
             </div>
           )}
         </div>
@@ -956,11 +1084,11 @@ export default function CustomerSupportCaseViewPage() {
           ) : isLoading ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
               <span className="loading-spinner mb-4"></span>
-              正在拉取仲裁数据...
+              Fetching tribunal data...
             </div>
           ) : activeEvents.length === 0 ? (
             <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-              该阶段暂无数据
+              No data available for this phase
             </div>
           ) : (
             <div className="space-y-6">
@@ -976,9 +1104,11 @@ export default function CustomerSupportCaseViewPage() {
                 // 处理 PHASE_COMPLETED 的具体渲染逻辑
                 if (event.event_type === "PHASE_COMPLETED" && data) {
                   switch (activeTab) {
+                    case "CASE_SUMMARY":
+                      return <CaseSummaryView key={idx} data={data} />;
                     case "INIT_CLAIM":
                       return (
-                        <Panel key={idx} title="📁 案件基础信息">
+                        <Panel key={idx} title="📁 Case Basic Information">
                           <DataView value={data} skip={["status"]} />
                         </Panel>
                       );
@@ -991,7 +1121,7 @@ export default function CustomerSupportCaseViewPage() {
                       return (
                         <ProsecutorView
                           key={idx}
-                          title="📜 检察官最终报告 (Prosecutor Report)"
+                          title="📜 Prosecutor Final Report"
                           findings={asRecord(data.prosecutor_findings)}
                           bonus={asRecord(data.bonus_modules)}
                         />

@@ -885,25 +885,51 @@ class PipelineEngine:
         # 1. Confidence threshold check
         if confidence < CONFIDENCE_THRESHOLD:
             reasons.append(
-                f"裁决置信度 ({confidence:.2f}) 低于自动执行阈值 ({CONFIDENCE_THRESHOLD})"
+                f"The verdict confidence ({confidence:.2f}) is below the auto-execution threshold ({CONFIDENCE_THRESHOLD})"
             )
+
+        _SAFETY_DISPUTE_TYPES = {
+            "SAFETY_ALERT", 
+            "UNSAFE_DRIVING", 
+            "HARASSMENT", 
+            "vehicle accident", 
+            "PASSENGER_CONDUCT", 
+            "VEHICLE_ACCIDENT"
+        }
+
+        # 定义描述中常见的安全相关关键词（可根据业务需要增减）
+        _SAFETY_KEYWORDS = {
+            "accident", "crash", "collision", "hit", "strike", "injury", "hurt", 
+            "blood", "weapon", "knife", "gun", "threat", "harass", "attack", 
+            "assault", "rape", "molest", "danger", "unsafe", "reckless", "furious",
+            "车祸", "事故", "碰撞", "撞车", "受伤", "血", "武器", "刀", "枪", 
+            "威胁", "骚扰", "攻击", "殴打", "危险", "不安全", "强暴"
+        }
+
+        dispute_type = (self.ctx.case_metadata.get("dispute_type") or "").strip()
+        dispute_description = (self.ctx.dispute_claim.get("description") or "").lower()
 
         # 2. Safety threat flag from escalation_protocol
         bonus = self.ctx.bonus_modules
         escalation_proto = bonus.get("escalation_protocol", {})
-        safety_threat = escalation_proto.get("safety_threat_detected", False)
+        safety_threat = (
+            escalation_proto.get("safety_threat_detected", False)
+            or dispute_type in _SAFETY_DISPUTE_TYPES
+            or any(keyword in dispute_description for keyword in _SAFETY_KEYWORDS)
+        )
+        # safety_threat = escalation_proto.get("safety_threat_detected", False) or self.ctx.case_metadata.get("dispute_type") or self.ctx.dispute_claim.get("description")
         if safety_threat:
-            reasons.append("安全威胁检测标记为 True")
+            reasons.append("Security threat detection result marked as True")
 
         # 3. Fraud risk level
         fraud_risk_level = escalation_proto.get("fraud_risk_level", "LOW")
         if fraud_risk_level == "HIGH":
-            reasons.append("深度调查组件标记为高欺诈风险")
+            reasons.append("The in-depth investigation component has identified a high risk of fraud")
 
         # 4. Missing crucial evidence
         missing_crucial_evidence = escalation_proto.get("missing_crucial_evidence", False)
         if missing_crucial_evidence:
-            reasons.append("缺少关键证据")
+            reasons.append("Missing crucial evidence")
 
         # 5. Amount threshold check, if > 20, escalate to human review. if > 50, escalate to human review and mark as HIGH_PRIORITY
         AMOUNT_THRESHOLD = 20
@@ -912,19 +938,19 @@ class PipelineEngine:
         refund_amount = recommended_action.get("refund_amount", 0)
         cleaning_fee_amount = recommended_action.get("cleaning_fee_amount", 0)
         if refund_amount > AMOUNT_THRESHOLD or cleaning_fee_amount > AMOUNT_THRESHOLD:
-            reasons.append("金额超过自动执行阈值，需要人工审核")
+            reasons.append("The amount exceeds the automated processing threshold and requires manual review")
         if refund_amount > HIGH_PRIORITY_THRESHOLD or cleaning_fee_amount > HIGH_PRIORITY_THRESHOLD:
-            reasons.append(f"金额超过高优先级阈值 ({HIGH_PRIORITY_THRESHOLD})")
+            reasons.append(f"The amount exceeds the high-priority threshold ({HIGH_PRIORITY_THRESHOLD})")
 
         # 6. If the recommended action is to suspend or ban the account, escalate to human review
         account_action = recommended_action.get("account_action", "NONE")
         if account_action != "NONE":
-            reasons.append("建议采取账户冻结、扣分等惩罚措施，需人工审核")
+            reasons.append("It is recommended that penalties such as account suspension and point deductions be imposed; these require manual review")
 
         # 7. If the party has requested human review
         party_requested_human = escalation_proto.get("party_requested_human", False)
         if party_requested_human:
-            reasons.append("当事人不满意自动决策，请求人工审核")
+            reasons.append("The party involved is dissatisfied with the automated decision and requests a manual review")
 
         is_escalated = len(reasons) > 0
         route = (
