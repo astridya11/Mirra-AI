@@ -23,6 +23,7 @@ Schema reference: shared/schemas.json
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -330,6 +331,110 @@ def _get_completed_case(case_id: str) -> Optional[Dict[str, Any]]:
     """Load the case file only if the pipeline has completed for it."""
     from backend.main import get_completed_case
     return get_completed_case(case_id)
+
+
+# ----------------------------------------------------------------------
+# Policy helpers
+# ----------------------------------------------------------------------
+
+_DEFAULT_NEVER_AUTO_ACTION_TYPES = [
+    "CLEANING_FEE_CHARGE",
+    "PENALTY_ONLY",
+    "ESCALATED_NO_ACTION",
+]
+
+
+def _load_never_auto_action_types() -> List[str]:
+    """Read never_auto_action_types from ryde_policy_v1.json (POL-6 params).
+
+    Falls back to the same three defaults if the file cannot be read.
+    """
+    try:
+        from backend.policy.precedent_store import _load_policy
+        policy = _load_policy()
+        clauses = policy.get("clauses", {})
+        pol6 = clauses.get("POL-6", {})
+        params = pol6.get("params", {})
+        vals = params.get("never_auto_action_types")
+        if isinstance(vals, list) and vals:
+            return [str(v) for v in vals]
+    except Exception:
+        pass
+    return list(_DEFAULT_NEVER_AUTO_ACTION_TYPES)
+
+
+def _compute_dispute_value(
+    recommended_action: Dict[str, Any],
+    dispute_claim: Dict[str, Any],
+    data_sources: Dict[str, Any],
+) -> Optional[float]:
+    """Return the first positive monetary value at stake, or None.
+
+    Priority: cleaning_fee_amount → refund_amount → disputed_amount in
+    dispute_claim → trip total_fare.
+    """
+    for key in ("cleaning_fee_amount", "refund_amount"):
+        v = recommended_action.get(key)
+        if isinstance(v, (int, float)) and v > 0:
+            return float(v)
+
+    claimed = dispute_claim.get("disputed_amount") or dispute_claim.get("amount")
+    if isinstance(claimed, (int, float)) and claimed > 0:
+        return float(claimed)
+
+    payment = (data_sources.get("payment_fare_data") or {})
+    fare = (payment.get("original_fare") or {})
+    total = fare.get("total_fare")
+    if isinstance(total, (int, float)) and total > 0:
+        return float(total)
+
+    return None
+
+
+def _write_escalated_case_file(
+    case_id: str,
+    reasons: List[str],
+    confidence: float,
+    priority_level: str,
+    ctx_meta: Dict[str, Any],
+    dispute_claim: Dict[str, Any],
+    dispute_value: Optional[float],
+    escalated_dir: Optional[str] = None,
+    now: Optional[str] = None,
+) -> None:
+    """Write (or overwrite) the escalated-case JSON file.
+
+    The directory defaults to backend/escalated/ but can be overridden
+    (for tests) via *escalated_dir*.
+    """
+    if escalated_dir is None:
+        escalated_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../escalated")
+        )
+    os.makedirs(escalated_dir, exist_ok=True)
+
+    case_file_path = os.path.join(escalated_dir, f"{case_id}.json")
+
+    escalated_case_data: Dict[str, Any] = {
+        "case_id": case_id,
+        "escalation_reasons": reasons,
+        "confidence_score": confidence,
+        "priority_level": priority_level,
+        "trip_id": ctx_meta.get("trip_id") or dispute_claim.get("trip_id"),
+        "rider_id": ctx_meta.get("rider_id"),
+        "driver_id": ctx_meta.get("driver_id"),
+        "filed_by": dispute_claim.get("filed_by"),
+        "dispute_type": dispute_claim.get("dispute_type"),
+        "escalated_at": now or datetime.now(_SGT).isoformat(),
+    }
+    if dispute_value is not None:
+        escalated_case_data["dispute_value"] = dispute_value
+
+    try:
+        with open(case_file_path, "w", encoding="utf-8") as f:
+            json.dump(escalated_case_data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------------------
@@ -876,6 +981,7 @@ class PipelineEngine:
          2. safety_threat_detected == True (from bonus_modules.escalation_protocol)
          3. fraud_risk_level == HIGH (from bonus_modules.escalation_protocol)
         #   4. safety threat keywords in chat transcript
+         5. action_type in never_auto_action_types (POL-4 / POL-6)
         """
         verdict = self.ctx.judge_verdict
         confidence = verdict.get("confidence_score", 0.0)
@@ -891,17 +997,25 @@ class PipelineEngine:
             "VEHICLE_ACCIDENT"
         }
 
-        # 定义描述中常见的安全相关关键词（可根据业务需要增减）
-        _SAFETY_KEYWORDS = {
-            "accident", "crash", "collision", "hit", "strike", "injury", "hurt", 
-            "blood", "weapon", "knife", "gun", "threat", "harass", "attack", 
+        # English keywords are matched as whole words (regex \b…\b,
+        # case-insensitive) so that "white" does not match "hit" etc.
+        # Chinese keywords are matched as substrings (no word boundary in CJK).
+        _SAFETY_KEYWORDS_EN = [
+            "accident", "crash", "collision", "hit", "strike", "injury", "hurt",
+            "blood", "weapon", "knife", "gun", "threat", "harass", "attack",
             "assault", "rape", "molest", "danger", "unsafe", "reckless", "furious",
-            "车祸", "事故", "碰撞", "撞车", "受伤", "血", "武器", "刀", "枪", 
-            "威胁", "骚扰", "攻击", "殴打", "危险", "不安全", "强暴"
-        }
+        ]
+        _SAFETY_KEYWORDS_ZH = [
+            "车祸", "事故", "碰撞", "撞车", "受伤", "血", "武器", "刀", "枪",
+            "威胁", "骚扰", "攻击", "殴打", "危险", "不安全", "强暴",
+        ]
+        _EN_PATTERN = re.compile(
+            r"\b(" + "|".join(re.escape(k) for k in _SAFETY_KEYWORDS_EN) + r")\b",
+            re.IGNORECASE,
+        )
 
         dispute_type = (self.ctx.case_metadata.get("dispute_type") or "").strip()
-        dispute_description = (self.ctx.dispute_claim.get("description") or "").lower()
+        dispute_description = (self.ctx.dispute_claim.get("description") or "")
 
         # 1. Safety threat flag from escalation_protocol
         bonus = self.ctx.bonus_modules
@@ -909,9 +1023,9 @@ class PipelineEngine:
         safety_threat = (
             escalation_proto.get("safety_threat_detected", False)
             or dispute_type in _SAFETY_DISPUTE_TYPES
-            or any(keyword in dispute_description for keyword in _SAFETY_KEYWORDS)
+            or bool(_EN_PATTERN.search(dispute_description))
+            or any(kw in dispute_description for kw in _SAFETY_KEYWORDS_ZH)
         )
-        # safety_threat = escalation_proto.get("safety_threat_detected", False) or self.ctx.case_metadata.get("dispute_type") or self.ctx.dispute_claim.get("description")
         if safety_threat:
             reasons.append("Security threat detection result marked as True")
 
@@ -936,6 +1050,15 @@ class PipelineEngine:
         if refund_amount > HIGH_PRIORITY_THRESHOLD or cleaning_fee_amount > HIGH_PRIORITY_THRESHOLD:
             reasons.append(f"The amount exceeds the high-priority threshold ({HIGH_PRIORITY_THRESHOLD})")
 
+        # 5. never_auto_action_types (POL-4 / POL-6): cleaning fees, penalties,
+        #    and escalated-no-action always require human review.
+        action_type = recommended_action.get("action_type", "")
+        never_auto_types = _load_never_auto_action_types()
+        if action_type and action_type in never_auto_types:
+            reasons.append(
+                "Cleaning fee charges and penalties always require human review (POL-4, POL-6)"
+            )
+
         # 6. If the recommended action is to suspend or ban the account, escalate to human review
         account_action = recommended_action.get("account_action", "NONE")
         if account_action != "NONE":
@@ -950,7 +1073,7 @@ class PipelineEngine:
         # 8. If the party has requested human review
         party_requested_human = escalation_proto.get("party_requested_human", False)
         if party_requested_human:
-            reasons.append("The party involved is dissatisfied with the automated decision and requests a manual review")
+            reasons.append("The party is not satisfied with the automated decision and requests human review.")
 
         is_escalated = len(reasons) > 0
         route = (
@@ -979,47 +1102,40 @@ class PipelineEngine:
             "resolved_at": now,
         }
 
-        # Determine priority level first
-        priority_level = (
-            "URGENT" if safety_threat or fraud_risk_level == "HIGH"
-            else "HIGH_PRIORITY" if is_escalated
-            else "STANDARD"
-        )
+        # Determine priority level:
+        #   safety threat or fraud HIGH → URGENT
+        #   escalated ONLY because party requested human review → STANDARD
+        #   any other escalation → HIGH_PRIORITY
+        if safety_threat or fraud_risk_level == "HIGH":
+            priority_level = "URGENT"
+        elif is_escalated and len(reasons) == 1 and party_requested_human:
+            priority_level = "STANDARD"
+        elif is_escalated:
+            priority_level = "HIGH_PRIORITY"
+        else:
+            priority_level = "STANDARD"
 
         # Update escalation_protocol with final values
         escalation_proto["is_escalated"] = is_escalated
         escalation_proto["escalation_reasons"] = reasons
         escalation_proto["priority_level"] = priority_level
 
-        # 8. If escalated, create an escalated case file at backend/escalated/{case_id}.json
+        # 8. If escalated, write the escalated case file
         if is_escalated:
             case_id = self.ctx.dispute_claim.get("case_id") or self.ctx.case_metadata.get("case_id")
-            
-            # 确保 backend/escalated 目录存在
-            escalated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../escalated"))
-            os.makedirs(escalated_dir, exist_ok=True)
-
-            case_file_path = os.path.join(escalated_dir, f"{case_id}.json")
-            
-            escalated_case_data = {
-                "case_id": case_id,
-                "escalation_reasons": reasons,
-                "confidence_score": confidence,
-                "priority_level": priority_level,
-                "trip_id": self.ctx.case_metadata.get("trip_id") or self.ctx.dispute_claim.get("trip_id"),
-                "rider_id": self.ctx.case_metadata.get("rider_id"),
-                "driver_id": self.ctx.case_metadata.get("driver_id"),
-                "filed_by": self.ctx.dispute_claim.get("filed_by"),
-                "dispute_type": self.ctx.dispute_claim.get("dispute_type"),
-                "escalated_at": now,
-            }
-
-            try:
-                with open(case_file_path, "w", encoding="utf-8") as f:
-                    json.dump(escalated_case_data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                # 可根据项目需求添加日志记录
-                pass
+            dispute_value = _compute_dispute_value(
+                recommended_action, self.ctx.dispute_claim, self.ctx.data_sources
+            )
+            _write_escalated_case_file(
+                case_id=case_id,
+                reasons=reasons,
+                confidence=confidence,
+                priority_level=priority_level,
+                ctx_meta=self.ctx.case_metadata,
+                dispute_claim=self.ctx.dispute_claim,
+                dispute_value=dispute_value,
+                now=now,
+            )
 
         return {
             "route": route.value if hasattr(route, "value") else str(route),
@@ -1325,13 +1441,49 @@ async def apply_party_decision(
         ):
             esc_proto["escalation_reasons"] = []
         esc_proto["escalation_reasons"].append(
-            "当事人不满意自动决策，请求人工审核"
+            "The party is not satisfied with the automated decision and requests human review."
         )
-        esc_proto["priority_level"] = "HIGH_PRIORITY"
+
+        # Determine priority level:
+        #   safety threat or fraud HIGH → URGENT
+        #   escalated ONLY because party requested human review → STANDARD
+        #   any other escalation → HIGH_PRIORITY
+        has_safety = esc_proto.get("safety_threat_detected", False)
+        has_fraud_high = esc_proto.get("fraud_risk_level", "LOW") == "HIGH"
+        existing_reasons = [
+            r for r in esc_proto["escalation_reasons"]
+            if r != "The party is not satisfied with the automated decision and requests human review."
+        ]
+        if has_safety or has_fraud_high:
+            priority_level = "URGENT"
+        elif len(existing_reasons) == 0:
+            priority_level = "STANDARD"
+        else:
+            priority_level = "HIGH_PRIORITY"
+        esc_proto["priority_level"] = priority_level
 
         # Update case metadata
         case_data.setdefault("case_metadata", {})
         case_data["case_metadata"]["resolution_channel"] = "ESCALATED_HUMAN_REVIEW"
+
+        # Write the escalated-case file so it appears in the review queue
+        recommended_action = (judge_verdict.get("recommended_action") or {})
+        dispute_claim = case_data.get("dispute_claim") or {}
+        data_sources = case_data.get("data_sources") or {}
+        dispute_value = _compute_dispute_value(
+            recommended_action, dispute_claim, data_sources
+        )
+        confidence = judge_verdict.get("confidence_score", 0.0)
+        _write_escalated_case_file(
+            case_id=case_id,
+            reasons=esc_proto["escalation_reasons"],
+            confidence=confidence,
+            priority_level=priority_level,
+            ctx_meta=case_data.get("case_metadata", {}),
+            dispute_claim=dispute_claim,
+            dispute_value=dispute_value,
+            now=now,
+        )
 
     case_data["case_metadata"]["updated_at"] = now
     judge_verdict["execution_payload"] = execution_payload
