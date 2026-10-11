@@ -1007,20 +1007,23 @@ class PipelineEngine:
             "VEHICLE_ACCIDENT"
         }
 
-        # English keywords are matched as whole words (regex \b…\b,
-        # case-insensitive) so that "white" does not match "hit" etc.
+        # English keywords are matched as whole words with common suffixes
+        # (regex \b…\b, case-insensitive) so that "white" does not match "hit"
+        # but "harassed", "threatened", "injured", etc. are still caught.
         # Chinese keywords are matched as substrings (no word boundary in CJK).
         _SAFETY_KEYWORDS_EN = [
             "accident", "crash", "collision", "hit", "strike", "injury", "hurt",
             "blood", "weapon", "knife", "gun", "threat", "harass", "attack",
             "assault", "rape", "molest", "danger", "unsafe", "reckless", "furious",
+            "hitting", "struck", "striking", "injured", "injuries", "knives",
+            "bloody", "dangerous", "raped",
         ]
         _SAFETY_KEYWORDS_ZH = [
             "车祸", "事故", "碰撞", "撞车", "受伤", "血", "武器", "刀", "枪",
             "威胁", "骚扰", "攻击", "殴打", "危险", "不安全", "强暴",
         ]
         _EN_PATTERN = re.compile(
-            r"\b(" + "|".join(re.escape(k) for k in _SAFETY_KEYWORDS_EN) + r")\b",
+            r"\b(?:" + "|".join(re.escape(k) for k in _SAFETY_KEYWORDS_EN) + r")(?:s|es|ed|d|ing|ment|ments|ened|ening)?\b",
             re.IGNORECASE,
         )
 

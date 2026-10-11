@@ -508,3 +508,144 @@ def test_gate_low_confidence_high_priority(tmp_path):
         result = engine._evaluate_execution_gate()
     esc = engine.ctx.bonus_modules["escalation_protocol"]
     assert esc["priority_level"] == "HIGH_PRIORITY"
+
+
+# ---------------------------------------------------------------------------
+# 9. Inflected safety keywords — whole-word with suffix matching
+# ---------------------------------------------------------------------------
+
+def _has_safety_reason(result):
+    return any("Security threat" in r for r in result["escalation_reasons"])
+
+
+def test_harassed_is_safety_threat(tmp_path):
+    """'harassed' (past tense of 'harass') should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "The driver harassed me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_threatened_is_safety_threat(tmp_path):
+    """'threatened' (past tense of 'threat') should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "He threatened me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_injured_is_safety_threat(tmp_path):
+    """'injured' should be detected (both a keyword and a suffix form)."""
+    engine = _make_engine(
+        dispute_claim={"description": "I was injured.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_attacked_is_safety_threat(tmp_path):
+    """'attacked' (past tense of 'attack') should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "He attacked me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_assaulted_is_safety_threat(tmp_path):
+    """'assaulted' (past tense of 'assault') should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "He assaulted me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_weapons_is_safety_threat(tmp_path):
+    """'weapons' (plural of 'weapon') should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "There were weapons in the car.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_hitting_is_safety_threat(tmp_path):
+    """'hitting' (gerund of 'hit', also an explicit keyword) should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "He was hitting me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_struck_is_safety_threat(tmp_path):
+    """'struck' (irregular past of 'strike', explicit keyword) should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "He struck me.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+def test_dangerous_is_safety_threat(tmp_path):
+    """'dangerous' (adjective from 'danger', explicit keyword) should be detected."""
+    engine = _make_engine(
+        dispute_claim={"description": "It was dangerous.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert _has_safety_reason(result)
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+
+
+# ---------------------------------------------------------------------------
+# 10. Non-safety words — must not trigger (false-positive guards)
+# ---------------------------------------------------------------------------
+
+def test_history_not_safety_threat(tmp_path):
+    """'history' must not match 'hit' as a substring."""
+    engine = _make_engine(
+        dispute_claim={"description": "The history of the trip.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert not _has_safety_reason(result)
+
+
+def test_hitch_not_safety_threat(tmp_path):
+    """'hitch' must not match 'hit' as a substring."""
+    engine = _make_engine(
+        dispute_claim={"description": "A hitch in the plan.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert not _has_safety_reason(result)
+
+
+def test_gunk_not_safety_threat(tmp_path):
+    """'gunk' must not match 'gun' as a substring."""
+    engine = _make_engine(
+        dispute_claim={"description": "There was gunk on the seat.", "filed_by": "RIDER"},
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+    assert not _has_safety_reason(result)
