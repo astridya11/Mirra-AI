@@ -12,6 +12,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { getCompletedResult } from "@/src/lib/api"; 
 import { useParams } from "next/navigation";
 import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
+import {
+  formatMoney,
+  formatPercent,
+  humanizeEnum,
+  disputeTypeLabel,
+  rulingLabel,
+  actionLabel,
+  priorityLabel,
+  describeAction,
+} from "@/src/lib/reviewFormat";
 
 // ==========================================
 // TYPES
@@ -245,19 +255,19 @@ function normalizeMessage(e: FeedEvent): NormalizedMessage {
 const ROLE_STYLE = {
   prosecutor: {
     box: "bg-blue-50/50 border-blue-200 text-blue-900",
-    title: "🔍 Prosecutor",
+    title: "Prosecutor",
   },
   rider: {
     box: "bg-purple-50/50 border-purple-200 text-purple-900",
-    title: "🛵 Rider Advocate",
+    title: "Rider Advocate",
   },
   driver: {
     box: "bg-emerald-50/50 border-emerald-200 text-emerald-900",
-    title: "🚗 Driver Advocate",
+    title: "Driver Advocate",
   },
   other: {
     box: "bg-gray-50 border-gray-200 text-gray-900",
-    title: "🤖 Agent",
+    title: "Agent",
   },
 };
 
@@ -393,7 +403,7 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
       <div className={`p-4 rounded-xl border ${style.box}`}>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-black/5">
           <span className="font-semibold text-sm flex flex-wrap items-center gap-2">
-            {role === "other" ? `🤖 ${msg.speaker}` : style.title}
+            {role === "other" ? msg.speaker : style.title}
             {inCrossExam && msg.messageType && (
               <Chip tone={isQuestion ? "primary" : "green"}>
                 {isQuestion ? "Question" : "Response"}
@@ -515,7 +525,6 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
     const style = ROLE_STYLE[role];
     const outcome = stmt.requested_outcome;
     const amount = stmt.requested_amount;
-    const currency = stmt.currency || "SGD";
     const evidenceRefs = Array.isArray(stmt.evidence_references) ? stmt.evidence_references : [];
 
     return (
@@ -531,7 +540,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-gray-500 font-medium">Requested:</span>
               <Chip tone="primary">
-                {String(outcome)} {amount !== undefined && amount !== null ? `($${amount} ${currency})` : ""}
+                {String(outcome)} {amount !== undefined && amount !== null ? `(${formatMoney(amount)})` : ""}
               </Chip>
             </div>
           )}
@@ -539,7 +548,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {stmt.argument_summary && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Argument Summary</div>
+            <div className="text-xs font-medium text-gray-500 mb-1.5">Argument summary</div>
             <div className="p-3.5 rounded-lg bg-white/80 border border-black/5 text-gray-800 text-sm leading-relaxed font-medium">
               {String(stmt.argument_summary)}
             </div>
@@ -548,7 +557,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {stmt.detailed_argument && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detailed Argument</div>
+            <div className="text-xs font-medium text-gray-500 mb-1.5">Detailed argument</div>
             <div className="p-3.5 rounded-lg bg-white/60 border border-black/5 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
               {String(stmt.detailed_argument)}
             </div>
@@ -557,8 +566,8 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {evidenceRefs.length > 0 && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-2">
-              <span>Cited Evidence References</span>
+            <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-2">
+              <span>Cited evidence references</span>
               <Chip tone="gray">{evidenceRefs.length}</Chip>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -592,7 +601,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
   if (!riderStmt && !driverStmt) {
     return (
-      <Panel title="⚖️ Round 1 Statements (Initial Statements)">
+      <Panel title="Round 1 Statements (Initial Statements)">
         <div className="text-gray-400 italic text-center p-6 bg-gray-50 rounded-lg">
           No Round 1 Statements data available.
         </div>
@@ -603,7 +612,6 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
   return (
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 flex items-center gap-3">
-        <span className="text-blue-600 text-lg">⚖️</span>
         <div>
           <span className="font-bold text-blue-900 text-sm">Round 1 Statements Overview</span>
           <p className="text-xs text-blue-700 mt-0.5">Formal initial statements and evidence citations submitted by the Rider and Driver Advocates.</p>
@@ -664,12 +672,12 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
 
       {escalation && (
         <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
-          <span className="text-gray-600 font-medium">Risk Signals:</span>
-          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>Fraud Risk {fraud}</Chip>}
-          {escalation.safety_threat_detected && <Chip tone="red">Safety Threat Detected</Chip>}
-          {escalation.missing_crucial_evidence && <Chip tone="amber">Missing Crucial Evidence</Chip>}
+          <span className="text-xs font-medium text-gray-500">Risk signals:</span>
+          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>Fraud risk {humanizeEnum(fraud)}</Chip>}
+          {escalation.safety_threat_detected && <Chip tone="red">Safety threat detected</Chip>}
+          {escalation.missing_crucial_evidence && <Chip tone="amber">Missing crucial evidence</Chip>}
           {!escalation.safety_threat_detected && !escalation.missing_crucial_evidence && fraud !== "HIGH" && (
-            <Chip tone="green">No Escalation Signals</Chip>
+            <Chip tone="green">No escalation signals</Chip>
           )}
         </div>
       )}
@@ -711,11 +719,11 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
     <div className="space-y-6">
       {(ruling || conf) && (
         <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center gap-3">
-          <span className="font-semibold text-[#E84360]">💡 Suggested Policy Ruling</span>
-          {ruling && <Chip tone="primary">{String(ruling[1])}</Chip>}
+          <span className="font-semibold text-[#E84360]">Suggested Policy Ruling</span>
+          {ruling && <Chip tone="primary">{rulingLabel(ruling[1])}</Chip>}
           {conf && (
-            <span className="text-gray-600 text-sm">
-              Confidence <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
+            <span className="text-gray-600 text-sm tabular-nums">
+              Confidence <span className="font-medium text-gray-900">{formatPercent(conf[1])}</span>
             </span>
           )}
         </div>
@@ -798,7 +806,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
   const request = asRecord(data.request);
   return (
-    <Panel title="⚖️ Policy Clauses & Recommendations (Policy Consultation)">
+    <Panel title="Policy Clauses & Recommendations (Policy Consultation)">
       <PolicySuggestionView suggestion={data.suggestion} />
       {request && (
         <details className="mt-4 text-[11px] text-gray-500">
@@ -820,12 +828,12 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
 const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   const action = asRecord(data.recommended_action);
   return (
-    <Panel title="🧑‍⚖️ Judge Verdict">
+    <Panel title="Judge Verdict">
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        {data.ruling_type && <Chip tone="primary">{String(data.ruling_type)}</Chip>}
+        {data.ruling_type && <Chip tone="primary">{rulingLabel(data.ruling_type)}</Chip>}
         {data.confidence_score !== undefined && (
           <Chip tone={Number(data.confidence_score) >= 0.75 ? "green" : "amber"}>
-            Confidence {Number(data.confidence_score).toFixed(2)}
+            Confidence {formatPercent(data.confidence_score)}
           </Chip>
         )}
       </div>
@@ -842,10 +850,10 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
   return (
-    <Panel title="🚦 Execution Router">
+    <Panel title="Execution Router">
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        {data.route && <Chip tone={escalated ? "amber" : "green"}>{String(data.route)}</Chip>}
-        {data.confidence_score !== undefined && <Chip>Confidence {Number(data.confidence_score).toFixed(2)}</Chip>}
+        {data.route && <Chip tone={escalated ? "amber" : "green"}>{humanizeEnum(data.route)}</Chip>}
+        {data.confidence_score !== undefined && <Chip>Confidence {formatPercent(data.confidence_score)}</Chip>}
       </div>
       {Array.isArray(data.escalation_reasons) && data.escalation_reasons.length > 0 && (
         <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-100">
@@ -879,7 +887,6 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
   const reasons = escalation.escalation_reasons || [];
   const priority = escalation.priority_level || "STANDARD";
   const confidence = verdict.confidence_score ?? findings.confidence_score ?? 0;
-  const confidencePct = Math.round(Number(confidence) * 100);
 
   return (
     <div className="space-y-6">
@@ -893,10 +900,10 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
         </div>
         <div className="flex items-center gap-2">
           <Chip tone={priority === "URGENT" ? "red" : priority === "HIGH_PRIORITY" ? "amber" : "primary"}>
-            Priority: {priority}
+            Priority: {priorityLabel(priority)}
           </Chip>
           <Chip tone={confidence >= 0.75 ? "green" : "amber"}>
-            Confidence: {Number(confidence).toFixed(2)}
+            Confidence: {formatPercent(confidence)}
           </Chip>
         </div>
       </div>
@@ -904,12 +911,12 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
           <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            🛵 Basic Info & Dispute Claim
+            Basic Info & Dispute Claim
           </div>
           <div className="text-sm space-y-2">
             <div className="flex justify-between">
               <span className="text-gray-500">Dispute Type:</span>
-              <span className="font-medium text-gray-800">{metadata.dispute_type || claim.dispute_type || "—"}</span>
+              <span className="font-medium text-gray-800">{disputeTypeLabel(metadata.dispute_type || claim.dispute_type)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Rider ID:</span>
@@ -930,27 +937,31 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
 
         <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
           <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            🧑‍⚖️ AI Verdict & Recommended Actions
+            AI Verdict & Recommended Actions
           </div>
           <div className="text-sm space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-gray-500">Suggested Ruling Type:</span>
               <div className="flex items-center gap-2">
-                <Chip tone="primary">{verdict.ruling_type || verdict.suggested_ruling_type || "—"}</Chip>
-                <span className="text-xs font-medium text-gray-600">AI Confidence: {confidencePct}%</span>
+                <Chip tone="primary">{rulingLabel(verdict.ruling_type || verdict.suggested_ruling_type)}</Chip>
+                <span className="text-xs font-medium text-gray-600 tabular-nums">AI Confidence: {formatPercent(confidence)}</span>
               </div>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Refund Amount:</span>
-              <span className="font-mono font-medium text-gray-900">${action.refund_amount ?? 0}</span>
+              <span className="font-medium text-gray-900 tabular-nums">{formatMoney(action.refund_amount)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Cleaning Fee Amount:</span>
-              <span className="font-mono font-medium text-gray-900">${action.cleaning_fee_amount ?? 0}</span>
+              <span className="font-medium text-gray-900 tabular-nums">{formatMoney(action.cleaning_fee_amount)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Account Action:</span>
-              <span className="font-mono font-medium text-gray-900">{action.account_action || "NONE"}</span>
+              <span className="font-medium text-gray-900">{action.account_action ? humanizeEnum(action.account_action) : "None"}</span>
+            </div>
+            <div className="pt-2 border-t border-gray-100">
+              <span className="text-gray-500 block mb-1">Recommended action:</span>
+              <p className="text-gray-700 text-sm">{describeAction(action)}</p>
             </div>
           </div>
         </div>
@@ -959,7 +970,7 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {Array.isArray(reasons) && reasons.length > 0 && (
         <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-2">
           <div className="font-semibold text-amber-900">
-            ⚠️ Human Review Escalation Reasons / Risk Warnings
+            Human Review Escalation Reasons / Risk Warnings
           </div>
           <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
             {reasons.map((r: string, i: number) => (
@@ -972,7 +983,7 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {/* {findings.prosecutor_summary && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
-            🔍 Prosecutor Core Audit Summary
+            Prosecutor Core Audit Summary
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {findings.prosecutor_summary}
@@ -983,7 +994,7 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {verdict.reasoning_summary && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
-            🔍 Judge Verdict Reasoning Summary
+            Judge Verdict Reasoning Summary
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {verdict.reasoning_summary}
@@ -994,7 +1005,7 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {explanations.explanation_for_rider && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
-            🧑 Explanation to the Rider
+            Explanation to the Rider
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {explanations.explanation_for_rider}
@@ -1005,7 +1016,7 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {explanations.explanation_for_driver && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
-            🧑 Explanation to the Driver
+            Explanation to the Driver
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {explanations.explanation_for_driver}
@@ -1268,7 +1279,7 @@ export default function CustomerSupportCaseViewPage() {
                       return <CaseSummaryView key={idx} data={data} />;
                     case "INIT_CLAIM":
                       return (
-                        <Panel key={idx} title="📁 Case Basic Information">
+                        <Panel key={idx} title="Case Basic Information">
                           <DataView value={data} skip={["status"]} />
                         </Panel>
                       );
@@ -1283,7 +1294,7 @@ export default function CustomerSupportCaseViewPage() {
                       return (
                         <ProsecutorView
                           key={idx}
-                          title="📜 Prosecutor Final Report"
+                          title="Prosecutor Final Report"
                           findings={asRecord(data.prosecutor_findings)}
                           bonus={asRecord(data.bonus_modules)}
                         />

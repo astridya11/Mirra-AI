@@ -15,8 +15,7 @@ import {
   submitHumanReview,
   type ReviewCase,
 } from "@/src/lib/api";
-
-const CURRENCY = "RM";
+import { formatMoney } from "@/src/lib/reviewFormat";
 
 // Form state for RecommendedAction (numbers are kept as strings while typing)
 interface ActionForm {
@@ -226,9 +225,10 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
         <dl className="text-sm space-y-1">
           <div className="flex justify-between">
             <dt className="text-gray-500">Dispute value</dt>
-            <dd className="font-medium text-gray-900">
-              {CURRENCY} {c.dispute_value.toFixed(0)}
-              {c.value_source === "mock" ? " (est.)" : ""}
+            <dd className="font-medium text-gray-900 tabular-nums">
+              {c.value_source === "mock"
+                ? <span title="Amount not recorded">—</span>
+                : formatMoney(c.dispute_value)}
             </dd>
           </div>
           <div className="flex justify-between">

@@ -6,9 +6,9 @@ import { useCallback, useEffect, useState } from "react";
 import PriorityBadge from "@/src/components/PriorityBadge";
 import SlaBadge from "@/src/components/SlaBadge";
 import { getNextCase, getQueue, resetDemo, type ReviewCase } from "@/src/lib/api";
+import { formatMoney, disputeTypeLabel } from "@/src/lib/reviewFormat";
 
 const POLL_MS = 5000; // scores change as SLA time runs down, so the order refreshes live
-const CURRENCY = "RM";
 
 export default function ReviewQueuePage() {
   const router = useRouter();
@@ -180,14 +180,15 @@ function CaseRow({ c, rank }: { c: ReviewCase; rank?: number }) {
         <div className="min-w-0">
           <p className="font-medium text-gray-900">
             {c.case_id}{" "}
-            <span className="text-sm font-normal text-gray-500">{c.dispute_type}</span>
+            <span className="text-sm font-normal text-gray-500">{disputeTypeLabel(c.dispute_type)}</span>
           </p>
           <p className="text-sm text-gray-500 truncate max-w-xl">
             {c.escalation_reasons?.[0] ?? "Escalated for human review"}
           </p>
-          <p className="text-xs text-gray-400 mt-1">
-            Value {CURRENCY} {c.dispute_value.toFixed(0)}
-            {c.value_source === "mock" ? " (estimated)" : ""}
+          <p className="text-xs text-gray-400 mt-1 tabular-nums">
+            Value {c.value_source === "mock"
+              ? <span title="Amount not recorded">—</span>
+              : formatMoney(c.dispute_value)}
             {resolved && c.resolved_by ? `, reviewed by ${c.resolved_by}` : ""}
           </p>
         </div>
