@@ -81,6 +81,7 @@ export default function HelpPage() {
       <div>
         {helpTopics.map((topic) => {
           const isPopular = topic.id === "popular";
+          const isSupport = user?.party === "SUPPORT";
 
           return (
             <IOSListItem
@@ -101,7 +102,13 @@ export default function HelpPage() {
                 </svg>
               }
               title={topic.label}
-              onClick={() => router.push(`/help/topic/${topic.id}`)}
+              onClick={() => {
+                if (isSupport && isPopular) {
+                  router.push("/review");
+                } else {
+                  router.push(`/help/topic/${topic.id}`);
+                }
+              }}
               showDivider={true}
             />
           );
