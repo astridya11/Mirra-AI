@@ -35,7 +35,7 @@ export function verdictImageMessages(res: ImageCheckResponse | null): ChatMessag
       speaker: "JUDGE",
       speakerTitle: "Judge",
       imageUrl: `${backendUrl(img.verdict_image_url!)}?t=${Date.now()}`,
-      text: "The evidences have been taken into account, and I have rendered my verdict.",
+      text: "I have considered all the evidence and reached my verdict.",
       badge: "Evidence Verdict",
     }));
 }

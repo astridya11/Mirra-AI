@@ -874,10 +874,12 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalation = asRecord(bonus.escalation_protocol) || {};
   const verdict = asRecord(data.judge_verdict) || {};
   const action = asRecord(verdict.recommended_action) || {};
+  const explanations = asRecord(verdict.explanations) || {};
 
   const reasons = escalation.escalation_reasons || [];
   const priority = escalation.priority_level || "STANDARD";
   const confidence = verdict.confidence_score ?? findings.confidence_score ?? 0;
+  const confidencePct = Math.round(Number(confidence) * 100);
 
   return (
     <div className="space-y-6">
@@ -933,7 +935,10 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
           <div className="text-sm space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-gray-500">Suggested Ruling Type:</span>
-              <Chip tone="primary">{verdict.ruling_type || verdict.suggested_ruling_type || "—"}</Chip>
+              <div className="flex items-center gap-2">
+                <Chip tone="primary">{verdict.ruling_type || verdict.suggested_ruling_type || "—"}</Chip>
+                <span className="text-xs font-medium text-gray-600">AI Confidence: {confidencePct}%</span>
+              </div>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Refund Amount:</span>
@@ -982,6 +987,28 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
             {verdict.reasoning_summary}
+          </p>
+        </div>
+      )}
+
+      {explanations.explanation_for_rider && (
+        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
+          <div className="font-semibold text-blue-900">
+            🧑 Explanation to the Rider
+          </div>
+          <p className="text-sm text-blue-900 leading-relaxed">
+            {explanations.explanation_for_rider}
+          </p>
+        </div>
+      )}
+
+      {explanations.explanation_for_driver && (
+        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
+          <div className="font-semibold text-blue-900">
+            🧑 Explanation to the Driver
+          </div>
+          <p className="text-sm text-blue-900 leading-relaxed">
+            {explanations.explanation_for_driver}
           </p>
         </div>
       )}

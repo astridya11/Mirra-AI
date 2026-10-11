@@ -396,7 +396,7 @@ export default function ProcessPage() {
               side: "left",
               speaker: "JUDGE",
               speakerTitle: "Judge",
-              text: `The evidences have been taken into account, and I have rendered my verdict.`,
+              text: `I have considered all the evidence and reached my verdict.`,
               badge: "Evidence Verdict",
             });
           }
@@ -604,7 +604,7 @@ export default function ProcessPage() {
                     side: "left",
                     speaker: "JUDGE",
                     speakerTitle: "Judge",
-                    text: "The evidences have been taken into account, and I have rendered my verdict.",
+                    text: "I have considered all the evidence and reached my verdict.",
                     badge: "Evidence Verdict",
                   },
                 ]);
