@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import PriorityBadge from "@/src/components/PriorityBadge";
-import SlaBadge from "@/src/components/SlaBadge";
+import SlaBar from "@/src/components/SlaBar";
 import { getNextCase, getQueue, resetDemo, type ReviewCase } from "@/src/lib/api";
 import { formatMoney, disputeTypeLabel } from "@/src/lib/reviewFormat";
 
@@ -47,17 +47,28 @@ export default function ReviewQueuePage() {
     if (case_id) router.push(`/review/${case_id}`);
   };
 
+  const nothingOpen = open.length === 0 && fastTrack.length === 0;
+
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+    <div className="min-h-screen bg-[#F6F7F9] text-[#1F2937] font-sans">
+      {/* Header */}
+      <header className="bg-white border-b border-[#E5E7EB] sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-wrap justify-between items-center gap-3">
           <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <span className="w-2 h-6 bg-[#E84360] rounded-sm inline-block"></span>
-              Mirra AI Tribunal <span className="text-gray-400 font-normal">|</span> Review Queue
-            </h1>
-            <p className="text-sm text-gray-500 mt-1 ml-4">
-              {support ? `Reviewing as ${support}` : "Loading..."}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/help"
+                aria-label="Back to RydeHELP"
+                className="text-slate-500 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E84360]/40 inline-flex items-center justify-center w-8 h-8 rounded-lg"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              </Link>
+              <h1 className="text-xl font-semibold text-[#1F2937]">Review queue</h1>
+            </div>
+            <p className="text-sm text-[#6B7280] mt-0.5">
+              {support ? `Reviewing as ${support}` : "Loading\u2026"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -66,7 +77,7 @@ export default function ReviewQueuePage() {
                 await resetDemo();
                 refresh();
               }}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              className="rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm text-[#6B7280] hover:bg-gray-100"
             >
               Reset demo
             </button>
@@ -81,39 +92,61 @@ export default function ReviewQueuePage() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+      <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
+        {/* Error */}
         {error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            Could not reach the backend: {error}
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            Can&apos;t reach the backend. Check that the API is running, then reload.
+          </div>
+        )}
+
+        {/* Stat strip */}
+        {!error && (
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:flex-wrap sm:items-baseline sm:gap-x-8 sm:gap-y-0">
+            <StatPair value={open.length} label="Open" />
+            <StatPair value={fastTrack.length} label="Fast-track" />
+            <StatPair
+              value={pastSla}
+              label="Past SLA"
+              tone={pastSla > 0 ? "red" : undefined}
+            />
+            <StatPair value={resolved.length} label="Reviewed" />
+          </div>
+        )}
+
+        {/* Help line */}
+        {!error && (
+          <p className="text-xs text-[#9CA3AF]">
+            Ranked by priority, then time left on the SLA, then amount at stake.
           </p>
         )}
 
-        <p className="text-sm text-gray-600">
-          {open.length} open, {fastTrack.length} fast-tracked, {pastSla} past SLA, {resolved.length} reviewed.
-          Cases are ranked by priority level first, then SLA pressure and dispute value.
-        </p>
-
-        {isLoading ? (
-          <p className="text-sm text-gray-400">Loading cases...</p>
+        {/* Content */}
+        {error ? null : isLoading ? (
+          <p className="text-sm text-[#9CA3AF]">Loading cases\u2026</p>
+        ) : nothingOpen ? (
+          <div className="rounded-xl border border-[#E5E7EB] bg-white p-6">
+            <p className="text-sm text-[#6B7280]">
+              No cases waiting. Cases the AI escalates to a human will appear here.
+            </p>
+          </div>
         ) : (
           <>
             <Section
               title="Fast-track"
-              hint="Safety threats and high fraud risk. Always reviewed before anything else."
+              hint="Safety threats and high fraud risk. Always handled first."
               cases={fastTrack}
               startRank={1}
-              empty="No urgent cases right now."
+              empty="No urgent cases."
               accent
             />
             <Section
               title="Queue"
-              hint="Ranked by SLA pressure and dispute value within each priority level."
               cases={rest}
               startRank={fastTrack.length + 1}
-              empty="No other open cases."
             />
             {resolved.length > 0 && (
-              <Section title="Reviewed" cases={resolved} empty="" muted />
+              <ReviewedSection cases={resolved} />
             )}
           </>
         )}
@@ -122,6 +155,37 @@ export default function ReviewQueuePage() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Stat strip
+// ---------------------------------------------------------------------------
+
+function StatPair({
+  value,
+  label,
+  tone,
+}: {
+  value: number;
+  label: string;
+  tone?: "red";
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span
+        className={`text-lg font-semibold tabular-nums ${
+          tone === "red" ? "text-red-600" : "text-[#1F2937]"
+        }`}
+      >
+        {value}
+      </span>
+      <span className="text-xs text-[#6B7280]">{label}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sections
+// ---------------------------------------------------------------------------
+
 function Section({
   title,
   hint,
@@ -129,77 +193,193 @@ function Section({
   startRank,
   empty,
   accent,
-  muted,
 }: {
   title: string;
   hint?: string;
   cases: ReviewCase[];
   startRank?: number;
-  empty: string;
+  empty?: string;
   accent?: boolean;
-  muted?: boolean;
 }) {
   return (
     <section className="space-y-2">
       <div>
-        <h2 className="text-lg font-bold text-gray-900">
-          {title} <span className="text-gray-400 font-normal">({cases.length})</span>
+        <h2 className="text-base font-semibold text-[#1F2937]">
+          {title} <span className="text-[#9CA3AF] font-normal">({cases.length})</span>
         </h2>
-        {hint && <p className="text-sm text-gray-500">{hint}</p>}
+        {hint && <p className="text-xs text-[#6B7280] mt-0.5">{hint}</p>}
       </div>
       {cases.length === 0 ? (
-        <p className="text-sm text-gray-400">{empty}</p>
+        empty ? (
+          <p className="text-sm text-[#9CA3AF]">{empty}</p>
+        ) : null
       ) : (
-        <ul
-          className={`divide-y divide-gray-100 rounded-2xl border bg-white overflow-hidden ${
-            accent ? "border-[#E84360]/40" : "border-gray-200"
-          } ${muted ? "opacity-70" : ""}`}
+        <div
+          className={`rounded-xl border bg-white overflow-hidden ${
+            accent ? "border-l-[3px] border-l-[#E84360] border-t-[#E5E7EB] border-r-[#E5E7EB] border-b-[#E5E7EB]" : "border-[#E5E7EB]"
+          }`}
         >
-          {cases.map((c, i) => (
-            <li key={c.case_id}>
-              <CaseRow c={c} rank={startRank ? startRank + i : undefined} />
-            </li>
-          ))}
-        </ul>
+          <ColumnHeader />
+          <div className="divide-y divide-[#F3F4F6]">
+            {cases.map((c, i) => (
+              <CaseRow
+                key={c.case_id}
+                c={c}
+                rank={startRank ? startRank + i : undefined}
+              />
+            ))}
+          </div>
+        </div>
       )}
     </section>
   );
 }
 
-function CaseRow({ c, rank }: { c: ReviewCase; rank?: number }) {
+function ReviewedSection({ cases }: { cases: ReviewCase[] }) {
+  return (
+    <details className="group">
+      <summary className="cursor-pointer text-sm text-[#6B7280] hover:text-[#1F2937] select-none">
+        Reviewed <span className="text-[#9CA3AF]">({cases.length})</span>
+      </summary>
+      <div className="mt-2 rounded-xl border border-[#E5E7EB] bg-white overflow-hidden">
+        <ColumnHeader />
+        <div className="divide-y divide-[#F3F4F6]">
+          {cases.map((c, i) => (
+            <CaseRow
+              key={c.case_id}
+              c={c}
+              rank={i + 1}
+              muted
+            />
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Column header
+// ---------------------------------------------------------------------------
+
+function ColumnHeader() {
+  return (
+    <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 px-4 py-2 bg-[#F9FAFB] border-b border-[#E5E7EB]">
+      <span className="text-xs text-[#6B7280] font-medium">Rank</span>
+      <span className="text-xs text-[#6B7280] font-medium">Case</span>
+      <span className="text-xs text-[#6B7280] font-medium">Why it needs a human</span>
+      <span className="text-xs text-[#6B7280] font-medium text-right">Amount</span>
+      <span className="text-xs text-[#6B7280] font-medium">Priority</span>
+      <span className="text-xs text-[#6B7280] font-medium">SLA</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Case row
+// ---------------------------------------------------------------------------
+
+function CaseRow({
+  c,
+  rank,
+  muted,
+}: {
+  c: ReviewCase;
+  rank?: number;
+  muted?: boolean;
+}) {
   const resolved = c.status === "RESOLVED";
+  const reason = c.escalation_reasons?.[0] ?? "Escalated for human review";
+
   return (
     <Link
       href={`/review/${c.case_id}`}
-      className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 hover:bg-gray-50"
+      className={`group relative block px-4 py-3 hover:bg-[#F9FAFB] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E84360]/40 ${
+        muted ? "opacity-60" : ""
+      }`}
     >
-      <div className="flex items-start gap-4 min-w-0">
-        {rank !== undefined && (
-          <span className="w-8 pt-0.5 text-sm font-medium text-gray-400 tabular-nums">#{rank}</span>
+      {/* Desktop grid layout */}
+      <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 items-center">
+        {rank !== undefined ? (
+          <span className="text-sm text-[#9CA3AF] tabular-nums">#{rank}</span>
+        ) : (
+          <span />
         )}
         <div className="min-w-0">
-          <p className="font-medium text-gray-900">
-            {c.case_id}{" "}
-            <span className="text-sm font-normal text-gray-500">{disputeTypeLabel(c.dispute_type)}</span>
-          </p>
-          <p className="text-sm text-gray-500 truncate max-w-xl">
-            {c.escalation_reasons?.[0] ?? "Escalated for human review"}
-          </p>
-          <p className="text-xs text-gray-400 mt-1 tabular-nums">
-            Value {c.value_source === "mock"
-              ? <span title="Amount not recorded">—</span>
-              : formatMoney(c.dispute_value)}
-            {resolved && c.resolved_by ? `, reviewed by ${c.resolved_by}` : ""}
-          </p>
+          <p className="text-sm font-medium text-[#1F2937] truncate">{c.case_id}</p>
+          <p className="text-xs text-[#6B7280] truncate">{disputeTypeLabel(c.dispute_type)}</p>
         </div>
+        <p
+          className="text-xs text-[#6B7280] truncate"
+          title={reason}
+        >
+          {reason}
+        </p>
+        <span className="text-sm text-[#1F2937] text-right tabular-nums">
+          {c.value_source === "mock" ? (
+            <span title="Amount not recorded">&mdash;</span>
+          ) : (
+            formatMoney(c.dispute_value)
+          )}
+        </span>
+        <div className="justify-self-start">
+          <PriorityBadge tier={c.priority_level} />
+        </div>
+        {resolved ? (
+          <span className="text-xs text-[#6B7280] truncate">
+            {c.resolved_by ? `Reviewed by ${c.resolved_by}` : "Reviewed"}
+          </span>
+        ) : (
+          <SlaBar
+            deadline={c.sla_deadline}
+            totalSeconds={c.sla_total_seconds}
+            resolved={resolved}
+          />
+        )}
       </div>
-      <div className="flex items-center gap-2">
-        <PriorityBadge tier={c.priority_level} />
-        <SlaBadge
-          deadline={c.sla_deadline}
-          totalSeconds={c.sla_total_seconds}
-          resolved={resolved}
-        />
+
+      {/* Mobile stacked layout */}
+      <div className="md:hidden space-y-2">
+        {/* Line 1: case + priority */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {rank !== undefined && (
+              <span className="text-sm text-[#9CA3AF] tabular-nums shrink-0">#{rank}</span>
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[#1F2937] truncate">{c.case_id}</p>
+              <p className="text-xs text-[#6B7280] truncate">{disputeTypeLabel(c.dispute_type)}</p>
+            </div>
+          </div>
+          <PriorityBadge tier={c.priority_level} />
+        </div>
+        {/* Line 2: reason + amount + SLA */}
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-[#6B7280] truncate flex-1" title={reason}>
+            {reason}
+          </p>
+          <span className="text-sm text-[#1F2937] tabular-nums shrink-0">
+            {c.value_source === "mock" ? (
+              <span title="Amount not recorded">&mdash;</span>
+            ) : (
+              formatMoney(c.dispute_value)
+            )}
+          </span>
+        </div>
+        {/* SLA bar */}
+        <div>
+          {resolved ? (
+            <span className="text-xs text-[#6B7280]">
+              {c.resolved_by ? `Reviewed by ${c.resolved_by}` : "Reviewed"}
+            </span>
+          ) : (
+            <SlaBar
+              deadline={c.sla_deadline}
+              totalSeconds={c.sla_total_seconds}
+              resolved={resolved}
+            />
+          )}
+        </div>
       </div>
     </Link>
   );
