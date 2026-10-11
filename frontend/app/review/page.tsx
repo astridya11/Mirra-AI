@@ -7,15 +7,27 @@ import PriorityBadge from "@/src/components/PriorityBadge";
 import SlaBar from "@/src/components/SlaBar";
 import { getNextCase, getQueue, resetDemo, type ReviewCase } from "@/src/lib/api";
 import { formatMoney, disputeTypeLabel } from "@/src/lib/reviewFormat";
+import { useAuth } from "@/src/context/AuthContext";
 
 const POLL_MS = 5000; // scores change as SLA time runs down, so the order refreshes live
 
 export default function ReviewQueuePage() {
   const router = useRouter();
+  const { user, isLoading: authLoading } = useAuth();
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [support, setSupport] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Redirect non-support users away before any review data is fetched.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (user.party !== "SUPPORT") {
+      router.replace("/help");
+    }
+  }, [user, authLoading, router]);
 
   const refresh = useCallback(async () => {
     try {
@@ -30,11 +42,18 @@ export default function ReviewQueuePage() {
     }
   }, []);
 
+  // Only fetch review data once the user is confirmed as SUPPORT.
+  const authed = !authLoading && user?.party === "SUPPORT";
+
   useEffect(() => {
+    if (!authed) return;
     refresh();
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, authed]);
+
+  // While auth is loading, render nothing to avoid a flash of content.
+  if (authLoading || !authed) return null;
 
   const open = cases.filter((c) => c.status === "OPEN");
   const fastTrack = open.filter((c) => c.priority_level === "URGENT");

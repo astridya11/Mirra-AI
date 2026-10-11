@@ -1,11 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import PriorityBadge from "@/src/components/PriorityBadge";
-import SlaBadge from "@/src/components/SlaBadge";
 import { getCompletedResult } from "@/src/lib/api";
 import type { ActionType, RecommendedAction, HumanReviewDecision } from "@/src/types";
 import {
@@ -15,7 +12,7 @@ import {
   submitHumanReview,
   type ReviewCase,
 } from "@/src/lib/api";
-import { formatMoney } from "@/src/lib/reviewFormat";
+import { describeAction, formatMoney } from "@/src/lib/reviewFormat";
 
 // Form state for RecommendedAction (numbers are kept as strings while typing)
 interface ActionForm {
@@ -69,15 +66,16 @@ const DECISIONS: {
 ];
 
 /**
- * Sidebar card for frontend/app/review/[caseId]/page.tsx.
- * Shows priority, SLA countdown and value, and opens a form to submit the
- * human review. After a successful review the reviewer lands on the next
- * highest-priority case.
+ * Decision rail for frontend/app/review/[caseId]/page.tsx.
+ * Shows the AI recommendation, amount at stake, queue score, and opens a form
+ * to submit the human review. After a successful review the reviewer lands on
+ * the next highest-priority case.
  */
 export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
   const router = useRouter();
   const [c, setC] = useState<ReviewCase | null>(null);
   const [open, setOpen] = useState(false);
+  const [recommendedAction, setRecommendedAction] = useState<Record<string, any> | null>(null);
 
   // form state
   const [decision, setDecision] = useState<HumanReviewDecision>("CONFIRMED_AUTO");
@@ -104,6 +102,27 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
     };
   }, [caseId]);
 
+  // Fetch getCompletedResult once on mount and reuse it to prefill the dialog.
+  useEffect(() => {
+    if (!caseId) return;
+    let alive = true;
+    getCompletedResult(caseId)
+      .then((result) => {
+        if (!alive) return;
+        const verdict = result?.judge_verdict;
+        const current =
+          (verdict?.recommended_action as Record<string, any> | undefined) ??
+          (verdict?.execution_payload as Record<string, any> | undefined);
+        if (current && typeof current === "object") {
+          setRecommendedAction(current);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
   // Close the dialog with Escape
   useEffect(() => {
     if (!open) return;
@@ -112,32 +131,27 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, submitting]);
 
-  const openDialog = async () => {
-    setDecision("CONFIRMED_AUTO");
+  const openDialog = (initialDecision: HumanReviewDecision) => {
+    setDecision(initialDecision);
     setReason("");
     setNotes("");
     setError(null);
-    setAction(EMPTY_ACTION);
-    setOpen(true);
-    // Best effort: prefill the editable action with what the Judge recommended.
-    try {
-      const result = await getCompletedResult(caseId);
-      const verdict = result?.judge_verdict;
-      const current = verdict?.recommended_action ?? verdict?.execution_payload as Record<string, any> | null;
-      if (current && typeof current === "object") {
-        setAction({
-          action_type: String(current.action_type ?? ""),
-          refund_amount: String(current.refund_amount ?? 0),
-          currency: String(current.currency ?? EMPTY_ACTION.currency),
-          cleaning_fee_amount:
-            current.cleaning_fee_amount != null ? String(current.cleaning_fee_amount) : "",
-          penalty_target: String(current.penalty_target ?? ""),
-          account_action: String(current.account_action ?? ""),
-        });
-      }
-    } catch {
-      /* keep empty form */
+    // Prefill the editable action with the cached recommendation.
+    const current = recommendedAction;
+    if (current && typeof current === "object") {
+      setAction({
+        action_type: String(current.action_type ?? ""),
+        refund_amount: String(current.refund_amount ?? 0),
+        currency: String(current.currency ?? EMPTY_ACTION.currency),
+        cleaning_fee_amount:
+          current.cleaning_fee_amount != null ? String(current.cleaning_fee_amount) : "",
+        penalty_target: String(current.penalty_target ?? ""),
+        account_action: String(current.account_action ?? ""),
+      });
+    } else {
+      setAction(EMPTY_ACTION);
     }
+    setOpen(true);
   };
 
   const submit = async () => {
@@ -210,46 +224,90 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
   const resolved = c.status === "RESOLVED";
   const needsReason = DECISIONS.find((d) => d.value === decision)!.needsReason;
 
+  // Primary button text matches the decision.
+  const primaryButtonText = (() => {
+    switch (decision) {
+      case "CONFIRMED_AUTO":
+        return "Confirm AI ruling";
+      case "MODIFIED":
+        return "Save modified ruling";
+      case "OVERRIDDEN":
+        return "Override ruling";
+      case "REJECTED_AUTO":
+        return "Reject AI ruling";
+      default:
+        return "Submit review";
+    }
+  })();
+
   return (
     <>
-      <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <PriorityBadge tier={c.priority_level} />
-          <SlaBadge
-            deadline={c.sla_deadline}
-            totalSeconds={c.sla_total_seconds}
-            resolved={resolved}
-          />
+      <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 space-y-4">
+        {/* AI recommendation */}
+        <div className="space-y-0.5">
+          <p className="text-[12px] text-[#6B7280]">AI recommends</p>
+          <p className="text-[16px] font-semibold text-[#1F2937] leading-snug">
+            {describeAction(recommendedAction)}
+          </p>
         </div>
 
-        <dl className="text-sm space-y-1">
+        {/* Small definition list */}
+        <dl className="text-[14px] space-y-1">
           <div className="flex justify-between">
-            <dt className="text-gray-500">Dispute value</dt>
-            <dd className="font-medium text-gray-900 tabular-nums">
-              {c.value_source === "mock"
-                ? <span title="Amount not recorded">—</span>
-                : formatMoney(c.dispute_value)}
+            <dt className="text-[#6B7280]">Amount at stake</dt>
+            <dd className="font-medium text-[#1F2937] tabular-nums">
+              {c.value_source === "mock" ? (
+                <span title="Amount not recorded">&mdash;</span>
+              ) : (
+                formatMoney(c.dispute_value)
+              )}
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500">Queue score</dt>
-            <dd className="font-medium text-gray-900 tabular-nums">{c.priority_score}</dd>
+            <dt className="text-[#6B7280]">Queue score</dt>
+            <dd className="font-medium text-[#1F2937] tabular-nums">{c.priority_score}</dd>
           </div>
         </dl>
 
         {resolved ? (
-          <p className="text-sm text-gray-500">Reviewed by {c.resolved_by ?? "support"}.</p>
+          <div className="text-[14px] text-[#6B7280] space-y-0.5">
+            <p>Reviewed by {c.resolved_by ?? "support"}</p>
+            {c.resolved_at && (
+              <p className="text-[12px] text-[#9CA3AF] tabular-nums">
+                {new Date(c.resolved_at).toLocaleString()}
+              </p>
+            )}
+          </div>
         ) : (
-          <button
-            onClick={openDialog}
-            className="w-full rounded-lg bg-[#E84360] px-3 py-2 text-sm font-medium text-white hover:opacity-90"
-          >
-            Submit human review
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => openDialog("CONFIRMED_AUTO")}
+              className="w-full rounded-lg bg-[#E84360] px-3 py-2 text-[14px] font-medium text-white hover:opacity-90"
+            >
+              Confirm AI ruling
+            </button>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => openDialog("MODIFIED")}
+                className="rounded-lg border border-[#E5E7EB] px-2 py-2 text-[12px] font-medium text-[#6B7280] hover:bg-gray-100"
+              >
+                Modify
+              </button>
+              <button
+                onClick={() => openDialog("OVERRIDDEN")}
+                className="rounded-lg border border-[#E5E7EB] px-2 py-2 text-[12px] font-medium text-[#6B7280] hover:bg-gray-100"
+              >
+                Override
+              </button>
+              <button
+                onClick={() => openDialog("REJECTED_AUTO")}
+                className="rounded-lg border border-[#E5E7EB] px-2 py-2 text-[12px] font-medium text-[#6B7280] hover:bg-gray-100"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
         )}
-        <Link href="/review" className="block text-center text-sm text-gray-500 hover:text-gray-800">
-          Back to queue
-        </Link>
       </div>
 
       {open && typeof document !== "undefined" && createPortal(
@@ -262,24 +320,26 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
             aria-modal="true"
             aria-labelledby="review-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-6 space-y-5"
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-6 space-y-5"
           >
             <div>
-              <h2 id="review-title" className="text-lg font-bold text-gray-900">
-                Human review for {caseId}
+              <h2 id="review-title" className="text-[20px] font-semibold text-[#1F2937]">
+                Review {caseId}
               </h2>
-              <p className="text-sm text-gray-500">Reviewing as {c.support?.name ?? "support"}</p>
+              <p className="text-[14px] text-[#6B7280]">
+                Reviewing as {c.support?.name ?? "support"}
+              </p>
             </div>
 
             <fieldset className="space-y-2">
-              <legend className="text-sm font-medium text-gray-900 mb-2">Your decision</legend>
+              <legend className="text-[14px] font-medium text-[#1F2937] mb-2">Your decision</legend>
               {DECISIONS.map((d) => (
                 <label
                   key={d.value}
                   className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${
                     decision === d.value
-                      ? "border-[#E84360]/50 bg-[#E84360]/5"
-                      : "border-gray-200 hover:bg-gray-50"
+                      ? "border-[#E84360] bg-[#E84360]/5"
+                      : "border-[#E5E7EB] hover:bg-gray-50"
                   }`}
                 >
                   <input
@@ -294,8 +354,8 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
                     className="mt-1 accent-[#E84360]"
                   />
                   <span>
-                    <span className="block text-sm font-medium text-gray-900">{d.title}</span>
-                    <span className="block text-sm text-gray-500">{d.desc}</span>
+                    <span className="block text-[14px] font-medium text-[#1F2937]">{d.title}</span>
+                    <span className="block text-[14px] text-[#6B7280]">{d.desc}</span>
                   </span>
                 </label>
               ))}
@@ -303,7 +363,7 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
 
             {(decision === "MODIFIED" || decision === "OVERRIDDEN") && (
               <fieldset className="space-y-3">
-                <legend className="text-sm font-medium text-gray-900 mb-2">Modified action</legend>
+                <legend className="text-[14px] font-medium text-[#1F2937] mb-2">Modified action</legend>
                 <div className="grid grid-cols-2 gap-3">
                   <ActionField id="action-type" label="Action type" value={action.action_type}
                     onChange={(v) => setActionField("action_type", v)} />
@@ -323,7 +383,7 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
 
             {needsReason && (
               <div className="space-y-1">
-                <label htmlFor="reason" className="text-sm font-medium text-gray-900">
+                <label htmlFor="reason" className="text-[14px] font-medium text-[#1F2937]">
                   Reason (required)
                 </label>
                 <textarea
@@ -332,13 +392,13 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
                   onChange={(e) => setReason(e.target.value)}
                   rows={3}
                   placeholder="Why are you changing the AI ruling?"
-                  className="w-full rounded-lg border border-gray-300 p-3 text-sm text-gray-900 focus:border-[#E84360] focus:outline-none"
+                  className="w-full rounded-lg border border-[#E5E7EB] p-3 text-[14px] text-[#1F2937] focus:border-[#E84360] focus:outline-none"
                 />
               </div>
             )}
 
             <div className="space-y-1">
-              <label htmlFor="notes" className="text-sm font-medium text-gray-900">
+              <label htmlFor="notes" className="text-[14px] font-medium text-[#1F2937]">
                 Notes (optional)
               </label>
               <textarea
@@ -346,12 +406,12 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
-                className="w-full rounded-lg border border-gray-300 p-3 text-sm text-gray-900 focus:border-[#E84360] focus:outline-none"
+                className="w-full rounded-lg border border-[#E5E7EB] p-3 text-[14px] text-[#1F2937] focus:border-[#E84360] focus:outline-none"
               />
             </div>
 
             {error && (
-              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-[14px] text-red-700">
                 {error}
               </p>
             )}
@@ -360,16 +420,16 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
               <button
                 onClick={() => setOpen(false)}
                 disabled={submitting}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+                className="rounded-lg border border-[#E5E7EB] px-4 py-2 text-[14px] text-[#6B7280] hover:bg-gray-100 disabled:opacity-40"
               >
                 Cancel
               </button>
               <button
                 onClick={submit}
                 disabled={submitting}
-                className="rounded-lg bg-[#E84360] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                className="rounded-lg bg-[#E84360] px-4 py-2 text-[14px] font-medium text-white hover:opacity-90 disabled:opacity-40"
               >
-                {submitting ? "Submitting..." : "Submit review"}
+                {submitting ? "Submitting\u2026" : primaryButtonText}
               </button>
             </div>
           </div>
@@ -395,7 +455,7 @@ function ActionField({
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={id} className="text-sm text-gray-600">
+      <label htmlFor={id} className="text-[14px] text-[#6B7280]">
         {label}
       </label>
       <input
@@ -405,7 +465,7 @@ function ActionField({
         step={type === "number" ? "0.01" : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-[#E84360] focus:outline-none"
+        className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[14px] text-[#1F2937] focus:border-[#E84360] focus:outline-none"
       />
     </div>
   );

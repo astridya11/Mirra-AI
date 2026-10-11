@@ -13,7 +13,7 @@ export interface SlaState {
   remainingSeconds: number;
   /** 0–1 fraction of total SLA time still remaining (clamped). */
   fractionLeft: number;
-  /** Human label, e.g. "3:12", "+0:45 overdue", "Reviewed". */
+  /** Human label, e.g. "3:12", "+0:45 overdue", "2 h 26 min left", "Reviewed". */
   label: string;
 }
 
@@ -21,20 +21,46 @@ export interface SlaState {
 const AT_RISK_FRACTION = 0.3;
 
 /**
- * Format seconds as m:ss. Works with negative values (absolute value used).
+ * Format seconds as m:ss (under 60 minutes) or "X h Y min" (60 minutes or more).
+ * Works with negative values (absolute value used).
  */
 function formatClock(seconds: number): string {
   const abs = Math.abs(Math.floor(seconds));
+  if (abs >= 3600) {
+    const h = Math.floor(abs / 3600);
+    const m = Math.floor((abs % 3600) / 60);
+    return `${h} h ${m} min`;
+  }
   const m = Math.floor(abs / 60);
   const s = abs % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 /**
+ * Build the human-readable SLA label.
+ *
+ * - remaining >= 0, |remaining| >= 60 min: "X h Y min left"
+ * - remaining >= 0, |remaining| < 60 min: "m:ss" (e.g. "3:12")
+ * - remaining < 0, |remaining| >= 60 min: "+X h Y min overdue"
+ * - remaining < 0, |remaining| < 60 min: "+m:ss overdue"
+ */
+function formatSlaLabel(remaining: number): string {
+  const abs = Math.abs(Math.floor(remaining));
+  if (abs >= 3600) {
+    return remaining >= 0
+      ? `${formatClock(remaining)} left`
+      : `+${formatClock(remaining)} overdue`;
+  }
+  return remaining >= 0
+    ? formatClock(remaining)
+    : `+${formatClock(remaining)} overdue`;
+}
+
+/**
  * Compute SLA state from a deadline ISO string and total SLA seconds.
  *
  * - `resolved` → status RESOLVED, label "Reviewed".
- * - `remaining <= 0` → status BREACHED, label "+m:ss overdue".
+ * - `remaining <= 0` → status BREACHED, label "+m:ss overdue" or "+X h Y min overdue".
  * - `remaining / total <= 0.3` → status AT_RISK.
  * - otherwise → ON_TRACK.
  *
@@ -68,10 +94,7 @@ export function slaState(
     status = "ON_TRACK";
   }
 
-  const label =
-    remaining >= 0
-      ? formatClock(remaining)
-      : `+${formatClock(remaining)} overdue`;
+  const label = formatSlaLabel(remaining);
 
   return { status, remainingSeconds: remaining, fractionLeft, label };
 }
