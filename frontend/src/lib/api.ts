@@ -43,15 +43,88 @@ export interface DisputeResponse {
   };
 }
 
+export type PriorityTier = "URGENT" | "HIGH_PRIORITY" | "STANDARD";
+export type SlaStatus = "ON_TRACK" | "AT_RISK" | "BREACHED" | "RESOLVED";
+ 
+export interface ReviewCase {
+  case_id: string;
+  priority_level: PriorityTier;
+  dispute_type: string;
+  confidence_score: number;
+  escalation_reasons: string[];
+  trip_id: string;
+  rider_id: string;
+  driver_id: string;
+  filed_by: string;
+  escalated_at: string;
+  dispute_value: number;
+  value_source: string; // field name it came from, or "mock"
+  priority_score: number;
+  status: "OPEN" | "RESOLVED";
+  sla_deadline: string;
+  sla_total_seconds: number;
+  sla_status: SlaStatus;
+  seconds_remaining: number;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  support?: { id: string; name: string }; // mock reviewer, only on GET /cases/{id}
+}
+ 
+export interface QueueResponse {
+  server_time: string;
+  support: { id: string; name: string };
+  cases: ReviewCase[];
+}
+
 // ---------------------------------------------------------------------------
 // REST endpoints
 // ---------------------------------------------------------------------------
 
-export async function listPast30DaysTrips(party_id: string): Promise<Past30DaysTripListItem> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/30-days-trips/${party_id}`);
-  if (!res.ok) throw new Error(`Failed to list past 30 days trips: ${res.status}`);
+/* SLA & Routing Manager */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store", ...init });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
 }
+ 
+export const getQueue = () => request<QueueResponse>("/api/review/queue");
+export const getNextCase = () => request<{ case_id: string | null }>("/api/review/next");
+export const getCase = (id: string) => request<ReviewCase>(`/api/review/cases/${id}`);
+export const resolveCase = (id: string) =>
+  request<{ case: ReviewCase; next_case_id: string | null }>(
+    `/api/review/cases/${id}/resolve`,
+    { method: "POST" }
+  );
+export const resetDemo = () =>
+  request<{ ok: boolean }>("/api/review/demo/reset", { method: "POST" });
+ 
+// ---- Human review (existing endpoint) ----
+ 
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+ 
+export async function submitHumanReview(caseId: string, payload: HumanReviewRequest) {
+  const res = await fetch(`${API_BASE_URL}/api/disputes/${caseId}/human-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const d = body?.detail;
+    throw new ApiError(
+      res.status,
+      typeof d === "string" ? d : JSON.stringify(d ?? body ?? res.statusText)
+    );
+  }
+  return body;
+}
+ 
 
 /**
  * Creates a new dispute case on the backend.
@@ -171,23 +244,6 @@ export async function getImageCheck(id: string): Promise<ImageCheckResponse | nu
   } catch {
     return null;
   }
-}
-
-export async function submitHumanReview(
-  id: string,
-  review: HumanReviewRequest
-): Promise<CaseResult> {
-  if (USE_MOCK) {
-    const { mockSubmitHumanReview } = await import("@/src/mock/cases");
-    return mockSubmitHumanReview(id, review);
-  }
-  const res = await fetch(`${API_BASE_URL}/api/disputes/${id}/human-review`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(review),
-  });
-  if (!res.ok) throw new Error(`Failed to submit human review: ${res.status}`);
-  return res.json();
 }
 
 export async function submitPartyDecision(

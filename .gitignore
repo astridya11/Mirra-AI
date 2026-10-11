@@ -160,3 +160,6 @@ backend/disputes/known_receipt_hashes.runtime.json
 
 # escalated files
 backend/escalated
+
+# SLA routing files
+routing_state.json

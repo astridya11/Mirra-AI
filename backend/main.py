@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from backend.routing.sla_router import router as review_router
 
 from backend.app.db.auth import user_repo
 from backend.app.api.routes import auth, cases, evidence, verification
@@ -101,6 +102,7 @@ app.include_router(auth.router)
 app.include_router(cases.router, prefix=settings.api_v1_prefix)
 app.include_router(evidence.router, prefix=settings.api_v1_prefix)
 app.include_router(verification.router, prefix=settings.api_v1_prefix)
+app.include_router(review_router)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
