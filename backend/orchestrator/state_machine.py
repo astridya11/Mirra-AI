@@ -367,20 +367,30 @@ def _compute_dispute_value(
     recommended_action: Dict[str, Any],
     dispute_claim: Dict[str, Any],
     data_sources: Dict[str, Any],
+    round_1_statements: Dict[str, Any] | None = None,
 ) -> Optional[float]:
     """Return the first positive monetary value at stake, or None.
 
-    Priority: cleaning_fee_amount → refund_amount → disputed_amount in
-    dispute_claim → trip total_fare.
+    Priority: cleaning_fee_amount → refund_amount → the claimant's
+    requested_amount from the Round 1 statements (largest positive one) →
+    trip total_fare.
     """
     for key in ("cleaning_fee_amount", "refund_amount"):
         v = recommended_action.get(key)
         if isinstance(v, (int, float)) and v > 0:
             return float(v)
 
-    claimed = dispute_claim.get("disputed_amount") or dispute_claim.get("amount")
-    if isinstance(claimed, (int, float)) and claimed > 0:
-        return float(claimed)
+    # Claimant's requested_amount from Round 1 statements — pick the largest
+    # positive value across all parties (rider, driver, …).
+    if round_1_statements:
+        amounts: List[float] = []
+        for stmt in round_1_statements.values():
+            if isinstance(stmt, dict):
+                amt = stmt.get("requested_amount")
+                if isinstance(amt, (int, float)) and amt > 0:
+                    amounts.append(float(amt))
+        if amounts:
+            return max(amounts)
 
     payment = (data_sources.get("payment_fare_data") or {})
     fare = (payment.get("original_fare") or {})
@@ -1124,7 +1134,8 @@ class PipelineEngine:
         if is_escalated:
             case_id = self.ctx.dispute_claim.get("case_id") or self.ctx.case_metadata.get("case_id")
             dispute_value = _compute_dispute_value(
-                recommended_action, self.ctx.dispute_claim, self.ctx.data_sources
+                recommended_action, self.ctx.dispute_claim, self.ctx.data_sources,
+                self.ctx.round_1_statements,
             )
             _write_escalated_case_file(
                 case_id=case_id,
@@ -1470,8 +1481,9 @@ async def apply_party_decision(
         recommended_action = (judge_verdict.get("recommended_action") or {})
         dispute_claim = case_data.get("dispute_claim") or {}
         data_sources = case_data.get("data_sources") or {}
+        round_1_statements = case_data.get("round_1_statements") or {}
         dispute_value = _compute_dispute_value(
-            recommended_action, dispute_claim, data_sources
+            recommended_action, dispute_claim, data_sources, round_1_statements
         )
         confidence = judge_verdict.get("confidence_score", 0.0)
         _write_escalated_case_file(

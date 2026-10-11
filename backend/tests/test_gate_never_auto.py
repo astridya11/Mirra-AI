@@ -35,6 +35,7 @@ def _make_engine(
     case_metadata: Optional[Dict[str, Any]] = None,
     bonus_modules: Optional[Dict[str, Any]] = None,
     data_sources: Optional[Dict[str, Any]] = None,
+    round_1_statements: Optional[Dict[str, Any]] = None,
 ) -> PipelineEngine:
     """Build a PipelineEngine with a pre-populated CaseContext."""
     engine = PipelineEngine(case_id)
@@ -60,6 +61,7 @@ def _make_engine(
     engine.ctx = CaseContext(case_id, raw_case)
     engine.ctx.data_sources = data_sources or {}
     engine.ctx.bonus_modules = bonus_modules or {"escalation_protocol": {}}
+    engine.ctx.round_1_statements = round_1_statements or {}
     engine.ctx.judge_verdict = verdict or {
         "ruling_type": "PARTIAL_REFUND",
         "confidence_score": 0.90,
@@ -250,6 +252,53 @@ def test_escalated_cleaning_fee_writes_dispute_value(tmp_path):
     with open(escalated_file, "r", encoding="utf-8") as f:
         data = json.load(f)
     assert data["dispute_value"] == 30.0
+
+
+def test_escalated_rejected_cleaning_fee_uses_requested_amount(tmp_path):
+    """Rejected cleaning-fee claim: action has no positive amount, so
+    dispute_value falls through to the claimant's requested_amount."""
+    case_id = "TEST-DV-002"
+    engine = _make_engine(
+        case_id=case_id,
+        verdict={
+            "ruling_type": "REJECTED",
+            "confidence_score": 0.80,
+            "recommended_action": {
+                "action_type": "NO_REFUND",
+                "refund_amount": 0,
+                "cleaning_fee_amount": 0,
+                "account_action": "NONE",
+            },
+        },
+        bonus_modules={
+            "escalation_protocol": {
+                "missing_crucial_evidence": True,
+                "safety_threat_detected": False,
+                "fraud_risk_level": "LOW",
+            }
+        },
+        round_1_statements={
+            "rider_statement": {
+                "party": "RIDER",
+                "requested_outcome": "CLEANING_FEE_CHARGE",
+                "requested_amount": 60.0,
+            },
+            "driver_statement": {
+                "party": "DRIVER",
+                "requested_outcome": "NO_PENALTY",
+                "requested_amount": 0,
+            },
+        },
+    )
+    with _patch_escalated_dir(tmp_path):
+        result = engine._evaluate_execution_gate()
+
+    assert result["route"] == "ESCALATED_HUMAN_REVIEW"
+    escalated_file = os.path.join(str(tmp_path), f"{case_id}.json")
+    assert os.path.exists(escalated_file)
+    with open(escalated_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["dispute_value"] == 60.0
 
 
 # ---------------------------------------------------------------------------
