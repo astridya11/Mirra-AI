@@ -6,7 +6,7 @@ import { AgentAvatar, AppShell, Card, PresenterPanel } from "@/src/components/sh
 import { useI18n } from "@/src/i18n";
 import type { MessageKey } from "@/src/i18n/en";
 
-const CAPABILITIES: MessageKey[] = ["how.cap.frozen", "how.cap.gps", "how.cap.image", "how.cap.ocr", "how.cap.fraud", "how.cap.cross", "how.cap.policy", "how.cap.human"];
+const CAPABILITIES: MessageKey[] = ["how.cap.frozen", "how.cap.gps", "how.cap.image", "how.cap.ocr", "how.cap.fraud", "how.cap.cross", "how.cap.policy", "how.cap.human", "how.cap.learning"];
 
 const GUARDRAILS: [string, MessageKey][] = [
   ["🔒", "how.guard.private"],
@@ -16,7 +16,7 @@ const GUARDRAILS: [string, MessageKey][] = [
   ["👤", "how.guard.high"],
 ];
 
-const FLOW: MessageKey[] = ["how.flow.private", "how.flow.formal", "how.flow.final", "how.flow.freeze", "how.flow.advocates", "how.flow.prosecutor", "how.flow.policy", "how.flow.judge", "how.flow.router"];
+const FLOW: MessageKey[] = ["how.flow.private", "how.flow.formal", "how.flow.final", "how.flow.freeze", "how.flow.collect", "how.flow.advocates", "how.flow.prosecutor", "how.flow.policy", "how.flow.judge", "how.flow.router"];
 
 export default function MirraPage() {
   const { t } = useI18n();
@@ -84,6 +84,8 @@ export default function MirraPage() {
                 <span className="text-sm px-3 py-2 rounded-xl bg-green-50 text-ok font-semibold">{t("how.automated")}</span>
                 <span className="text-muted text-sm">{t("how.or")}</span>
                 <span className="text-sm px-3 py-2 rounded-xl bg-amber-50 text-warn font-semibold">{t("how.humanReview")}</span>
+                <span className="text-mirra">→</span>
+                <span className="text-sm px-3 py-2 rounded-xl bg-emerald-50 text-ok font-semibold">{t("how.flow.learn")}</span>
               </div>
               <p className="text-xs text-muted mt-4">
                 {t("how.stateMachine")}

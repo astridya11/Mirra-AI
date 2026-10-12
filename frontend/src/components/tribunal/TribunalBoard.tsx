@@ -8,6 +8,7 @@ import type { MessageKey } from "@/src/i18n/en";
 import { RawText } from "@/src/i18n/RawText";
 
 const SPEAKER: Record<AgentKey, string> = {
+  collector: "EVIDENCE_COLLECTOR",
   rider: "RIDER_ADVOCATE",
   driver: "DRIVER_ADVOCATE",
   prosecutor: "PROSECUTOR",

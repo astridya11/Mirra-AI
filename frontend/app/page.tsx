@@ -42,6 +42,16 @@ export default function Home() {
               <Cta href="/mirra" title={t("home.cta.how")} sub={t("home.cta.howSub")} />
               <Cta href="/demo" title={t("home.cta.demo")} sub={t("home.cta.demoSub")} primary />
             </div>
+            {/* For the team decision: the teammate's original app (origin/main, unmerged) runs separately. */}
+            <a
+              href={TEAMMATE_APP_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-dashed border-line bg-white px-4 py-2 text-xs font-semibold text-body hover:border-mirra/50 hover:text-mirra"
+            >
+              <span className="h-2 w-2 rounded-full bg-mirra" aria-hidden />
+              {t("home.teammateVersion")} ↗
+            </a>
           </div>
           <div className="relative hidden lg:flex justify-center">
             <Phone>
@@ -80,6 +90,9 @@ export default function Home() {
     </AppShell>
   );
 }
+
+/** Teammate's original (unmerged) app, served separately; override with NEXT_PUBLIC_TEAMMATE_APP_URL. */
+const TEAMMATE_APP_URL = process.env.NEXT_PUBLIC_TEAMMATE_APP_URL || "http://localhost:3001";
 
 function Cta({ href, title, sub, primary = false }: { href: string; title: string; sub: string; primary?: boolean }) {
   return (

@@ -17,16 +17,17 @@ import { enumLabel, overlay, tEn, translator, type Locale, type Translator } fro
 import type { MessageKey } from "@/src/i18n/en";
 import { TRIBUNAL_ZH } from "@/src/i18n/content.zh-CN";
 import { FIXTURE_TEXT_ZH } from "@/src/i18n/fixtures.zh-CN";
-import { mockCompletedResults } from "@/src/mock/cases";
-import type { CaseResult } from "@/src/types";
+import { mockCompletedResults, mockRawCases } from "@/src/mock/cases";
+import type { CaseResult, DataSources } from "@/src/types";
 import type { AgentKey } from "./scenarios";
 import type { Claim, Party } from "./session";
 
-export type Step = "rider" | "driver" | "audit" | "cross" | "final" | "policy" | "judge" | "router";
+export type Step = "collect" | "rider" | "driver" | "audit" | "cross" | "final" | "policy" | "judge" | "router";
 export type Route = "FULLY_AUTOMATED" | "ESCALATED_HUMAN_REVIEW";
 export type EvState = "VERIFIED" | "DISPUTED" | "MISSING" | "CONTRADICTED";
 
 export const STEPS: { key: Step; name: string; agent: AgentKey }[] = [
+  { key: "collect", name: "Evidence Collection", agent: "collector" },
   { key: "rider", name: "Rider Advocate", agent: "rider" },
   { key: "driver", name: "Driver Advocate", agent: "driver" },
   { key: "audit", name: "Initial Prosecutor", agent: "prosecutor" },
@@ -52,7 +53,7 @@ export interface Fact {
 export interface TEvent {
   step: Step;
   speaker: AgentKey;
-  kind: "STATEMENT" | "AUDIT" | "QUESTION" | "RESPONSE" | "FINDING" | "POLICY" | "RULING" | "ROUTE";
+  kind: "COLLECTION" | "STATEMENT" | "AUDIT" | "QUESTION" | "RESPONSE" | "FINDING" | "POLICY" | "RULING" | "ROUTE";
   text: string;
   note?: string;
   /** Round-2 response: recorded in session.claims, never as evidence. */
@@ -561,13 +562,47 @@ function fixtures(locale: Locale): Record<string, TribunalCase> {
   const t = translator(locale);
   const zh = (tc: TribunalCase, id: string) => (locale === "zh-CN" ? translateFixture(overlay(tc, TRIBUNAL_ZH[id])) : tc);
   const built = {
-    "DISP-001": zh(disp001(t), "DISP-001"),
-    "DISP-002": zh(disp002(t), "DISP-002"),
-    "DISP-004": zh(DISP_004, "DISP-004"),
-    DEMO3_MISSING: zh(DEMO3_MISSING, "DEMO3_MISSING"),
+    "DISP-001": withCollection(zh(disp001(t), "DISP-001"), mockCompletedResults["DISP-001"].data_sources, {}, t),
+    "DISP-002": withCollection(zh(disp002(t), "DISP-002"), mockCompletedResults["DISP-002"].data_sources, {}, t),
+    "DISP-004": withCollection(zh(DISP_004, "DISP-004"), mockRawCases["DISP-003"].data_sources, { photos: 1, receipts: 1 }, t),
+    DEMO3_MISSING: withCollection(zh(DEMO3_MISSING, "DEMO3_MISSING"), mockRawCases["DISP-003"].data_sources, {}, t),
   };
   cache.set(locale, built);
   return built;
+}
+
+/**
+ * Evidence Collection Agent: what the pipeline gathered and indexed (backend shared/evidence_index.py)
+ * before the advocates run. Deterministic and read-only: it counts the case's data sources.
+ */
+export function collectionEvent(ds: Partial<DataSources> | undefined, extra: { photos?: number; receipts?: number }, t: Translator): TEvent | null {
+  if (!ds) return null;
+  const gps = (ds.gps_telemetry?.actual_route?.length ?? 0) + (ds.gps_telemetry?.optimal_route?.length ?? 0);
+  const counts: [MessageKey, number][] = [
+    ["collect.src.gps", gps],
+    ["collect.src.chat", ds.chat_communication?.transcript?.length ?? 0],
+    ["collect.src.events", ds.app_events?.length ?? 0],
+    ["collect.src.trip", ds.trip_data ? 1 : 0],
+    ["collect.src.payment", ds.payment_fare_data ? 1 : 0],
+    ["collect.src.profiles", ds.historical_profiles?.length ?? 0],
+    ["collect.src.photos", extra.photos ?? 0],
+    ["collect.src.receipts", extra.receipts ?? 0],
+  ];
+  const present = counts.filter(([, n]) => n > 0);
+  if (!present.length) return null;
+  const n = present.reduce((sum, [, c]) => sum + c, 0);
+  return {
+    step: "collect",
+    speaker: "collector",
+    kind: "COLLECTION",
+    text: t("collect.text", { n, s: present.length }),
+    note: t("collect.note", { list: present.map(([k, c]) => `${t(k)} ${c}`).join(" · ") }),
+  };
+}
+
+export function withCollection(tc: TribunalCase, ds: Partial<DataSources> | undefined, extra: { photos?: number; receipts?: number }, t: Translator): TribunalCase {
+  const ev = collectionEvent(ds, extra, t);
+  return ev ? { ...tc, events: [ev, ...tc.events] } : tc;
 }
 
 /** Localized step name (Rider Advocate, Initial Prosecutor, …). */

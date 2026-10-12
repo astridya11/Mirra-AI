@@ -7,8 +7,6 @@ import PriorityBadge from "@/src/components/PriorityBadge";
 import SlaBar from "@/src/components/SlaBar";
 import { getNextCase, getQueue, resetDemo, type ReviewCase } from "@/src/lib/api";
 import { formatMoney, disputeTypeLabel } from "@/src/lib/reviewFormat";
-import { useAuth } from "@/src/context/AuthContext";
-import { DesignSwitch } from "@/src/components/review/DesignSwitch";
 import { reasonLabel } from "@/src/components/review/reviewModel";
 import { enumLabel, useI18n } from "@/src/i18n";
 import { LanguageSwitch } from "@/src/i18n/LanguageSwitch";
@@ -18,22 +16,11 @@ const POLL_MS = 5000; // scores change as SLA time runs down, so the order refre
 
 export default function ReviewQueuePage() {
   const router = useRouter();
-  const { user, isLoading: authLoading } = useAuth();
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [support, setSupport] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { t } = useI18n();
-
-  // Redirect non-support users away before any review data is fetched.
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      router.replace("/login");
-    } else if (user.party !== "SUPPORT") {
-      router.replace("/help");
-    }
-  }, [user, authLoading, router]);
 
   const refresh = useCallback(async () => {
     try {
@@ -48,8 +35,8 @@ export default function ReviewQueuePage() {
     }
   }, []);
 
-  // Only fetch review data once the user is confirmed as SUPPORT.
-  const authed = !authLoading && user?.party === "SUPPORT";
+  // Demo build: Human Support pages open directly (no support login required).
+  const authed = true;
 
   useEffect(() => {
     if (!authed) return;
@@ -57,9 +44,6 @@ export default function ReviewQueuePage() {
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
   }, [refresh, authed]);
-
-  // While auth is loading, render nothing to avoid a flash of content.
-  if (authLoading || !authed) return null;
 
   const open = cases.filter((c) => c.status === "OPEN");
   const fastTrack = open.filter((c) => c.priority_level === "URGENT");
@@ -118,7 +102,7 @@ export default function ReviewQueuePage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-6 pt-6 pb-24 space-y-6">
         {/* Error */}
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -177,7 +161,6 @@ export default function ReviewQueuePage() {
           </>
         )}
       </main>
-      <DesignSwitch to="team" />
     </div>
   );
 }
@@ -293,11 +276,11 @@ function ReviewedSection({ cases }: { cases: ReviewCase[] }) {
 function ColumnHeader() {
   const { t } = useI18n();
   return (
-    <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 px-4 py-2 bg-[#F9FAFB] border-b border-[#E5E7EB]">
+    <div className="hidden md:grid grid-cols-[2.5rem_minmax(7rem,1fr)_minmax(0,1.6fr)_5.5rem_7.5rem_15rem] gap-3 px-4 py-2 bg-[#F9FAFB] border-b border-[#E5E7EB]">
       <span className="text-xs text-[#6B7280] font-medium">{t("tq.col.rank")}</span>
       <span className="text-xs text-[#6B7280] font-medium">{t("tq.col.case")}</span>
       <span className="text-xs text-[#6B7280] font-medium">{t("tq.col.why")}</span>
-      <span className="text-xs text-[#6B7280] font-medium text-right">{t("tq.col.amount")}</span>
+      <span className="text-xs text-[#6B7280] font-medium text-right pr-3">{t("tq.col.amount")}</span>
       <span className="text-xs text-[#6B7280] font-medium">{t("tq.col.priority")}</span>
       <span className="text-xs text-[#6B7280] font-medium">{t("tq.col.sla")}</span>
     </div>
@@ -333,7 +316,7 @@ function CaseRow({
       }`}
     >
       {/* Desktop grid layout */}
-      <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 items-center">
+      <div className="hidden md:grid grid-cols-[2.5rem_minmax(7rem,1fr)_minmax(0,1.6fr)_5.5rem_7.5rem_15rem] gap-3 items-center">
         {rank !== undefined ? (
           <span className="text-sm text-[#9CA3AF] tabular-nums">#{rank}</span>
         ) : (
@@ -349,7 +332,7 @@ function CaseRow({
         >
           {shownReason}
         </p>
-        <span className="text-sm text-[#1F2937] text-right tabular-nums">
+        <span className="text-sm text-[#1F2937] text-right tabular-nums pr-3">
           {c.value_source === "mock" ? (
             <span title={t("rail.amountNotRecorded")}>&mdash;</span>
           ) : (

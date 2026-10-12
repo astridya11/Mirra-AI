@@ -17,14 +17,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getCase, getCompletedResult } from "@/src/lib/api";
 import type { ReviewCase } from "@/src/lib/api";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
 import PriorityBadge from "@/src/components/PriorityBadge";
 import SlaBar from "@/src/components/SlaBar";
 import { ConfidenceMeter } from "@/src/components/ConfidenceMeter";
-import { useAuth } from "@/src/context/AuthContext";
 import { ImageEvidence } from "@/src/components/review/ImageEvidence";
-import { DesignSwitch } from "@/src/components/review/DesignSwitch";
 import { confidenceLabel, judgeConfidence, reasonLabel } from "@/src/components/review/reviewModel";
 import { describeActionI18n } from "@/src/components/review/reviewModel";
 import { enumLabel, useI18n, type Translator } from "@/src/i18n";
@@ -907,6 +905,77 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   );
 };
 
+// ==========================================
+// LEARNING FEEDBACK LOOP (human correction -> policy knowledge base)
+// ==========================================
+
+/**
+ * Shows the PolicyKnowledgeBaseUpdate the backend records when a human reviewer's decision differs
+ * from the Judge (MODIFIED / OVERRIDDEN / REJECTED_AUTO). Per POL-8, MODIFIED/OVERRIDDEN precedents are
+ * approved and citable by future rulings; a REJECTED_AUTO precedent is stored for audit only.
+ */
+const LearningPanel: React.FC<{ update: unknown; status?: string }> = ({ update, status }) => {
+  const { t, locale, ruling } = useLabels();
+  const u = asRecord(update);
+  if (!u) {
+    if (status !== "HUMAN_CONFIRMED") return null;
+    return (
+      <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white text-[14px] text-[#6B7280]">
+        <span className="font-semibold text-[#1F2937]">{t("lf.titleShort")}</span> · {t("lf.none")}
+      </div>
+    );
+  }
+  const approved = u.trigger === "MODIFIED" || u.trigger === "OVERRIDDEN";
+  return (
+    <div className="p-4 rounded-xl border border-[#E5E7EB] border-l-[3px] border-l-emerald-600 bg-white space-y-3 text-[14px]" data-learning-feedback>
+      <div>
+        <div className="font-semibold text-[#1F2937]">{t("lf.title")}</div>
+        <p className="text-[12px] text-[#6B7280]">{t("lf.sub")}</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] p-3">
+          <p className="text-[12px] text-[#6B7280]">{t("lf.ai")}</p>
+          <p className="font-medium text-[#1F2937]" title={String(u.judge_ruling_type ?? "")}>
+            {ruling(u.judge_ruling_type)} · {describeActionI18n(asRecord(u.judge_recommended_action), t, locale)}
+          </p>
+        </div>
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+          <p className="text-[12px] text-emerald-800">{t("lf.human")}</p>
+          <p className="font-medium text-[#1F2937]">{describeActionI18n(asRecord(u.human_final_action), t, locale)}</p>
+        </div>
+      </div>
+      {typeof u.mismatch_summary === "string" && u.mismatch_summary && (
+        <div>
+          <p className="text-[12px] text-[#6B7280] mb-1">{t("lf.reason")}</p>
+          <RawText text={u.mismatch_summary} className="text-[#1F2937] leading-relaxed" />
+        </div>
+      )}
+      <dl className="grid grid-cols-[minmax(7rem,30%)_minmax(0,1fr)] gap-x-4 gap-y-1">
+        <dt className="text-[#6B7280]">{t("lf.trigger")}</dt>
+        <dd className="text-[#1F2937]" title={String(u.trigger ?? "")}>
+          {enumLabel(t, String(u.trigger ?? ""))}
+        </dd>
+        <dt className="text-[#6B7280]">{t("lf.precedent")}</dt>
+        <dd className="text-[#1F2937] tabular-nums">
+          {String(u.new_precedent_id ?? "—")}{" "}
+          <Chip tone={approved ? "green" : "amber"}>{t(approved ? "lf.approved" : "lf.candidate")}</Chip>
+        </dd>
+        {Array.isArray(u.clauses_flagged) && u.clauses_flagged.length > 0 && (
+          <>
+            <dt className="text-[#6B7280]">{t("lf.flagged")}</dt>
+            <dd className="text-[#1F2937]">{u.clauses_flagged.join(", ")}</dd>
+          </>
+        )}
+        <dt className="text-[#6B7280]">{t("lf.update")}</dt>
+        <dd className="text-[#1F2937] tabular-nums">
+          {String(u.update_id ?? "—")}
+          {typeof u.updated_at === "string" && <span className="text-[#9CA3AF]"> · {new Date(u.updated_at).toLocaleString()}</span>}
+        </dd>
+      </dl>
+    </div>
+  );
+};
+
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
   const { t, enumL } = useLabels();
@@ -936,7 +1005,8 @@ const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
           </ul>
         </div>
       )}
-      <DataView value={data} skip={["route", "confidence_score", "escalation_reasons"]} />
+      <LearningPanel update={data.policy_kb_update} status={data.execution_status} />
+      <DataView value={data} skip={["route", "confidence_score", "escalation_reasons", "policy_kb_update"]} />
     </Panel>
   );
 };
@@ -991,6 +1061,8 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
           <p className="text-[12px] text-[#6B7280] tabular-nums sm:text-center sm:max-w-[200px]">{t("tc.confidenceCaption")}</p>
         </div>
       </div>
+
+      <LearningPanel update={data.policy_kb_update} status={asRecord(verdict.execution_payload)?.execution_status} />
 
       {/* b. Why it needs a human */}
       {Array.isArray(reasons) && reasons.length > 0 && (
@@ -1092,8 +1164,6 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
 
 export default function CustomerSupportCaseViewPage() {
   const params = useParams();
-  const router = useRouter();
-  const { user, isLoading: authLoading } = useAuth();
   const caseId = (params?.caseId as string) || "";
 
   const [isLoading, setIsLoading] = useState(true);
@@ -1104,18 +1174,8 @@ export default function CustomerSupportCaseViewPage() {
   const { t, dispute } = useLabels();
   const stepLabel = (id: StepKey) => t(`rstep.${id}` as MessageKey);
 
-  // Redirect non-support users away before any review data is fetched.
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      router.replace("/login");
-    } else if (user.party !== "SUPPORT") {
-      router.replace("/help");
-    }
-  }, [user, authLoading, router]);
-
-  // Only fetch review data once the user is confirmed as SUPPORT.
-  const authed = !authLoading && user?.party === "SUPPORT";
+  // Demo build: Human Support pages open directly (no support login required).
+  const authed = true;
 
   // Fetch the ReviewCase (for the case bar: priority, SLA, confidence).
   useEffect(() => {
@@ -1217,6 +1277,7 @@ export default function CustomerSupportCaseViewPage() {
             confidence_score: result.judge_verdict?.confidence_score,
             escalation_reasons: result.bonus_modules?.escalation_protocol?.escalation_reasons,
             ...result.judge_verdict?.execution_payload,
+            policy_kb_update: result.policy_kb_update,
           },
         });
 
@@ -1249,9 +1310,6 @@ export default function CustomerSupportCaseViewPage() {
     });
     return map;
   }, [events]);
-
-  // While auth is loading, render nothing to avoid a flash of content.
-  if (authLoading || !authed) return null;
 
   const activeEvents = eventsByStep[activeTab] || [];
   const resolved = reviewCase?.status === "RESOLVED";
@@ -1440,7 +1498,6 @@ export default function CustomerSupportCaseViewPage() {
         </div>
         <ImageEvidence caseId={caseId} />
       </main>
-      <DesignSwitch to="team" caseId={caseId} />
     </div>
   );
 }

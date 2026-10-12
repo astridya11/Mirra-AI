@@ -8,9 +8,10 @@
 
 import type { Party, TripStatus } from "./session";
 
-export type AgentKey ="rider" | "driver" | "prosecutor" | "policy" | "judge" | "router";
+export type AgentKey = "collector" | "rider" | "driver" | "prosecutor" | "policy" | "judge" | "router";
 
 export const AGENTS: Record<AgentKey, { name: string; role: string; color: string; glyph: string; phase: string }> = {
+  collector: { name: "Evidence Collection Agent", role: "Gathers and indexes evidence for both advocates (read-only)", color: "#0891B2", glyph: "E", phase: "Intake" },
   rider: { name: "Rider Advocate", role: "Represents the passenger's perspective", color: "#F23D63", glyph: "R", phase: "Round 1" },
   driver: { name: "Driver Advocate", role: "Represents the driver's perspective", color: "#2563EB", glyph: "D", phase: "Round 1" },
   prosecutor: { name: "Prosecutor Agent", role: "Audits evidence, asks targeted questions", color: "#7C3AED", glyph: "P", phase: "Round 2" },
@@ -19,7 +20,7 @@ export const AGENTS: Record<AgentKey, { name: string; role: string; color: strin
   router: { name: "Execution Router", role: "Automates or escalates to a human", color: "#475569", glyph: "→", phase: "Execution" },
 };
 
-export const AGENT_ORDER: AgentKey[] = ["rider", "driver", "prosecutor", "policy", "judge", "router"];
+export const AGENT_ORDER: AgentKey[] = ["collector", "rider", "driver", "prosecutor", "policy", "judge", "router"];
 
 export interface PresenterNote {
   stage: string;

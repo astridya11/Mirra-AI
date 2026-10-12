@@ -14,7 +14,7 @@ import { enumLabel, tEn, translator, type Locale, type Translator } from "@/src/
 import type { CaseResult, PipelineEvent } from "@/src/types";
 import type { AgentKey, AppFixture } from "./scenarios";
 import type { Action, Party, UploadKind } from "./session";
-import { fromCaseResult, tribunalFor, type Step, type TEvent, type TribunalCase } from "./tribunal";
+import { collectionEvent, fromCaseResult, tribunalFor, type Step, type TEvent, type TribunalCase } from "./tribunal";
 
 // ---------------------------------------------------------------------------
 // Live / offline switch (per browser, like Presenter Mode). Default: LIVE.
@@ -420,9 +420,12 @@ export function liveTribunal(app: AppFixture, live: LiveResult, run: LiveRun | n
       },
     ],
     // Image checks resolve asynchronously, so keep the Execution Router as the final event.
-    events: (run?.raw.length ? liveEvents({ ...run, result: run.result ?? r }, t) : eventsFromResult(base.events, live.images, t, live.stamp)).sort(
-      (a, b) => Number(a.step === "router") - Number(b.step === "router"),
-    ),
+    events: [
+      ...[collectionEvent(r.data_sources, { photos: r.dispute_claim?.image_evidence?.length ?? 0, receipts: r.dispute_claim?.receipt_evidence?.length ?? 0 }, t)].filter(
+        (e): e is NonNullable<typeof e> => !!e,
+      ),
+      ...(run?.raw.length ? liveEvents({ ...run, result: run.result ?? r }, t) : eventsFromResult(base.events, live.images, t, live.stamp)),
+    ].sort((a, b) => Number(a.step === "router") - Number(b.step === "router")),
   };
 }
 

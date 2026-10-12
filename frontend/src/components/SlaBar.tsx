@@ -121,7 +121,7 @@ export default function SlaBar({ deadline, totalSeconds, resolved }: Props) {
       </div>
       {/* Countdown text */}
       <span
-        className={`shrink-0 text-xs font-medium tabular-nums ${TEXT_COLORS[status]}`}
+        className={`shrink-0 whitespace-nowrap text-xs font-medium tabular-nums ${TEXT_COLORS[status]}`}
         style={{ minWidth: "3.5rem" }}
       >
         {slaLabel(label, locale)}
