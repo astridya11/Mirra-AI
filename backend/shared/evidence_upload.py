@@ -24,6 +24,7 @@ from typing import Any
 
 from backend.shared.photo_evidence import build_image_evidence, register_image_hash
 from backend.shared.receipt_evidence import build_receipt_evidence
+from backend.shared.receipt_registry import find_receipt_match, register_receipt
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -232,6 +233,9 @@ def process_uploaded_evidence(
     # Process receipts
     # ------------------------------------------------------------------
     receipt_evidence: list[dict] = []
+    # Track (ev, file_bytes, receipt_id) for data-URL receipts so we can
+    # run find_receipt_match / register_receipt after all evidence is built.
+    _receipt_file_bytes: list[tuple[dict, bytes, str]] = []
 
     try:
         for idx, item in enumerate(receipt_items, start=1):
@@ -253,6 +257,7 @@ def process_uploaded_evidence(
                     annotation=annotation,
                     use_vision=use_vision,
                 )
+                _receipt_file_bytes.append((ev, decoded, receipt_id))
 
             elif isinstance(item, str) and item.strip():
                 ev = {
@@ -292,5 +297,30 @@ def process_uploaded_evidence(
             img_hash = ev.get("image_hash")
             if img_hash:
                 register_image_hash(img_hash, case_id)
+
+    # ------------------------------------------------------------------
+    # Receipt reuse detection: for every data-URL receipt, check for a
+    # prior match BEFORE registering it, then register so future uploads
+    # can detect reuse.  Registry errors must never fail the upload.
+    # ------------------------------------------------------------------
+    if register_hashes:
+        for ev, file_bytes, receipt_id in _receipt_file_bytes:
+            ocr_result = ev.get("ocr_result")
+            try:
+                match = find_receipt_match(file_bytes, ocr_result, case_id)
+            except Exception:
+                match = None
+
+            if match is not None:
+                ev["recycled_receipt_detected"] = True
+                ev["recycled_receipt_match_case_id"] = match.get("case_id", "")
+                ev["recycled_receipt_match_reason"] = match.get("reason", "")
+            else:
+                ev["recycled_receipt_detected"] = False
+
+            try:
+                register_receipt(file_bytes, ocr_result, case_id, receipt_id)
+            except Exception:
+                pass
 
     return image_evidence, receipt_evidence

@@ -290,10 +290,17 @@ def _post_process(
     missing_facts = prosecutor.get("missing_facts", [])
 
     # --- 1. Drop invalid verified_fact_references ---
+    # Keep only verified fact IDs in the reference list (disputed and missing
+    # facts are dropped without penalty — citing them is not a hallucination).
     valid_fact_ids = {f.get("fact_id") for f in verified_facts if f.get("fact_id")}
+    known_fact_ids = valid_fact_ids | {
+        f.get("fact_id") for f in disputed_facts if f.get("fact_id")
+    } | {
+        f.get("fact_id") for f in missing_facts if f.get("fact_id")
+    }
     raw_refs = raw.get("verified_fact_references", [])
     valid_refs = [fid for fid in raw_refs if fid in valid_fact_ids]
-    invalid_citations = len(raw_refs) - len(valid_refs)
+    invalid_citations = sum(1 for fid in raw_refs if fid not in known_fact_ids)
 
     # --- 2. Determine ruling and action from LLM output ---
     ruling = raw.get("ruling_type", "ESCALATED")

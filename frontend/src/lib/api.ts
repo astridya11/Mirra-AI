@@ -147,6 +147,12 @@ export async function createDispute(payload: CreateDisputePayload): Promise<Disp
   return response.json();
 }
 
+export async function listPast30DaysTrips(party_id: string): Promise<Past30DaysTripListItem> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/30-days-trips/${party_id}`);
+  if (!res.ok) throw new Error(`Failed to list past 30 days trips: ${res.status}`);
+  return res.json();
+}
+
 export async function listCases(): Promise<CaseListItem[]> {
   if (USE_MOCK) {
     console.log("MOCK MODE ON: list cases");
