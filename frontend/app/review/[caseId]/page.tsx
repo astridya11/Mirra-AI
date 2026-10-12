@@ -1,25 +1,43 @@
 "use client";
 
 /**
- * DebugProcessView — Modern Enterprise SaaS Dashboard UI
- * 
- * Auto-loads case data on mount and displays it in a clean, tabbed dashboard.
- * Primary accent color: #E84360. 
- * Light theme, shadowless cards, clean borders.
+ * Review console — case detail page.
+ *
+ * Layout (>= 1024px): sticky case bar, then three columns —
+ * left phase nav (220px) | centre content | right decision rail (320px).
+ * Below 1024px: decision rail, then horizontal nav tabs, then content.
+ *
+ * Design tokens: page bg #F6F7F9; panels white / 1px #E5E7EB / radius 12px;
+ * controls radius 8px; no shadows except dialogs. Ink #1F2937, muted #6B7280,
+ * faint #9CA3AF. Brand pink #E84360 for primary action and URGENT badge only.
+ * Inter; sizes 12/14/16/20/28; tabular-nums for all numbers.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
-import { getCompletedResult } from "@/src/lib/api"; 
-import { useParams } from "next/navigation";
+import Link from "next/link";
+import { getCase, getCompletedResult } from "@/src/lib/api";
+import type { ReviewCase } from "@/src/lib/api";
+import { useParams, useRouter } from "next/navigation";
 import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
-import { HumanDecision } from "@/src/components/review/HumanDecision";
+import PriorityBadge from "@/src/components/PriorityBadge";
+import SlaBar from "@/src/components/SlaBar";
+import { ConfidenceMeter } from "@/src/components/ConfidenceMeter";
+import { useAuth } from "@/src/context/AuthContext";
 import { ImageEvidence } from "@/src/components/review/ImageEvidence";
+import { DesignSwitch } from "@/src/components/review/DesignSwitch";
 import { confidenceLabel, judgeConfidence, reasonLabel } from "@/src/components/review/reviewModel";
+import { describeActionI18n } from "@/src/components/review/reviewModel";
 import { enumLabel, useI18n, type Translator } from "@/src/i18n";
-import { en } from "@/src/i18n/en";
-import { RawText } from "@/src/i18n/RawText";
-import type { MessageKey } from "@/src/i18n/en";
+import { en, type MessageKey } from "@/src/i18n/en";
 import { LanguageSwitch } from "@/src/i18n/LanguageSwitch";
+import { RawText } from "@/src/i18n/RawText";
+import {
+  formatMoney,
+  formatPercent,
+  humanizeEnum,
+  disputeTypeLabel,
+  rulingLabel,
+} from "@/src/lib/reviewFormat";
 
 // ==========================================
 // TYPES
@@ -51,14 +69,14 @@ export interface FeedEvent {
 }
 
 const STEPS: { id: StepKey; name: string}[] = [
-  { id: "CASE_SUMMARY", name: "Case Summary" },
-  { id: "INIT_CLAIM", name: "Dispute Filed" },
-  { id: "ROUND_1_STATEMENTS", name: "Round 1 Statements"},
-  { id: "ROUND_2_CROSS_EXAM", name: "Cross Examination" },
-  { id: "ROUND_2_REPORT", name: "Final Audit Report" },
-  { id: "POLICY_CONSULTATION", name: "Policy & Precedent Research" },
-  { id: "JUDGE_DELIBERATION", name: "Judge Deliberation" },
-  { id: "EXECUTION_ROUTER", name: "Execution Router" },
+  { id: "CASE_SUMMARY", name: "Case summary" },
+  { id: "INIT_CLAIM", name: "Dispute filed" },
+  { id: "ROUND_1_STATEMENTS", name: "Round 1 statements"},
+  { id: "ROUND_2_CROSS_EXAM", name: "Cross examination" },
+  { id: "ROUND_2_REPORT", name: "Final audit report" },
+  { id: "POLICY_CONSULTATION", name: "Policy and precedent" },
+  { id: "JUDGE_DELIBERATION", name: "Judge deliberation" },
+  { id: "EXECUTION_ROUTER", name: "Execution router" },
 ];
 
 // ==========================================
@@ -98,21 +116,32 @@ function formatTime(ts?: string): string {
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString();
 }
 
-/** Field labels come from the i18n dictionary (rf.<field>); unknown keys show as-is. */
-const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b(id|ids|url|ocr|gps|ai|kmh)\b/gi, (w) => w.toUpperCase()).replace(/^./, (c) => c.toUpperCase());
+/** Field labels come from the i18n dictionary (rf.<field>); unknown backend keys are humanized. */
+const humanize = (k: string) => humanizeEnum(k);
 const label = (k: string, t: Translator) => (`rf.${k}` in en ? t(`rf.${k}` as MessageKey) : humanize(k));
-/** ISO timestamps from the backend, shown in local time (raw value in the tooltip). */
-const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
-const isNested = (v: unknown) =>
-  !!v && typeof v === "object" && (Array.isArray(v) ? v.some((x) => x !== null && typeof x === "object") : Object.keys(v as object).length > 0);
 /** Enum-looking backend tokens get a display label; the raw value stays in the tooltip. */
 const EnumText: React.FC<{ value: unknown }> = ({ value }) => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const v = String(value ?? "");
-  return <span title={v}>{/^[A-Z][A-Z0-9_]+$/.test(v) ? enumLabel(t, v) : v}</span>;
+  if (!/^[A-Z][A-Z0-9_]+$/.test(v)) return <>{v}</>;
+  return <span title={v}>{locale === "en" ? humanizeEnum(v) : enumLabel(t, v)}</span>;
 };
 /** Backend free text: long sentences go through RawText (AI translation in the Chinese UI). */
 const isProse = (v: string) => v.length > 40 && /\s/.test(v) && !v.trim().startsWith("{");
+const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const isNested = (v: unknown) =>
+  !!v && typeof v === "object" && (Array.isArray(v) ? v.some((x) => x !== null && typeof x === "object") : Object.keys(v as object).length > 0);
+/** Display labels that follow the language (English keeps the teammate's helpers). */
+const useLabels = () => {
+  const { t, locale } = useI18n();
+  return {
+    t,
+    locale,
+    dispute: (v: unknown) => (locale === "en" ? disputeTypeLabel(v) : enumLabel(t, String(v ?? ""))),
+    ruling: (v: unknown) => (locale === "en" ? rulingLabel(v) : enumLabel(t, String(v ?? ""))),
+    enumL: (v: unknown) => (locale === "en" ? humanizeEnum(v) : enumLabel(t, String(v ?? ""))),
+  };
+};
 
 const PHASE_TO_STEP: Record<string, StepKey> = {
   CASE_SUMMARY: "CASE_SUMMARY",
@@ -208,20 +237,20 @@ function normalizeMessage(e: FeedEvent): NormalizedMessage {
 
 const ROLE_STYLE: Record<"prosecutor" | "rider" | "driver" | "other", { box: string; title: MessageKey }> = {
   prosecutor: {
-    box: "bg-blue-50/50 border-blue-200 text-blue-900",
-    title: "rd.role.prosecutor",
+    box: "border-[#E5E7EB] bg-white text-[#1F2937]",
+    title: "tc.role.prosecutor",
   },
   rider: {
-    box: "bg-purple-50/50 border-purple-200 text-purple-900",
-    title: "rd.role.rider",
+    box: "border-[#E5E7EB] bg-white text-[#1F2937]",
+    title: "tc.role.rider",
   },
   driver: {
-    box: "bg-emerald-50/50 border-emerald-200 text-emerald-900",
-    title: "rd.role.driver",
+    box: "border-[#E5E7EB] bg-white text-[#1F2937]",
+    title: "tc.role.driver",
   },
   other: {
-    box: "bg-gray-50 border-gray-200 text-gray-900",
-    title: "rd.role.other",
+    box: "border-[#E5E7EB] bg-white text-[#1F2937]",
+    title: "tc.role.other",
   },
 };
 
@@ -235,14 +264,11 @@ function roleOf(speaker: string): keyof typeof ROLE_STYLE {
 
 function roleName(raw: string, t: Translator): string {
   const r = roleOf(raw);
-  if (r === "prosecutor") return t("agent.prosecutor.name");
-  if (r === "rider") return t("agent.rider.name");
-  if (r === "driver") return t("agent.driver.name");
-  return raw || "—";
+  return r === "other" ? raw || "—" : t(ROLE_STYLE[r].title);
 }
 
 // ==========================================
-// GENERIC DATA RENDERER (Light Theme)
+// GENERIC DATA RENDERER
 // ==========================================
 
 const Chip: React.FC<{ children: React.ReactNode; tone?: "primary" | "blue" | "amber" | "green" | "red" | "gray" }> = ({
@@ -258,7 +284,7 @@ const Chip: React.FC<{ children: React.ReactNode; tone?: "primary" | "blue" | "a
     gray: "bg-gray-100 text-gray-700 border-gray-200",
   };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${tones[tone]}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[12px] font-medium ${tones[tone]}`}>
       {children}
     </span>
   );
@@ -267,30 +293,30 @@ const Chip: React.FC<{ children: React.ReactNode; tone?: "primary" | "blue" | "a
 const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ value, skip = [], depth = 0 }) => {
   const { t } = useI18n();
   if (value === null || value === undefined || value === "") {
-    return <span className="text-gray-400">—</span>;
+    return <span className="text-[#9CA3AF]">&mdash;</span>;
   }
   if (typeof value === "boolean") {
     return <Chip tone={value ? "primary" : "gray"}>{t(value ? "common.yes" : "common.no")}</Chip>;
   }
   if (typeof value === "number") {
-    return <span className="text-gray-900 font-mono">{value}</span>;
+    return <span className="text-[#1F2937] tabular-nums">{value}</span>;
   }
   if (typeof value === "string") {
     if (ISO_TS.test(value) && !Number.isNaN(Date.parse(value)))
       return (
-        <span className="text-gray-800 tabular-nums" title={value}>
+        <span className="text-[#1F2937] tabular-nums" title={value}>
           {new Date(value).toLocaleString()}
         </span>
       );
-    if (isProse(value)) return <RawText as="span" text={value} className="text-gray-800 whitespace-pre-wrap leading-relaxed" />;
+    if (isProse(value)) return <RawText as="span" text={value} className="text-[#1F2937] whitespace-pre-wrap leading-relaxed" />;
     return (
-      <span className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+      <span className="text-[#1F2937] whitespace-pre-wrap leading-relaxed">
         <EnumText value={value} />
       </span>
     );
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-gray-400">{t("rd.empty")}</span>;
+    if (value.length === 0) return <span className="text-[#9CA3AF]">{t("tc.empty")}</span>;
     const allPrimitive = value.every((v) => v === null || typeof v !== "object");
     if (allPrimitive) {
       return (
@@ -306,7 +332,7 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
     return (
       <div className="space-y-2">
         {value.map((v, i) => (
-          <div key={i} className="p-3 rounded-lg border border-gray-100 bg-gray-50/50">
+          <div key={i} className="p-3 rounded-lg border border-[#E5E7EB] bg-[#F6F7F9]">
             <DataView value={v} depth={depth + 1} />
           </div>
         ))}
@@ -315,22 +341,22 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
   }
   const obj = value as Rec;
   const entries = Object.entries(obj).filter(([k]) => !skip.includes(k));
-  if (entries.length === 0) return <span className="text-gray-400">{t("rd.empty")}</span>;
+  if (entries.length === 0) return <span className="text-[#9CA3AF]">{t("tc.empty")}</span>;
   return (
     <dl className="space-y-2.5">
       {entries.map(([k, v]) =>
         isNested(v) ? (
           <div key={k} className="space-y-1.5">
-            <dt className="text-[11px] font-semibold uppercase tracking-wider text-gray-500" title={k}>
+            <dt className="text-[12px] font-medium text-[#6B7280]" title={k}>
               {label(k, t)}
             </dt>
-            <dd className="min-w-0 border-l-2 border-gray-100 pl-3">
+            <dd className="min-w-0 border-l-2 border-[#E5E7EB] pl-3">
               <DataView value={v} depth={depth + 1} />
             </dd>
           </div>
         ) : (
           <div key={k} className="grid grid-cols-[minmax(7rem,30%)_minmax(0,1fr)] gap-x-4 items-baseline">
-            <dt className="text-gray-500 font-medium [overflow-wrap:anywhere]" title={k}>
+            <dt className="text-[#6B7280] font-medium [overflow-wrap:anywhere]" title={k}>
               {label(k, t)}
             </dt>
             <dd className="min-w-0 [overflow-wrap:anywhere]">
@@ -348,19 +374,19 @@ const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({
   children,
 }) => {
   return (
-    <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-4 text-sm">
-      <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">{title}</div>
-      <div className="text-gray-700 space-y-4">{children}</div>
+    <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-4 text-[14px]">
+      <div className="font-semibold text-[#1F2937] border-b border-[#E5E7EB] pb-2">{title}</div>
+      <div className="text-[#1F2937] space-y-4">{children}</div>
     </div>
   );
 };
 
 const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary }) => (
-  <details className="text-[11px] text-gray-500 group">
+  <details className="text-[12px] text-[#6B7280] group">
     <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors select-none">
       {summary ?? <RawJsonLabel />}
     </summary>
-    <pre className="mt-2 p-3 bg-gray-50 border border-gray-100 rounded-lg overflow-x-auto text-gray-600 font-mono text-[10px]">
+    <pre className="mt-2 p-3 bg-[#F6F7F9] border border-[#E5E7EB] rounded-lg overflow-x-auto text-[#6B7280] font-mono text-[10px]">
       {JSON.stringify(value, null, 2)}
     </pre>
   </details>
@@ -368,11 +394,11 @@ const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary })
 
 function RawJsonLabel() {
   const { t } = useI18n();
-  return <>{t("rd.viewRaw")}</>;
+  return <>{t("tc.viewRaw")}</>;
 }
 
 // ==========================================
-// AGENT 对话卡片
+// AGENT message card
 // ==========================================
 
 const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
@@ -388,44 +414,44 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
   return (
     <div className={`my-4 ${indent}`}>
       <div className={`p-4 rounded-xl border ${style.box}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-black/5">
-          <span className="font-semibold text-sm flex flex-wrap items-center gap-2">
-            {role === "other" ? `🤖 ${msg.speaker}` : t(style.title)}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-[#E5E7EB]">
+          <span className="font-semibold text-[14px] flex flex-wrap items-center gap-2">
+            {role === "other" ? msg.speaker : t(style.title)}
             {inCrossExam && msg.messageType && (
               <Chip tone={isQuestion ? "primary" : "green"}>
-                {t(isQuestion ? "rd.question" : "rd.response")}
-                {msg.turn !== undefined ? t("rd.round", { n: msg.turn }) : ""}
+                {t(isQuestion ? "tc.question" : "tc.response")}
+                {msg.turn !== undefined ? t("tc.round", { n: msg.turn }) : ""}
               </Chip>
             )}
             {msg.target && (
-              <span className="text-xs font-normal text-gray-500">
-                {t(isQuestion ? "rd.directedTo" : "rd.respondingTo")}
+              <span className="text-[12px] font-normal text-[#6B7280]">
+                {t(isQuestion ? "tc.directedTo" : "tc.respondingTo")}
                 {roleName(msg.target, t)}
               </span>
             )}
           </span>
-          {event.timestamp && <span className="text-xs text-gray-400">{formatTime(event.timestamp)}</span>}
+          {event.timestamp && <span className="text-[12px] text-[#9CA3AF] tabular-nums">{formatTime(event.timestamp)}</span>}
         </div>
 
-        <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
+        <div className="text-[14px] leading-relaxed whitespace-pre-wrap text-[#1F2937]">
           {msg.text ? (
             isProse(msg.text) ? <RawText as="div" text={msg.text} /> : msg.text
           ) : (
-            <span className="italic text-gray-400">{t("rd.noText")}</span>
+            <span className="italic text-[#9CA3AF]">{t("tc.noText")}</span>
           )}
         </div>
 
         {isQuestion && (msg.category || msg.evidenceContext) && (
-          <div className="mt-4 pt-3 border-t border-black/5 text-xs space-y-2 text-gray-600 bg-white/50 rounded-lg p-3">
+          <div className="mt-4 pt-3 border-t border-[#E5E7EB] text-[12px] space-y-2 text-[#6B7280] bg-[#F6F7F9] rounded-lg p-3">
             {msg.category && msg.category !== "OTHER" && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">{t("rd.category")}</span>
+                <span className="text-[#6B7280] font-medium mr-2">{t("tc.category")}</span>
                 <EnumText value={msg.category} />
               </div>
             )}
             {msg.evidenceContext && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">{t("rd.evidenceContext")}</span>
+                <span className="text-[#6B7280] font-medium mr-2">{t("tc.evidenceContext")}</span>
                 <RawText as="span" text={msg.evidenceContext} raw={isProse(msg.evidenceContext)} />
               </div>
             )}
@@ -433,7 +459,7 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
         )}
 
         <div className="mt-3">
-          <RawJson value={msg.raw} summary={t("rd.agentRaw")} />
+          <RawJson value={msg.raw} summary={t("tc.agentRaw")} />
         </div>
       </div>
     </div>
@@ -444,8 +470,8 @@ const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({
   const { t } = useI18n();
   if (questions.length === 0) {
     return (
-      <div className="my-4 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-500 text-center">
-        {t("rd.noQuestions")}
+      <div className="my-4 p-4 rounded-xl border border-[#E5E7EB] bg-[#F6F7F9] text-[14px] text-[#6B7280] text-center">
+        {t("tc.noQuestions")}
       </div>
     );
   }
@@ -484,12 +510,12 @@ const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({
 };
 
 // ==========================================
-// 各阶段结果视图
+// Phase views
 // ==========================================
 
 const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" | "red" }> = ({ title, facts, tone }) => (
   <div className="mt-4">
-    <div className="text-gray-700 font-medium mb-2 flex items-center gap-2">
+    <div className="text-[#1F2937] font-medium mb-2 flex items-center gap-2">
       {title} <Chip tone={tone}>{facts.length}</Chip>
     </div>
     <ul className="space-y-2">
@@ -497,8 +523,8 @@ const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" 
         const rec = asRecord(f);
         const text = rec ? firstText(rec, ["description", "fact", "text", "content"]) : String(f);
         return (
-          <li key={rec?.fact_id ?? i} className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-gray-700">
-            {rec?.fact_id && <span className="text-gray-400 mr-2 font-mono text-xs">{rec.fact_id}</span>}
+          <li key={rec?.fact_id ?? i} className="p-3 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] text-[#1F2937]">
+            {rec?.fact_id && <span className="text-[#9CA3AF] mr-2 tabular-nums text-[12px]">{rec.fact_id}</span>}
             {text ? <RawText as="span" text={text} raw={isProse(text)} /> : <DataView value={rec} />}
           </li>
         );
@@ -518,21 +544,20 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
     const style = ROLE_STYLE[role];
     const outcome = stmt.requested_outcome;
     const amount = stmt.requested_amount;
-    const currency = stmt.currency || "SGD";
     const evidenceRefs = Array.isArray(stmt.evidence_references) ? stmt.evidence_references : [];
 
     return (
       <div className={`p-5 rounded-xl border ${style.box} space-y-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E7EB] pb-3">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-base">{t(style.title)}</span>
-            <Chip tone={role === "rider" ? "primary" : "green"}>{t(role === "rider" ? "agent.rider.name" : "agent.driver.name")}</Chip>
+            <span className="font-semibold text-[16px]">{t(style.title)}</span>
+            <Chip tone={role === "rider" ? "primary" : "green"}>{t(style.title)}</Chip>
           </div>
           {outcome && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-gray-500 font-medium">{t("rd.requested")}</span>
+              <span className="text-[12px] text-[#6B7280] font-medium">{t("tc.requested")}</span>
               <Chip tone="primary">
-                <EnumText value={outcome} /> {amount !== undefined && amount !== null ? `($${amount} ${currency})` : ""}
+                <EnumText value={outcome} /> {amount !== undefined && amount !== null ? `(${formatMoney(amount)})` : ""}
               </Chip>
             </div>
           )}
@@ -540,26 +565,30 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {stmt.argument_summary && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">{t("rd.argSummary")}</div>
-            <RawText as="div" text={String(stmt.argument_summary)} className="p-3.5 rounded-lg bg-white/80 border border-black/5 text-gray-800 text-sm leading-relaxed font-medium" />
+            <div className="text-[12px] font-medium text-[#6B7280] mb-1.5">{t("tc.argSummary")}</div>
+            <RawText
+              as="div"
+              text={String(stmt.argument_summary)}
+              className="p-3.5 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] text-[#1F2937] text-[14px] leading-relaxed font-medium"
+            />
           </div>
         )}
 
         {stmt.detailed_argument && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">{t("rd.detailedArg")}</div>
+            <div className="text-[12px] font-medium text-[#6B7280] mb-1.5">{t("tc.detailedArg")}</div>
             <RawText
               as="div"
               text={String(stmt.detailed_argument)}
-              className="p-3.5 rounded-lg bg-white/60 border border-black/5 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto"
+              className="p-3.5 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] text-[#1F2937] text-[14px] leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto"
             />
           </div>
         )}
 
         {evidenceRefs.length > 0 && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-2">
-              <span>{t("rd.citedEvidence")}</span>
+            <div className="text-[12px] font-medium text-[#6B7280] mb-2 flex items-center gap-2">
+              <span>{t("tc.citedEvidence")}</span>
               <Chip tone="gray">{evidenceRefs.length}</Chip>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -569,14 +598,14 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
                 const sourceType = evRec?.source_type || "EVIDENCE";
                 const desc = evRec?.description || String(ev);
                 return (
-                  <div key={i} className="p-2.5 rounded-lg bg-white/70 border border-black/5 text-xs space-y-1">
+                  <div key={i} className="p-2.5 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] text-[12px] space-y-1">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-mono font-semibold text-gray-900">{evId}</span>
+                      <span className="font-semibold text-[#1F2937] tabular-nums">{evId}</span>
                       <Chip tone="blue">
                         <EnumText value={sourceType} />
                       </Chip>
                     </div>
-                    <RawText text={desc} raw={isProse(desc)} className="text-gray-600 line-clamp-3" />
+                    <RawText text={desc} raw={isProse(desc)} className="text-[#6B7280] line-clamp-3" />
                   </div>
                 );
               })}
@@ -585,8 +614,8 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
         )}
 
         {stmt.submitted_at && (
-          <div className="text-[11px] text-gray-400 text-right pt-2 border-t border-black/5">
-            {t("rd.submittedAt", { time: new Date(stmt.submitted_at).toLocaleString() })}
+          <div className="text-[12px] text-[#9CA3AF] text-right pt-2 border-t border-[#E5E7EB] tabular-nums">
+            {t("tc.submittedAt", { time: new Date(stmt.submitted_at).toLocaleString() })}
           </div>
         )}
       </div>
@@ -595,19 +624,18 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
   if (!riderStmt && !driverStmt) {
     return (
-      <Panel title={t("rd.r1Title")}>
-        <div className="text-gray-400 italic text-center p-6 bg-gray-50 rounded-lg">{t("rd.noR1")}</div>
+      <Panel title={t("tc.r1Title")}>
+        <div className="text-[#9CA3AF] italic text-center p-6 bg-[#F6F7F9] rounded-lg">{t("tc.noR1")}</div>
       </Panel>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 flex items-center gap-3">
-        <span className="text-blue-600 text-lg">⚖️</span>
+      <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white flex items-center gap-3">
         <div>
-          <span className="font-bold text-blue-900 text-sm">{t("rd.r1Overview")}</span>
-          <p className="text-xs text-blue-700 mt-0.5">{t("rd.r1OverviewSub")}</p>
+          <span className="font-semibold text-[#1F2937] text-[14px]">{t("tc.r1Overview")}</span>
+          <p className="text-[12px] text-[#6B7280] mt-0.5">{t("tc.r1OverviewSub")}</p>
         </div>
       </div>
 
@@ -617,7 +645,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
       </div>
 
       <div className="pt-2">
-        <RawJson value={data} summary={t("rd.r1Raw")} />
+        <RawJson value={data} summary={t("tc.r1Raw")} />
       </div>
     </div>
   );
@@ -628,7 +656,7 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
   bonus,
   title,
 }) => {
-  const { t } = useI18n();
+  const { t, enumL } = useLabels();
   const factKeys: [string, "green" | "amber" | "red"][] = [
     ["verified_facts", "green"],
     ["disputed_facts", "amber"],
@@ -644,8 +672,8 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
         <>
           {typeof findings.prosecutor_summary === "string" && findings.prosecutor_summary && (
             <div className="mb-4">
-              <div className="text-gray-500 font-medium mb-2">{label("prosecutor_summary", t)}</div>
-              <RawText text={findings.prosecutor_summary} className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800" />
+              <div className="text-[#6B7280] font-medium mb-2">{label("prosecutor_summary", t)}</div>
+              <RawText text={findings.prosecutor_summary} className="p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] leading-relaxed text-[#1F2937]" />
             </div>
           )}
           {factKeys.map(
@@ -653,29 +681,29 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
               Array.isArray(findings[k]) && findings[k].length > 0 && <FactList key={k} title={label(k, t)} facts={findings[k]} tone={tone} />
           )}
           {Object.keys(findings).some((k) => !shown.includes(k) && !isEmpty(findings[k])) && (
-            <div className="mt-6 pt-4 border-t border-gray-100">
+            <div className="mt-6 pt-4 border-t border-[#E5E7EB]">
               <DataView value={findings} skip={shown} />
             </div>
           )}
         </>
       ) : (
-        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">{t("rd.noFindings")}</div>
+        <div className="text-[#9CA3AF] italic p-4 text-center bg-[#F6F7F9] rounded-lg">{t("tc.noFindings")}</div>
       )}
 
       {escalation && (
-        <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
-          <span className="text-gray-600 font-medium">{t("rd.riskSignals")}</span>
-          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>{t("rd.fraudRisk", { level: enumLabel(t, fraud) })}</Chip>}
+        <div className="mt-6 pt-4 border-t border-[#E5E7EB] flex flex-wrap items-center gap-2">
+          <span className="text-[12px] font-medium text-[#6B7280]">{t("tc.riskSignals")}</span>
+          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>{t("tc.fraudRisk", { level: enumL(fraud) })}</Chip>}
           {escalation.safety_threat_detected && <Chip tone="red">{label("safety_threat_detected", t)}</Chip>}
           {escalation.missing_crucial_evidence && <Chip tone="amber">{label("missing_crucial_evidence", t)}</Chip>}
           {!escalation.safety_threat_detected && !escalation.missing_crucial_evidence && fraud !== "HIGH" && (
-            <Chip tone="green">{t("rd.noEscalation")}</Chip>
+            <Chip tone="green">{t("tc.noEscalation")}</Chip>
           )}
         </div>
       )}
       {bonus && !isEmpty(bonus) && (
         <div className="mt-4">
-          <RawJson value={bonus} summary={t("rd.bonusRaw")} />
+          <RawJson value={bonus} summary={t("tc.bonusRaw")} />
         </div>
       )}
     </Panel>
@@ -690,13 +718,13 @@ const KNOWN_CLAUSES = ["applicable_clauses", "clauses"];
 const KNOWN_PRECEDENTS = ["matched_precedents", "precedents", "similar_precedents", "relevant_precedents"];
 
 const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => {
-  const { t } = useI18n();
+  const { t, ruling: rulingL } = useLabels();
   if (typeof suggestion === "string") {
-    return <RawText text={suggestion} className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800" />;
+    return <RawText text={suggestion} className="p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] leading-relaxed text-[#1F2937]" />;
   }
   const s = asRecord(suggestion);
   if (!s || isEmpty(s)) {
-    return <div className="text-gray-400 italic text-center p-4">{t("rd.noPolicy")}</div>;
+    return <div className="text-[#9CA3AF] italic text-center p-4">{t("tc.noPolicy")}</div>;
   }
 
   const ruling = pick(s, KNOWN_RULING);
@@ -711,16 +739,16 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
   return (
     <div className="space-y-6">
       {(ruling || conf) && (
-        <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center gap-3">
-          <span className="font-semibold text-[#E84360]">{t("rd.suggestedRuling")}</span>
+        <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white flex flex-wrap items-center gap-3">
+          <span className="font-semibold text-[#1F2937]">{t("tc.suggestedRuling")}</span>
           {ruling && (
             <Chip tone="primary">
-              <EnumText value={ruling[1]} />
+              <span title={String(ruling[1])}>{rulingL(ruling[1])}</span>
             </Chip>
           )}
           {conf && (
-            <span className="text-gray-600 text-sm">
-              {t("rd.confidence")} <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
+            <span className="text-[#6B7280] text-[14px] tabular-nums">
+              {t("tc.confidence")} <span className="font-medium text-[#1F2937]">{formatPercent(conf[1])}</span>
             </span>
           )}
         </div>
@@ -728,8 +756,8 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {action && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">{label("recommended_action", t)}</div>
-          <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
+          <div className="text-[#6B7280] font-medium mb-2">{label("recommended_action", t)}</div>
+          <div className="p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB]">
             <DataView value={action[1]} />
           </div>
         </div>
@@ -737,8 +765,8 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {reason && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">{t("rd.rationale")}</div>
-          <div className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">
+          <div className="text-[#6B7280] font-medium mb-2">{t("tc.rationale")}</div>
+          <div className="p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] leading-relaxed text-[#1F2937]">
             {typeof reason[1] === "string" ? <RawText as="div" text={reason[1]} /> : <DataView value={reason[1]} />}
           </div>
         </div>
@@ -746,31 +774,31 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {clauses && Array.isArray(clauses[1]) && (
         <div>
-          <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            {t("rd.clauses")} <Chip tone="blue">{clauses[1].length}</Chip>
+          <div className="text-[#6B7280] font-medium mb-2 flex items-center gap-2">
+            {t("tc.clauses")} <Chip tone="blue">{clauses[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {clauses[1].map((c: any, i: number) => {
               const rec = asRecord(c);
-              if (!rec) return <div key={i} className="p-3 rounded-lg bg-gray-50 border border-gray-100">{String(c)}</div>;
+              if (!rec) return <div key={i} className="p-3 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB]">{String(c)}</div>;
               const body = firstText(rec, ["clause_text", "clause_text_summary", "content", "text", "description", "summary"]);
               const why = firstText(rec, ["relevance", "relevance_summary", "relevance_reason", "reason", "rationale"]);
               const shownKeys = ["clause_id", "title", "clause_title", "clause_text", "clause_text_summary", "content", "text", "description", "summary", "relevance", "relevance_summary", "relevance_reason", "reason", "rationale"];
               return (
-                <div key={rec.clause_id ?? i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm">
-                  <div className="font-semibold text-gray-900">
-                    {rec.clause_id && <span className="font-mono text-gray-400 mr-2 text-xs">{rec.clause_id}</span>}
-                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : t("rd.clauseN", { n: i + 1 }))}
+                <div key={rec.clause_id ?? i} className="p-4 rounded-lg bg-white border border-[#E5E7EB]">
+                  <div className="font-semibold text-[#1F2937]">
+                    {rec.clause_id && <span className="text-[#9CA3AF] mr-2 tabular-nums text-[12px]">{rec.clause_id}</span>}
+                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : t("tc.clauseN", { n: i + 1 }))}
                   </div>
-                  {body && <RawText as="div" text={body} raw={isProse(body)} className="text-gray-700 mt-2 leading-relaxed whitespace-pre-wrap" />}
+                  {body && <RawText as="div" text={body} raw={isProse(body)} className="text-[#1F2937] mt-2 leading-relaxed whitespace-pre-wrap" />}
                   {why && (
-                    <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">
-                      {t("rd.relevance")}
+                    <div className="text-[#6B7280] mt-3 p-3 bg-[#F6F7F9] rounded text-[14px]">
+                      {t("tc.relevance")}
                       <RawText as="span" text={why} raw={isProse(why)} />
                     </div>
                   )}
                   {Object.keys(rec).some((k) => !shownKeys.includes(k) && !isEmpty(rec[k])) && (
-                    <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="mt-3 pt-3 border-t border-[#E5E7EB]">
                       <DataView value={rec} skip={shownKeys} depth={1} />
                     </div>
                   )}
@@ -783,12 +811,12 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {precedents && Array.isArray(precedents[1]) && (
         <div>
-          <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            {t("rd.precedents")} <Chip tone="gray">{precedents[1].length}</Chip>
+          <div className="text-[#6B7280] font-medium mb-2 flex items-center gap-2">
+            {t("tc.precedents")} <Chip tone="gray">{precedents[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {precedents[1].map((p: any, i: number) => (
-              <div key={i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm text-gray-700">
+              <div key={i} className="p-4 rounded-lg bg-white border border-[#E5E7EB] text-[#1F2937]">
                 {typeof p === "string" ? <RawText as="div" text={p} raw={isProse(p)} /> : <DataView value={p} depth={1} />}
               </div>
             ))}
@@ -797,7 +825,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       )}
 
       {Object.keys(s).some((k) => !used.includes(k) && !isEmpty(s[k])) && (
-        <div className="pt-4 border-t border-gray-100">
+        <div className="pt-4 border-t border-[#E5E7EB]">
           <DataView value={s} skip={used} />
         </div>
       )}
@@ -809,20 +837,20 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
   const request = asRecord(data.request);
   const { t } = useI18n();
   return (
-    <Panel title={t("rd.policyTitle")}>
+    <Panel title={t("tc.policyTitle")}>
       <PolicySuggestionView suggestion={data.suggestion} />
       {request && (
-        <details className="mt-4 text-[11px] text-gray-500">
+        <details className="mt-4 text-[12px] text-[#6B7280]">
           <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors">
-            {t("rd.policyRequest")}
+            {t("tc.policyRequest")}
           </summary>
-          <div className="mt-2 p-4 rounded-lg bg-gray-50 border border-gray-100">
+          <div className="mt-2 p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB]">
             <DataView value={request} />
           </div>
         </details>
       )}
       <div className="mt-2">
-        <RawJson value={data} summary={t("rd.policyRaw")} />
+        <RawJson value={data} summary={t("tc.policyRaw")} />
       </div>
     </Panel>
   );
@@ -830,41 +858,42 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
 
 const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   const action = asRecord(data.recommended_action);
-  const { t } = useI18n();
+  const { t, ruling } = useLabels();
+  const conf = judgeConfidence(data); // a failed Judge run's 0.00 is not a confidence
   return (
-    <Panel title={t("rd.judgeTitle")}>
+    <Panel title={t("tc.judgeTitle")}>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {data.ruling_type && (
           <Chip tone="primary">
-            <EnumText value={data.ruling_type} />
+            <span title={String(data.ruling_type)}>{ruling(data.ruling_type)}</span>
           </Chip>
         )}
         {data.confidence_score !== undefined && (
-          <Chip tone={(judgeConfidence(data) ?? 0) >= 0.75 ? "green" : "amber"}>
-            {t("rd.confidenceN", { c: confidenceLabel(judgeConfidence(data), t) })}
+          <Chip tone={(conf ?? 0) >= 0.75 ? "green" : "amber"}>
+            {t("tc.confidence")} {conf == null ? confidenceLabel(null, t) : formatPercent(conf)}
           </Chip>
         )}
       </div>
       {action && (
-        <div className="mb-4 p-4 rounded-lg bg-gray-50 border border-gray-100">
+        <div className="mb-4 p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB]">
           <DataView value={action} />
         </div>
       )}
       {typeof data.reasoning_summary === "string" && data.reasoning_summary && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">{label("reasoning_summary", t)}</div>
-          <RawText text={data.reasoning_summary} className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800" />
+          <div className="text-[#6B7280] font-medium mb-2">{label("reasoning_summary", t)}</div>
+          <RawText text={data.reasoning_summary} className="p-4 rounded-lg bg-[#F6F7F9] border border-[#E5E7EB] leading-relaxed text-[#1F2937]" />
         </div>
       )}
       {asRecord(data.explanations) && (
         <div className="grid gap-3 md:grid-cols-2">
           {(["explanation_for_rider", "explanation_for_driver"] as const).map(
-            (k) =>
-              typeof data.explanations[k] === "string" &&
-              data.explanations[k] && (
-                <div key={k} className="rounded-lg border border-gray-200 p-4">
-                  <div className="text-gray-500 font-medium mb-2">{label(k, t)}</div>
-                  <RawText text={data.explanations[k]} className="leading-relaxed text-gray-800" />
+            (key) =>
+              typeof data.explanations[key] === "string" &&
+              data.explanations[key] && (
+                <div key={key} className="rounded-lg border border-[#E5E7EB] p-4">
+                  <div className="text-[#6B7280] font-medium mb-2">{label(key, t)}</div>
+                  <RawText text={data.explanations[key]} className="leading-relaxed text-[#1F2937]" />
                 </div>
               ),
           )}
@@ -880,20 +909,24 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
 
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
-  const { t } = useI18n();
+  const { t, enumL } = useLabels();
   return (
-    <Panel title={t("rd.execTitle")}>
+    <Panel title={t("tc.execTitle")}>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {data.route && (
           <Chip tone={escalated ? "amber" : "green"}>
-            <EnumText value={data.route} />
+            <span title={String(data.route)}>{enumL(data.route)}</span>
           </Chip>
         )}
-        {data.confidence_score !== undefined && <Chip>{t("rd.confidenceN", { c: confidenceLabel(data.confidence_score, t) })}</Chip>}
+        {data.confidence_score !== undefined && (
+          <Chip>
+            {t("tc.confidence")} {data.confidence_score == null ? confidenceLabel(null, t) : formatPercent(data.confidence_score)}
+          </Chip>
+        )}
       </div>
       {Array.isArray(data.escalation_reasons) && data.escalation_reasons.length > 0 && (
         <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-100">
-          <div className="text-amber-800 font-medium mb-2">{t("rd.escReasons")}</div>
+          <div className="text-amber-800 font-medium mb-2">{t("tc.escReasons")}</div>
           <ul className="list-disc list-inside space-y-1 text-amber-700">
             {data.escalation_reasons.map((r: string, i: number) => (
               <li key={i}>
@@ -909,7 +942,7 @@ const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
 };
 
 // ==========================================
-// CASE SUMMARY VIEW (Added for Human Support at first glance)
+// CASE SUMMARY VIEW (decision-first)
 // ==========================================
 
 const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
@@ -919,101 +952,57 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalation = asRecord(bonus.escalation_protocol) || {};
   const verdict = asRecord(data.judge_verdict) || {};
   const action = asRecord(verdict.recommended_action) || {};
+  const explanations = asRecord(verdict.explanations) || {};
 
   const reasons = escalation.escalation_reasons || [];
   const priority = escalation.priority_level || "STANDARD";
+  // A failed Judge run's 0.00 is not a confidence — show "Unavailable" instead of a 0% ring.
   const confidence = judgeConfidence(verdict);
-  const { t } = useI18n();
+  const isUrgent = priority === "URGENT";
+  const { t, locale, dispute, ruling } = useLabels();
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="w-3 h-3 rounded-full bg-[#E84360] animate-pulse"></span>
-          <div>
-            <span className="font-bold text-gray-900 text-base">{t("rd.sumTitle")}</span>
-            <p className="text-xs text-gray-500 mt-0.5">{t("rd.sumSub")}</p>
-          </div>
+      {/* a. AI recommends */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="space-y-1 min-w-0">
+          <p className="text-[14px] text-[#6B7280]">{t("rail.aiRecommends")}</p>
+          <p className="text-[28px] font-semibold text-[#1F2937] leading-tight break-words">
+            {describeActionI18n(action, t, locale)}
+          </p>
+          <p className="text-[14px] text-[#6B7280]" title={String(verdict.ruling_type || verdict.suggested_ruling_type || "")}>
+            {ruling(verdict.ruling_type || verdict.suggested_ruling_type)}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Chip tone={priority === "URGENT" ? "red" : priority === "HIGH_PRIORITY" ? "amber" : "primary"}>
-            {t("rd.priority", { p: enumLabel(t, priority) })}
-          </Chip>
-          <Chip tone={(confidence ?? 0) >= 0.75 ? "green" : "amber"}>
-            {t("rd.confidenceColon", { c: confidenceLabel(confidence, t) })}
-          </Chip>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
-          <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            {t("rd.basicInfo")}
-          </div>
-          <div className="text-sm space-y-2">
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.disputeType")}</span>
-              <span className="font-medium text-gray-800">
-                <EnumText value={metadata.dispute_type || claim.dispute_type || "—"} />
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.riderId")}</span>
-              <span className="font-mono text-gray-800">{metadata.rider_id || claim.rider_id || "—"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.driverId")}</span>
-              <span className="font-mono text-gray-800">{metadata.driver_id || claim.driver_id || "—"}</span>
-            </div>
-            <div className="pt-2 border-t border-gray-100">
-              <span className="text-gray-500 block mb-1">{t("rd.description")}</span>
-              {claim.description || metadata.description ? (
-                <RawText
-                  text={String(claim.description || metadata.description)}
-                  className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed max-h-32 overflow-y-auto"
-                />
-              ) : (
-                <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed">{t("rd.noDescription")}</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
-          <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            {t("rd.verdictActions")}
-          </div>
-          <div className="text-sm space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-500">{t("rd.suggestedRulingType")}</span>
-              <Chip tone="primary">
-                <EnumText value={verdict.ruling_type || verdict.suggested_ruling_type || "—"} />
-              </Chip>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.refundAmount")}</span>
-              <span className="font-mono font-medium text-gray-900">${action.refund_amount ?? 0}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.cleaningAmount")}</span>
-              <span className="font-mono font-medium text-gray-900">${action.cleaning_fee_amount ?? 0}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t("rd.accountAction")}</span>
-              <span className="font-medium text-gray-900">
-                <EnumText value={action.account_action || "NONE"} />
-              </span>
-            </div>
-          </div>
+        {/* Mobile: 48px meter + caption in a row; Desktop: 64px meter + caption stacked */}
+        <div className="flex items-start gap-2 sm:flex-col sm:items-center sm:gap-1 shrink-0">
+          {confidence == null ? (
+            <p className="text-[14px] font-medium text-amber-700">{confidenceLabel(null, t)}</p>
+          ) : (
+            <>
+              <div className="sm:hidden">
+                <ConfidenceMeter score={confidence} size={48} showLabel={false} />
+              </div>
+              <div className="hidden sm:block">
+                <ConfidenceMeter score={confidence} size={64} showLabel={false} />
+              </div>
+            </>
+          )}
+          <p className="text-[12px] text-[#6B7280] tabular-nums sm:text-center sm:max-w-[200px]">{t("tc.confidenceCaption")}</p>
         </div>
       </div>
 
+      {/* b. Why it needs a human */}
       {Array.isArray(reasons) && reasons.length > 0 && (
-        <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-2">
-          <div className="font-semibold text-amber-900">
-            {t("rd.escTitle")}
+        <div
+          className={`p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-2 ${
+            isUrgent ? "border-l-[3px] border-l-red-600" : "border-l-[3px] border-l-amber-500"
+          }`}
+        >
+          <div className="font-semibold text-[#1F2937] text-[14px]">
+            {t("tc.whyHuman")}
           </div>
-          <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
+          <ul className="list-disc list-inside space-y-1 text-[14px] text-[#1F2937]">
             {reasons.map((r: string, i: number) => (
               <li key={i}>
                 <RawText as="span" text={reasonLabel(r, t)} raw={reasonLabel(r, t) === r} />
@@ -1023,25 +1012,76 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
         </div>
       )}
 
-      {/* {findings.prosecutor_summary && (
-        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
-          <div className="font-semibold text-blue-900">
-            🔍 Prosecutor Core Audit Summary
-          </div>
-          <p className="text-sm text-blue-900 leading-relaxed">
-            {findings.prosecutor_summary}
-          </p>
-        </div>
-      )} */}
-
-      {verdict.reasoning_summary && (
-        <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
-          <div className="font-semibold text-blue-900">
-            {t("rd.judgeSummary")}
-          </div>
-          <RawText text={String(verdict.reasoning_summary)} className="text-sm text-blue-900 leading-relaxed" />
+      {/* c. Two columns: explanations for rider / driver */}
+      {(explanations.explanation_for_rider || explanations.explanation_for_driver) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {explanations.explanation_for_rider && (
+            <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-2">
+              <div className="font-semibold text-[#1F2937] text-[14px] border-b border-[#E5E7EB] pb-2">
+                {label("explanation_for_rider", t)}
+              </div>
+              <RawText text={String(explanations.explanation_for_rider)} className="text-[14px] text-[#1F2937] leading-relaxed" />
+            </div>
+          )}
+          {explanations.explanation_for_driver && (
+            <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-2">
+              <div className="font-semibold text-[#1F2937] text-[14px] border-b border-[#E5E7EB] pb-2">
+                {label("explanation_for_driver", t)}
+              </div>
+              <RawText text={String(explanations.explanation_for_driver)} className="text-[14px] text-[#1F2937] leading-relaxed" />
+            </div>
+          )}
         </div>
       )}
+
+      {/* d. Judge's reasoning */}
+      {verdict.reasoning_summary && (
+        <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-2">
+          <div className="font-semibold text-[#1F2937] text-[14px] border-b border-[#E5E7EB] pb-2">
+            {t("tc.judgeReasoning")}
+          </div>
+          <RawText text={String(verdict.reasoning_summary)} className="text-[14px] text-[#1F2937] leading-relaxed" />
+        </div>
+      )}
+
+      {/* e. Case details */}
+      <div className="p-4 rounded-xl border border-[#E5E7EB] bg-white space-y-3">
+        <div className="font-semibold text-[#1F2937] text-[14px] border-b border-[#E5E7EB] pb-2">
+          {t("tc.caseDetails")}
+        </div>
+        <dl className="text-[14px] space-y-2">
+          <div className="flex justify-between gap-3">
+            <dt className="text-[#6B7280]">{label("dispute_type", t)}</dt>
+            <dd className="font-medium text-[#1F2937]" title={String(metadata.dispute_type || claim.dispute_type || "")}>
+              {dispute(metadata.dispute_type || claim.dispute_type)}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-[#6B7280]">{label("rider_id", t)}</dt>
+            <dd className="font-medium text-[#1F2937] tabular-nums">{metadata.rider_id || claim.rider_id || "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-[#6B7280]">{label("driver_id", t)}</dt>
+            <dd className="font-medium text-[#1F2937] tabular-nums">{metadata.driver_id || claim.driver_id || "—"}</dd>
+          </div>
+          {metadata.trip_id && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-[#6B7280]">{label("trip_id", t)}</dt>
+              <dd className="font-medium text-[#1F2937] tabular-nums">{metadata.trip_id}</dd>
+            </div>
+          )}
+          <div className="pt-2 border-t border-[#E5E7EB]">
+            <dt className="text-[#6B7280] block mb-1">{t("tc.claimDescription")}</dt>
+            <dd className="text-[#1F2937] bg-[#F6F7F9] p-3 rounded-lg text-[14px] leading-relaxed">
+              {claim.description || metadata.description ? (
+                <RawText as="span" text={String(claim.description || metadata.description)} />
+              ) : (
+                t("tc.noDescription")
+              )}
+            </dd>
+          </div>
+        </dl>
+      </div>
     </div>
   );
 };
@@ -1052,28 +1092,61 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
 
 export default function CustomerSupportCaseViewPage() {
   const params = useParams();
+  const router = useRouter();
+  const { user, isLoading: authLoading } = useAuth();
   const caseId = (params?.caseId as string) || "";
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<FeedEvent[]>([]);
   const [activeTab, setActiveTab] = useState<StepKey>("CASE_SUMMARY");
-  const { t } = useI18n();
+  const [reviewCase, setReviewCase] = useState<ReviewCase | null>(null);
+  const { t, dispute } = useLabels();
   const stepLabel = (id: StepKey) => t(`rstep.${id}` as MessageKey);
 
+  // Redirect non-support users away before any review data is fetched.
   useEffect(() => {
-    if (!caseId) return;
+    if (authLoading) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (user.party !== "SUPPORT") {
+      router.replace("/help");
+    }
+  }, [user, authLoading, router]);
+
+  // Only fetch review data once the user is confirmed as SUPPORT.
+  const authed = !authLoading && user?.party === "SUPPORT";
+
+  // Fetch the ReviewCase (for the case bar: priority, SLA, confidence).
+  useEffect(() => {
+    if (!caseId || !authed) return;
+    let alive = true;
+    const load = () =>
+      getCase(caseId)
+        .then((d) => alive && setReviewCase(d))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [caseId, authed]);
+
+  // Fetch the completed result (phase data).
+  useEffect(() => {
+    if (!caseId || !authed) return;
 
     async function loadData() {
       setIsLoading(true);
       setError(null);
       try {
         const result = await getCompletedResult(caseId);
-        if (!result) throw new Error("API did not return valid data (Empty Response)");
+        if (!result) throw new Error("API did not return valid data (empty response)");
 
         const synthesizedEvents: FeedEvent[] = [];
 
-        // 0. CASE_SUMMARY (Added for executive overview at first glance)
+        // 0. CASE_SUMMARY
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "CASE_SUMMARY",
@@ -1084,7 +1157,7 @@ export default function CustomerSupportCaseViewPage() {
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "INIT_CLAIM",
-          label: "Dispute Filed",
+          label: "Dispute filed",
           data: {
             ...result.case_metadata,
             ...result.dispute_claim,
@@ -1094,46 +1167,14 @@ export default function CustomerSupportCaseViewPage() {
 
         // 2. Round 1 Statements
         const statements = result.agent_conversation?.filter((m: any) => m.message_type === "STATEMENT") || [];
-        // statements.forEach((msg: any) => {
-        //   synthesizedEvents.push({
-        //     event_type: "AGENT_CONVERSATION",
-        //     phase: "ROUND_1_STATEMENTS",
-        //     speaker: msg.speaker,
-        //     message_type: msg.message_type,
-        //     timestamp: msg.timestamp,
-        //     data: msg,
-        //   });
-        // });
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "ROUND_1_STATEMENTS",
           data: result.round_1_statements ?? { statements },
         });
 
-        // 3. ROUND 2 INITIAL AUDIT, commented because case metadata only keep the final report
-        // synthesizedEvents.push({
-        //   event_type: "PHASE_COMPLETED",
-        //   phase: "ROUND_2_PROSECUTOR_AUDIT",
-        //   sub_phase: "INITIAL_AUDIT",
-        //   data: {
-        //     prosecutor_findings: result.prosecutor_findings,
-        //     bonus_modules: result.bonus_modules,
-        //   },
-        // });
-
-        // 4. ROUND 2 CROSS EXAM
+        // 3. ROUND 2 CROSS EXAM
         const crossExams = result.agent_conversation?.filter((m: any) => m.message_type !== "STATEMENT") || [];
-        // crossExams.forEach((msg: any) => {
-        //   synthesizedEvents.push({
-        //     event_type: "AGENT_CONVERSATION",
-        //     phase: "ROUND_2_PROSECUTOR_AUDIT",
-        //     sub_phase: "CROSS_EXAM",
-        //     speaker: msg.speaker,
-        //     message_type: msg.message_type,
-        //     timestamp: msg.timestamp,
-        //     data: msg,
-        //   });
-        // });
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "ROUND_2_PROSECUTOR_AUDIT",
@@ -1141,7 +1182,7 @@ export default function CustomerSupportCaseViewPage() {
           data: { round_2_cross_exam: result.round_2_cross_exam },
         });
 
-        // 5. ROUND 2 FINAL REPORT
+        // 4. ROUND 2 FINAL REPORT
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "ROUND_2_PROSECUTOR_AUDIT",
@@ -1153,27 +1194,27 @@ export default function CustomerSupportCaseViewPage() {
           },
         });
 
-        // 6. POLICY CONSULTATION
+        // 5. POLICY CONSULTATION
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "POLICY_CONSULTATION",
           data: result.policy_consultation,
         });
 
-        // 7. JUDGE DELIBERATION
+        // 6. JUDGE DELIBERATION
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "JUDGE_DELIBERATION",
           data: result.judge_verdict,
         });
 
-        // 8. EXECUTION ROUTER
+        // 7. EXECUTION ROUTER
         synthesizedEvents.push({
           event_type: "PHASE_COMPLETED",
           phase: "EXECUTION_ROUTER",
           data: {
             route: result.case_metadata?.resolution_channel,
-            confidence_score: judgeConfidence(result.judge_verdict),
+            confidence_score: result.judge_verdict?.confidence_score,
             escalation_reasons: result.bonus_modules?.escalation_protocol?.escalation_reasons,
             ...result.judge_verdict?.execution_payload,
           },
@@ -1181,16 +1222,16 @@ export default function CustomerSupportCaseViewPage() {
 
         setEvents(synthesizedEvents);
       } catch (err) {
-        setError("rd.fetchError");
+        setError("tc.fetchError");
         console.error("Fetch complete result error:", err);
       } finally {
         setIsLoading(false);
       }
     }
     loadData();
-  }, [caseId]);
+  }, [caseId, authed]);
 
-  // 区分事件到对应的 Step
+  // Group events by step
   const eventsByStep = useMemo(() => {
     const map: Record<StepKey, FeedEvent[]> = {
       CASE_SUMMARY: [],
@@ -1209,138 +1250,197 @@ export default function CustomerSupportCaseViewPage() {
     return map;
   }, [events]);
 
+  // While auth is loading, render nothing to avoid a flash of content.
+  if (authLoading || !authed) return null;
+
   const activeEvents = eventsByStep[activeTab] || [];
+  const resolved = reviewCase?.status === "RESOLVED";
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <span className="w-2 h-6 bg-[#E84360] rounded-sm inline-block"></span>
-              MIRRA AI <span className="text-gray-400 font-normal">|</span> {t("review.title")}
-            </h1>
-            <p className="text-sm text-gray-500 mt-1 ml-4">{t("review.caseIdLine", { caseId })}</p>
-          </div>
-          <LanguageSwitch compact />
-          {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <svg className="animate-spin h-4 w-4 text-[#E84360]" fill="none" viewBox="0 0 24 24">
+    <div className="min-h-screen bg-[#F6F7F9] text-[#1F2937] font-sans flex flex-col">
+      {/* Sticky case bar */}
+      <header className="bg-white border-b border-[#E5E7EB] sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+          {/* Row 1 (mobile) / Left (desktop): back button, case_id, dispute type */}
+          <div className="flex items-center gap-3 min-w-0">
+            <Link
+              href="/review"
+              aria-label={t("sla.backToQueue")}
+              className="text-[#6B7280] hover:text-[#1F2937] hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E84360]/40 inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="text-[20px] font-semibold text-[#1F2937] truncate">{caseId}</h1>
+              <p className="text-[12px] text-[#6B7280] truncate">
+                {reviewCase ? dispute(reviewCase.dispute_type) : t("review.loading")}
+              </p>
+            </div>
+            {isLoading && (
+              <svg className="animate-spin h-4 w-4 text-[#E84360] shrink-0" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              {t("review.loadingData")}
-            </div>
-          )}
+            )}
+          </div>
+
+          {/* Row 2 (mobile) / Right (desktop): priority, SLA, confidence */}
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            {reviewCase && <PriorityBadge tier={reviewCase.priority_level} />}
+            {reviewCase && !resolved && (
+              <SlaBar
+                deadline={reviewCase.sla_deadline}
+                totalSeconds={reviewCase.sla_total_seconds}
+                resolved={resolved}
+              />
+            )}
+            {reviewCase && reviewCase.confidence_score > 0 && <ConfidenceMeter score={reviewCase.confidence_score} size={32} />}
+            <LanguageSwitch compact />
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex flex-col md:flex-row gap-8">
-        
-        {/* 左侧 Tabs 导航 */}
-        <aside className="md:w-64 flex-shrink-0">
-          <div className="sticky top-24 space-y-4">
-            <ReviewSlaPanel caseId={caseId} />
-          <nav className="space-y-1">
-            {STEPS.map((step) => {
-              const isActive = activeTab === step.id;
-              const hasData = eventsByStep[step.id]?.length > 0;
-              return (
-                <button
-                  key={step.id}
-                  onClick={() => setActiveTab(step.id)}
-                  disabled={isLoading || !hasData}
-                  className={`w-full flex items-center justify-between px-4 py-3 text-sm font-medium rounded-lg transition-all ${
-                    isActive
-                      ? "bg-[#E84360]/10 text-[#E84360] border border-[#E84360]/20"
-                      : hasData
-                      ? "text-gray-600 hover:bg-gray-100 border border-transparent"
-                      : "text-gray-400 cursor-not-allowed border border-transparent"
-                  }`}
-                >
-                  <span className="truncate">{stepLabel(step.id)}</span>
-                  {hasData && isActive && <span className="w-1.5 h-1.5 rounded-full bg-[#E84360]"></span>}
-                </button>
-              );
-            })}
-          </nav>
-          </div>
-        </aside>
+      {/* Three-column layout at >= 1024px; stacked below */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6">
+        <div className="lg:grid lg:grid-cols-[220px_1fr_320px] lg:gap-6">
+          {/* Decision rail — right on desktop, first on mobile */}
+          <aside className="lg:col-start-3 lg:row-start-1 mb-4 lg:mb-0">
+            <div className="lg:sticky lg:top-20">
+              <ReviewSlaPanel caseId={caseId} />
+            </div>
+          </aside>
 
-        {/* 右侧内容区 */}
-        <section className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 md:p-8 min-h-[600px]">
-          {error ? (
-            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
-              {t("rd.fetchError")}
+          {/* Phase nav — left on desktop, horizontal scroll tabs on mobile */}
+          <aside className="lg:col-start-1 lg:row-start-1 mb-4 lg:mb-0">
+            {/* Desktop: vertical nav */}
+            <nav className="hidden lg:block">
+              <ul className="space-y-0.5">
+                {STEPS.map((step, i) => {
+                  const isActive = activeTab === step.id;
+                  const hasData = eventsByStep[step.id]?.length > 0;
+                  return (
+                    <li key={step.id}>
+                      <button
+                        onClick={() => setActiveTab(step.id)}
+                        disabled={isLoading || !hasData}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-[14px] font-medium rounded-lg transition-colors border-l-2 ${
+                          isActive
+                            ? "border-l-[#E84360] text-[#1F2937] bg-white"
+                            : hasData
+                            ? "border-l-transparent text-[#6B7280] hover:bg-white hover:text-[#1F2937]"
+                            : "border-l-transparent text-[#9CA3AF] cursor-not-allowed"
+                        }`}
+                      >
+                        <span className="text-[12px] tabular-nums w-4 shrink-0">{i + 1}</span>
+                        <span className="truncate">{stepLabel(step.id)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
+
+            {/* Mobile: horizontal scrollable tab row */}
+            <nav className="lg:hidden">
+              <div className="flex gap-1 overflow-x-auto pb-1 -mx-1 px-1">
+                {STEPS.map((step, i) => {
+                  const isActive = activeTab === step.id;
+                  const hasData = eventsByStep[step.id]?.length > 0;
+                  return (
+                    <button
+                      key={step.id}
+                      onClick={() => setActiveTab(step.id)}
+                      disabled={isLoading || !hasData}
+                      className={`flex items-center gap-1.5 px-3 py-2 text-[14px] font-medium rounded-lg whitespace-nowrap shrink-0 border-b-2 ${
+                        isActive
+                          ? "border-b-[#E84360] text-[#1F2937] bg-white"
+                          : hasData
+                          ? "border-b-transparent text-[#6B7280] bg-white/50 hover:bg-white"
+                          : "border-b-transparent text-[#9CA3AF] cursor-not-allowed"
+                      }`}
+                    >
+                      <span className="text-[12px] tabular-nums">{i + 1}</span>
+                      <span>{stepLabel(step.id)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
+          </aside>
+
+          {/* Centre content */}
+          <section className="lg:col-start-2 lg:row-start-1 min-w-0">
+            <div className="lg:max-w-[75ch]">
+              {error ? (
+                <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-[14px]">
+                  {t(error as MessageKey)}
+                </div>
+              ) : isLoading ? (
+                <div className="flex flex-col items-center justify-center text-[#9CA3AF] py-16">
+                  <span className="loading-spinner mb-4"></span>
+                  {t("tc.fetching")}
+                </div>
+              ) : activeEvents.length === 0 ? (
+                <div className="flex items-center justify-center text-[#9CA3AF] text-[14px] py-16">
+                  {t("review.noPhaseData")}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {activeEvents.map((event, idx) => {
+                    const data = asRecord(event.data);
+                    if (isAgentConversation(event)) {
+                      return <AgentMessageCard key={idx} event={event} />;
+                    }
+
+                    if (event.event_type === "PHASE_COMPLETED" && data) {
+                      switch (activeTab) {
+                        case "CASE_SUMMARY":
+                          return <CaseSummaryView key={idx} data={data} />;
+                        case "INIT_CLAIM":
+                          return (
+                            <Panel key={idx} title={t("tc.caseBasic")}>
+                              <DataView value={data} skip={["status"]} />
+                            </Panel>
+                          );
+                        case "ROUND_1_STATEMENTS":
+                          return <Round1StatementsView key={idx} data={data} />;
+                        case "ROUND_2_CROSS_EXAM": {
+                          const crossSource = asRecord(data?.round_2_cross_exam) ?? data;
+                          const fbQuestions = Array.isArray(crossSource?.targeted_questions) ? crossSource!.targeted_questions : [];
+                          const fbResponses = Array.isArray(crossSource?.targeted_responses) ? crossSource!.targeted_responses : [];
+                          return <CrossExamTranscript key={idx} questions={fbQuestions} responses={fbResponses} />;
+                        }
+                        case "ROUND_2_REPORT":
+                          return (
+                            <ProsecutorView
+                              key={idx}
+                              title={t("tc.prosFinal")}
+                              findings={asRecord(data.prosecutor_findings)}
+                              bonus={asRecord(data.bonus_modules)}
+                            />
+                          );
+                        case "POLICY_CONSULTATION":
+                          return <PolicyView key={idx} data={data} />;
+                        case "JUDGE_DELIBERATION":
+                          return <JudgeView key={idx} data={data} />;
+                        case "EXECUTION_ROUTER":
+                          return <ExecutionView key={idx} data={data} />;
+                        default:
+                          return null;
+                      }
+                    }
+                    return null;
+                  })}
+                </div>
+              )}
             </div>
-          ) : isLoading ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400">
-              <span className="loading-spinner mb-4"></span>
-              {t("review.fetching")}
-            </div>
-          ) : activeEvents.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-              {t("review.noPhaseData")}
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <h2 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-4 mb-6">
-                {stepLabel(activeTab)}
-              </h2>
-              {activeEvents.map((event, idx) => {
-                const data = asRecord(event.data);
-                if (isAgentConversation(event)) {
-                  return <AgentMessageCard key={idx} event={event} />;
-                }
-                
-                // 处理 PHASE_COMPLETED 的具体渲染逻辑
-                if (event.event_type === "PHASE_COMPLETED" && data) {
-                  switch (activeTab) {
-                    case "CASE_SUMMARY":
-                      return <CaseSummaryView key={idx} data={data} />;
-                    case "INIT_CLAIM":
-                      return (
-                        <Panel key={idx} title={t("rd.caseBasic")}>
-                          <DataView value={data} skip={["status"]} />
-                        </Panel>
-                      );
-                    case "ROUND_1_STATEMENTS":
-                      return <Round1StatementsView key={idx} data={data} />;
-                    case "ROUND_2_CROSS_EXAM":
-                      const crossSource = asRecord(data?.round_2_cross_exam) ?? data;
-                      const fbQuestions = Array.isArray(crossSource?.targeted_questions) ? crossSource!.targeted_questions : [];
-                      const fbResponses = Array.isArray(crossSource?.targeted_responses) ? crossSource!.targeted_responses : [];
-                      return <CrossExamTranscript key={idx} questions={fbQuestions} responses={fbResponses} />;
-                    case "ROUND_2_REPORT":
-                      return (
-                        <ProsecutorView
-                          key={idx}
-                          title={t("rd.prosFinal")}
-                          findings={asRecord(data.prosecutor_findings)}
-                          bonus={asRecord(data.bonus_modules)}
-                        />
-                      );
-                    case "POLICY_CONSULTATION":
-                      return <PolicyView key={idx} data={data} />;
-                    case "JUDGE_DELIBERATION":
-                      return <JudgeView key={idx} data={data} />;
-                    case "EXECUTION_ROUTER":
-                      return <ExecutionView key={idx} data={data} />;
-                    default:
-                      return null;
-                  }
-                }
-                return null;
-              })}
-            </div>
-          )}
-        </section>
-      </main>
-      <div className="max-w-7xl w-full mx-auto px-6 pb-12">
+          </section>
+        </div>
         <ImageEvidence caseId={caseId} />
-        <HumanDecision caseId={caseId} />
-      </div>
+      </main>
+      <DesignSwitch to="team" caseId={caseId} />
     </div>
   );
 }

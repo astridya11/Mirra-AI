@@ -6,7 +6,8 @@
 
 import { backendUrl } from "@/src/lib/api";
 import type { CaseResult, HumanReviewDecision, RecommendedAction } from "@/src/types";
-import { tEn, type Translator } from "@/src/i18n";
+import { tEn, type Locale, type Translator } from "@/src/i18n";
+import { describeAction, formatMoney } from "@/src/lib/reviewFormat";
 import { en, type MessageKey } from "@/src/i18n/en";
 
 export const money = (n?: number | null) => `S$${(n ?? 0).toFixed(2)}`;
@@ -116,4 +117,28 @@ export async function executeApprovedAction(r: CaseResult, action: RecommendedAc
   if (!res.ok) throw new Error(`Payment execution failed (${res.status})`);
   const body = await res.json();
   return { transaction_id: body.transaction_id, kind, amount };
+}
+
+/** Teammate's describeAction wording in English; the same sentence built from dictionary keys otherwise. */
+export function describeActionI18n(action: Record<string, unknown> | null | undefined, t: Translator, locale: Locale): string {
+  if (locale === "en") return describeAction(action as Record<string, any> | null);
+  if (!action || typeof action !== "object") return t("ra.none");
+  const type = String(action.action_type ?? "").trim();
+  const refund = Number(action.refund_amount ?? 0);
+  const cleaning = Number(action.cleaning_fee_amount ?? 0);
+  let out =
+    type === "CLEANING_FEE_CHARGE"
+      ? t("ra.cleaning", { amount: formatMoney(cleaning || undefined) })
+      : type === "FULL_REFUND" || type === "PARTIAL_REFUND"
+        ? t("ra.refund", { amount: formatMoney(refund || undefined) })
+        : type === "NO_REFUND"
+          ? t("ra.noRefund")
+          : type === "PENALTY_ONLY"
+            ? t("ra.penalty", { target: typeLabel(String(action.penalty_target || "RIDER"), t) })
+            : !type || type === "ESCALATED_NO_ACTION"
+              ? t("ra.none")
+              : typeLabel(type, t);
+  const acct = String(action.account_action ?? "").trim();
+  if (acct && acct !== "NONE") out += `；${typeLabel(acct, t)}`;
+  return out;
 }

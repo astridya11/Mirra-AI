@@ -110,13 +110,24 @@ function SelectTripContent() {
         {!loading &&
           !error &&
           pastTrips!.trips.map((trip) => {
-            const driver = trip.historical_profiles[1];
-            const rider = trip.historical_profiles[0];
+            const driver = trip.historical_profiles.find(
+              (p) => p.party === "DRIVER",
+            );
+            const rider = trip.historical_profiles.find(
+              (p) => p.party === "RIDER",
+            );
+
+            // Show the OTHER party: rider when logged-in user is DRIVER,
+            // otherwise show the driver.
+            const otherParty =
+              user!.party === "DRIVER" ? rider : driver;
 
             return (
               <button
                 key={trip.trip_id}
-                onClick={() => goToChat(trip.trip_id, driver.party_id!, rider.party_id!)}
+                onClick={() =>
+                  goToChat(trip.trip_id, driver!.party_id!, rider!.party_id!)
+                }
                 className="w-full text-left rounded-xl border border-gray-200 p-4 active:bg-gray-50 transition-colors"
               >
                 <div className="flex items-start justify-between mb-2">
@@ -142,11 +153,11 @@ function SelectTripContent() {
 
                 <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
                   <div className="w-7 h-7 rounded-full bg-[#F3F4F6] flex items-center justify-center text-[11px] font-bold text-[#6B7280]">
-                    {driver?.name?.charAt(0) ?? "?"}
+                    {otherParty?.name?.charAt(0) ?? "?"}
                   </div>
 
                   <span className="text-[14px] text-[#111827]">
-                    {driver?.name}
+                    {otherParty?.name}
                   </span>
                 </div>
               </button>

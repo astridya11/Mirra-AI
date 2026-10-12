@@ -873,6 +873,30 @@ def transcribe_voice(payload: VoiceTranscribeRequest):
 
 
 # ---------------------------------------------------------------------------
+# Display translation (Chinese UI) — display only, case files are never changed
+# ---------------------------------------------------------------------------
+
+
+class TranslateRequest(BaseModel):
+    texts: List[str] = Field(..., min_length=1, max_length=40)
+    target: Literal["zh-CN"] = Field("zh-CN")
+
+
+@app.post("/api/translate")
+async def translate_texts(payload: TranslateRequest):
+    """Translate backend free text for the Chinese UI via the shared LLM client."""
+    from backend.shared.translate import translate_to_zh
+
+    if any(len(t) > 4000 for t in payload.texts):
+        raise HTTPException(status_code=413, detail="Text too long (max 4000 chars each)")
+    try:
+        return {"translations": await translate_to_zh(payload.texts)}
+    except Exception as exc:  # LLM unavailable / malformed output → frontend keeps the English original
+        logger.warning("translate failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Translation unavailable")
+
+
+# ---------------------------------------------------------------------------
 # Policy knowledge-base update
 # ---------------------------------------------------------------------------
 

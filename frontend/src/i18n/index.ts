@@ -98,3 +98,14 @@ export function overlay<T>(base: T, patch: unknown): T {
   }
   return patch as T;
 }
+
+/** Localize the SLA countdown label from src/lib/sla.ts ("3:12", "2 h 26 min left", "+0:45 overdue"). */
+export function slaLabel(label: string, locale: Locale): string {
+  if (locale === "en") return label;
+  return label
+    .replace(/^\+(.*) overdue$/, "已超时 $1")
+    .replace(/^(.*) left$/, "剩余 $1")
+    .replace(/ h /, "小时")
+    .replace(/ min$/, "分")
+    .replace(/^Reviewed$/, "已审核");
+}

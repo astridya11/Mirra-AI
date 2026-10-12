@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { SlaStatus } from "@/src/lib/api";
-import { useI18n } from "@/src/i18n";
+import { slaState } from "@/src/lib/sla";
+import { slaLabel, useI18n } from "@/src/i18n";
 
 const STYLES: Record<SlaStatus, string> = {
   ON_TRACK: "bg-emerald-100 text-emerald-800 border-emerald-300",
@@ -11,12 +12,12 @@ const STYLES: Record<SlaStatus, string> = {
   RESOLVED: "bg-slate-100 text-slate-600 border-slate-300",
 };
 
-function format(seconds: number) {
-  const abs = Math.abs(Math.floor(seconds));
-  const m = Math.floor(abs / 60);
-  const s = abs % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+const LABELS: Record<SlaStatus, string> = {
+  ON_TRACK: "On track",
+  AT_RISK: "At risk",
+  BREACHED: "Breached",
+  RESOLVED: "Resolved",
+};
 
 interface Props {
   deadline: string;          // ISO string
@@ -26,7 +27,7 @@ interface Props {
 
 export default function SlaBadge({ deadline, totalSeconds, resolved }: Props) {
   const [now, setNow] = useState(() => Date.now());
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   useEffect(() => {
     if (resolved) return;
@@ -34,24 +35,15 @@ export default function SlaBadge({ deadline, totalSeconds, resolved }: Props) {
     return () => clearInterval(t);
   }, [resolved]);
 
-  const remaining = (new Date(deadline).getTime() - now) / 1000;
-  const status: SlaStatus = resolved
-    ? "RESOLVED"
-    : remaining <= 0
-    ? "BREACHED"
-    : remaining / Math.max(totalSeconds, 1) <= 0.3
-    ? "AT_RISK"
-    : "ON_TRACK";
+  const { status, label } = slaState(deadline, totalSeconds, now, resolved);
 
   return (
     <span
       className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STYLES[status]}`}
     >
-      {t(`sla.${status}`)}
+      {locale === "en" ? LABELS[status] : t(`sla.${status}`)}
       {!resolved && (
-        <span className="tabular-nums">
-          {remaining >= 0 ? format(remaining) : t("sla.overdue", { time: format(remaining) })}
-        </span>
+        <span className="tabular-nums">{slaLabel(label, locale)}</span>
       )}
     </span>
   );

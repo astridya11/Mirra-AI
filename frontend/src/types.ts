@@ -280,6 +280,37 @@ export interface ReceiptEvidenceInput {
    */
   uploaded_at?: string;
   ocr_result?: ReceiptOcrResult;
+  /**
+   * True when this receipt was matched to a receipt already submitted in a different case.
+   */
+  recycled_receipt_detected?: boolean;
+  /**
+   * Case ID of the prior case that already submitted an identical or near-duplicate receipt.
+   */
+  recycled_receipt_match_case_id?: string;
+  /**
+   * Why the receipt matched: IDENTICAL_FILE, NEAR_DUPLICATE_IMAGE, or SAME_MERCHANT_AMOUNT_DATE.
+   */
+  recycled_receipt_match_reason?:
+    | 'IDENTICAL_FILE'
+    | 'NEAR_DUPLICATE_IMAGE'
+    | 'SAME_MERCHANT_AMOUNT_DATE';
+  /**
+   * True when the receipt image shows signs of being AI-generated or synthetically produced.
+   */
+  receipt_ai_generated_detected?: boolean;
+  /**
+   * Confidence (0.0-1.0) that the receipt is AI-generated.
+   */
+  receipt_ai_generated_confidence?: number;
+  /**
+   * Which layer detected the AI signal: METADATA (generator marker in EXIF/bytes) or VISION (vision model).
+   */
+  receipt_ai_generated_source?: 'METADATA' | 'VISION';
+  /**
+   * Name of editing software detected in the EXIF Software tag (e.g. Photoshop, Lightroom, Canva). Recorded as a fact only, not a fraud signal.
+   */
+  receipt_edit_software?: string;
 }
 /**
  * Structured OCR result.  Omitted when the receipt could not be read.
