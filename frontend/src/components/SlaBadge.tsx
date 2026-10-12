@@ -2,19 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { SlaStatus } from "@/src/lib/api";
+import { useI18n } from "@/src/i18n";
 
 const STYLES: Record<SlaStatus, string> = {
   ON_TRACK: "bg-emerald-100 text-emerald-800 border-emerald-300",
   AT_RISK: "bg-amber-100 text-amber-900 border-amber-300",
   BREACHED: "bg-red-100 text-red-800 border-red-300",
   RESOLVED: "bg-slate-100 text-slate-600 border-slate-300",
-};
-
-const LABELS: Record<SlaStatus, string> = {
-  ON_TRACK: "On track",
-  AT_RISK: "At risk",
-  BREACHED: "Breached",
-  RESOLVED: "Resolved",
 };
 
 function format(seconds: number) {
@@ -32,6 +26,7 @@ interface Props {
 
 export default function SlaBadge({ deadline, totalSeconds, resolved }: Props) {
   const [now, setNow] = useState(() => Date.now());
+  const { t } = useI18n();
 
   useEffect(() => {
     if (resolved) return;
@@ -52,10 +47,10 @@ export default function SlaBadge({ deadline, totalSeconds, resolved }: Props) {
     <span
       className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STYLES[status]}`}
     >
-      {LABELS[status]}
+      {t(`sla.${status}`)}
       {!resolved && (
         <span className="tabular-nums">
-          {remaining >= 0 ? format(remaining) : `+${format(remaining)} overdue`}
+          {remaining >= 0 ? format(remaining) : t("sla.overdue", { time: format(remaining) })}
         </span>
       )}
     </span>

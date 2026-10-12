@@ -6,9 +6,10 @@ interface ConfidenceMeterProps {
   score: number; // 0.0 - 1.0
   size?: number;
   className?: string;
+  label?: string;
 }
 
-export function ConfidenceMeter({ score, size = 120, className = "" }: ConfidenceMeterProps) {
+export function ConfidenceMeter({ score, size = 120, className = "", label = "AI Confidence" }: ConfidenceMeterProps) {
   const percentage = Math.round(score * 100);
   const radius = (size - 12) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -42,7 +43,7 @@ export function ConfidenceMeter({ score, size = 120, className = "" }: Confidenc
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-2xl font-bold" style={{ color }}>{percentage}%</span>
-        <span className="text-xs text-slate-400 font-medium">AI Confidence</span>
+        <span className="text-xs text-slate-400 font-medium">{label}</span>
       </div>
     </div>
   );

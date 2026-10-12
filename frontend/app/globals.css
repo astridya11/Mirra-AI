@@ -21,6 +21,19 @@
   --color-prosecutor: #D97706;
   --color-judge: #1E293B;
 
+  /* MIRRA showcase */
+  --color-mirra: #F23D63;
+  --color-mirra-soft: #FFF0F4;
+  --color-ink: #111827;
+  --color-body: #1F2937;
+  --color-muted: #6B7280;
+  --color-line: #E5E7EB;
+  --color-surface: #F8FAFC;
+  --color-ok: #16A34A;
+  --color-info: #2563EB;
+  --color-warn: #D97706;
+  --color-console: #08101F;
+
   /* Font */
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
@@ -76,6 +89,13 @@
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-6px); opacity: 1; }
 }
+
+/* MIRRA showcase animations */
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.animate-pop-in { animation: pop-in 0.35s ease-out both; }
 
 /* Hide scrollbar but allow scroll */
 .no-scrollbar::-webkit-scrollbar { display: none; }

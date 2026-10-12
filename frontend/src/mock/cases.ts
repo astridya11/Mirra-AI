@@ -10,7 +10,6 @@ import type {
   PartyDecisionRequest,
   PartyDecision,
   RawCaseData,
-  TripListItem,
 } from "@/src/types";
 
 export const mockRawCases: Record<string, RawCaseData> = {
@@ -18,6 +17,7 @@ export const mockRawCases: Record<string, RawCaseData> = {
     case_metadata: {
       case_id: "DISP-001",
       dispute_type: "ROUTE_DEVIATION",
+      dispute_claim_description: "The driver took a detour and I was charged an extra fee. I want the money back.",
       current_state: "INIT_CLAIM",
       current_round: 1,
       resolution_channel: "FULLY_AUTOMATED",
@@ -26,6 +26,14 @@ export const mockRawCases: Record<string, RawCaseData> = {
       driver_id: "D-5541",
       created_at: "2026-09-22T14:10:00+08:00",
       updated_at: "2026-09-22T14:10:00+08:00",
+    },
+    dispute_claim: {
+      case_id: "DISP-001",
+      trip_id: "TRIP-2026-08112",
+      dispute_type: "ROUTE_DEVIATION",
+      description: "The driver took a detour and I was charged an extra fee. I want the money back.",
+      filed_by: "RIDER",
+      filed_at: "2026-09-22T14:10:00+08:00",
     },
     data_sources: {
       trip_data: {
@@ -173,6 +181,7 @@ export const mockRawCases: Record<string, RawCaseData> = {
     case_metadata: {
       case_id: "DISP-002",
       dispute_type: "NO_SHOW_CHARGE",
+      dispute_claim_description: "I was at the pickup point at Tiong Bahru Plaza on time but the driver never showed up. I waited 10 minutes at the lobby and couldn't find the car. The app charged me a $5.00 cancellation fee for a 'no-show' which is completely unfair -- I was there, the driver was not. I want the charge reversed immediately.",
       current_state: "INIT_CLAIM",
       current_round: 1,
       resolution_channel: "FULLY_AUTOMATED",
@@ -181,6 +190,14 @@ export const mockRawCases: Record<string, RawCaseData> = {
       driver_id: "D-2398",
       created_at: "2026-09-13T09:20:00+08:00",
       updated_at: "2026-09-13T09:20:00+08:00",
+    },
+    dispute_claim: {
+      case_id: "DISP-002",
+      trip_id: "TRIP-2026-09945",
+      dispute_type: "NO_SHOW_CHARGE",
+      description: "I was at the pickup point at Tiong Bahru Plaza on time but the driver never showed up. I waited 10 minutes at the lobby and couldn't find the car. The app charged me a $5.00 cancellation fee for a 'no-show' which is completely unfair -- I was there, the driver was not. I want the charge reversed immediately.",
+      filed_by: "RIDER",
+      filed_at: "2026-09-13T09:20:00+08:00",
     },
     data_sources: {
       trip_data: {
@@ -334,6 +351,7 @@ export const mockRawCases: Record<string, RawCaseData> = {
     case_metadata: {
       case_id: "DISP-003",
       dispute_type: "CLEANING_FEE",
+      dispute_claim_description: "claim cleaning fees",
       current_state: "INIT_CLAIM",
       current_round: 1,
       resolution_channel: "FULLY_AUTOMATED",
@@ -342,6 +360,14 @@ export const mockRawCases: Record<string, RawCaseData> = {
       driver_id: "D-9012",
       created_at: "2026-09-22T16:00:00+08:00",
       updated_at: "2026-09-22T16:00:00+08:00",
+    },
+    dispute_claim: {
+      case_id: "DISP-003",
+      trip_id: "TRIP-2026-09102",
+      dispute_type: "CLEANING_FEE",
+      description: "claim cleaning fees",
+      filed_by: "DRIVER",
+      filed_at: "2026-09-22T16:00:00+08:00",
     },
     data_sources: {
       trip_data: {
@@ -479,6 +505,7 @@ export const mockCompletedResults: Record<string, CaseResult> = {
     case_metadata: {
       case_id: "DISP-001",
       dispute_type: "ROUTE_DEVIATION",
+      dispute_claim_description: "The driver took a detour and I was charged an extra fee. I want the money back.",
       current_state: "EXECUTION_ROUTER",
       current_round: 2,
       resolution_channel: "FULLY_AUTOMATED",
@@ -723,6 +750,7 @@ export const mockCompletedResults: Record<string, CaseResult> = {
     case_metadata: {
       case_id: "DISP-002",
       dispute_type: "NO_SHOW_CHARGE",
+      dispute_claim_description: "I was at the pickup point at Tiong Bahru Plaza on time but the driver never showed up. I waited 10 minutes at the lobby and couldn't find the car. The app charged me a $5.00 cancellation fee for a 'no-show' which is completely unfair -- I was there, the driver was not. I want the charge reversed immediately.",
       current_state: "EXECUTION_ROUTER",
       current_round: 2,
       resolution_channel: "FULLY_AUTOMATED",
@@ -970,6 +998,7 @@ export const mockCompletedResults: Record<string, CaseResult> = {
     case_metadata: {
       case_id: "DISP-003",
       dispute_type: "CLEANING_FEE",
+      dispute_claim_description: "claim cleaning fees",
       current_state: "EXECUTION_ROUTER",
       current_round: 2,
       resolution_channel: "ESCALATED_HUMAN_REVIEW",
@@ -1253,16 +1282,6 @@ export const mockCompletedResults: Record<string, CaseResult> = {
 // ---------------------------------------------------------------------------
 // Mock API functions
 // ---------------------------------------------------------------------------
-
-export function mockListTrips(): TripListItem[] {
-  return Object.values(mockRawCases).map((c) => ({
-    case_id: c.case_metadata.case_id,
-    trip_id: c.case_metadata.trip_id!,
-    trip_data: c.data_sources.trip_data!,
-    historical_profiles: c.data_sources.historical_profiles,
-    payment_fare_data: c.data_sources.payment_fare_data
-  }));
-}
 
 export function mockListCases(): CaseListItem[] {
   return Object.values(mockRawCases).map((c) => ({

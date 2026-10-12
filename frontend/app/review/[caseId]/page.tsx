@@ -12,6 +12,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { getCompletedResult } from "@/src/lib/api"; 
 import { useParams } from "next/navigation";
 import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
+import { HumanDecision } from "@/src/components/review/HumanDecision";
+import { ImageEvidence } from "@/src/components/review/ImageEvidence";
+import { confidenceLabel, judgeConfidence, reasonLabel } from "@/src/components/review/reviewModel";
+import { enumLabel, useI18n, type Translator } from "@/src/i18n";
+import { en } from "@/src/i18n/en";
+import { RawText } from "@/src/i18n/RawText";
+import type { MessageKey } from "@/src/i18n/en";
+import { LanguageSwitch } from "@/src/i18n/LanguageSwitch";
 
 // ==========================================
 // TYPES
@@ -90,65 +98,21 @@ function formatTime(ts?: string): string {
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString();
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  status: "Status",
-  dispute_type: "Dispute Type",
-  rider_id: "Rider ID",
-  driver_id: "Driver ID",
-  frozen_at: "Evidence Frozen At",
-  prosecutor_summary: "Prosecutor Summary",
-  verified_facts: "Verified Facts",
-  disputed_facts: "Disputed Facts",
-  missing_facts: "Missing Facts",
-  missing_evidence: "Missing Evidence",
-  fact_id: "Fact ID",
-  description: "Description",
-  source: "Source",
-  fraud_risk_level: "Fraud Risk Level",
-  fraud_risk_score: "Fraud Risk Score",
-  escalation_protocol: "Escalation Protocol",
-  safety_threat_detected: "Safety Threat Detected",
-  missing_crucial_evidence: "Missing Crucial Evidence",
-  party_requested_human: "Party Requested Human Review",
-  is_escalated: "Is Escalated",
-  escalation_reasons: "Escalation Reasons",
-  priority_level: "Priority Level",
-  request_id: "Request ID",
-  verified_fact_ids: "Verified Fact IDs",
-  requested_at: "Requested At",
-  suggested_ruling: "Suggested Ruling",
-  suggested_ruling_type: "Suggested Ruling Type",
-  ruling_type: "Ruling Type",
-  recommended_action: "Recommended Action",
-  suggested_action: "Suggested Action",
-  refund_amount: "Refund Amount",
-  cleaning_fee_amount: "Cleaning Fee Amount",
-  account_action: "Account Action",
-  applicable_clauses: "Applicable Clauses",
-  clause_id: "Clause ID",
-  clause_text: "Clause Text",
-  matched_precedents: "Matched Precedents",
-  precedents: "Precedents",
-  confidence: "Confidence",
-  confidence_score: "Confidence Score",
-  reasoning: "Reasoning",
-  rationale: "Rationale",
-  explanation: "Explanation",
-  route: "Route",
-  requires_human_signoff: "Requires Human Signoff",
-  execution_payload: "Execution Payload",
-  execution_status: "Execution Status",
-  transaction_id: "Transaction ID",
-  auto_executed_at: "Auto Executed At",
-  case_final_status: "Case Final Status",
-  resolved_at: "Resolved At",
-  question_text: "Question",
-  evidence_context: "Evidence Context",
-  category: "Category",
-  directed_to: "Directed To",
+/** Field labels come from the i18n dictionary (rf.<field>); unknown keys show as-is. */
+const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b(id|ids|url|ocr|gps|ai|kmh)\b/gi, (w) => w.toUpperCase()).replace(/^./, (c) => c.toUpperCase());
+const label = (k: string, t: Translator) => (`rf.${k}` in en ? t(`rf.${k}` as MessageKey) : humanize(k));
+/** ISO timestamps from the backend, shown in local time (raw value in the tooltip). */
+const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const isNested = (v: unknown) =>
+  !!v && typeof v === "object" && (Array.isArray(v) ? v.some((x) => x !== null && typeof x === "object") : Object.keys(v as object).length > 0);
+/** Enum-looking backend tokens get a display label; the raw value stays in the tooltip. */
+const EnumText: React.FC<{ value: unknown }> = ({ value }) => {
+  const { t } = useI18n();
+  const v = String(value ?? "");
+  return <span title={v}>{/^[A-Z][A-Z0-9_]+$/.test(v) ? enumLabel(t, v) : v}</span>;
 };
-
-const label = (k: string) => FIELD_LABELS[k] ?? k;
+/** Backend free text: long sentences go through RawText (AI translation in the Chinese UI). */
+const isProse = (v: string) => v.length > 40 && /\s/.test(v) && !v.trim().startsWith("{");
 
 const PHASE_TO_STEP: Record<string, StepKey> = {
   CASE_SUMMARY: "CASE_SUMMARY",
@@ -242,22 +206,22 @@ function normalizeMessage(e: FeedEvent): NormalizedMessage {
   };
 }
 
-const ROLE_STYLE = {
+const ROLE_STYLE: Record<"prosecutor" | "rider" | "driver" | "other", { box: string; title: MessageKey }> = {
   prosecutor: {
     box: "bg-blue-50/50 border-blue-200 text-blue-900",
-    title: "🔍 Prosecutor",
+    title: "rd.role.prosecutor",
   },
   rider: {
     box: "bg-purple-50/50 border-purple-200 text-purple-900",
-    title: "🛵 Rider Advocate",
+    title: "rd.role.rider",
   },
   driver: {
     box: "bg-emerald-50/50 border-emerald-200 text-emerald-900",
-    title: "🚗 Driver Advocate",
+    title: "rd.role.driver",
   },
   other: {
     box: "bg-gray-50 border-gray-200 text-gray-900",
-    title: "🤖 Agent",
+    title: "rd.role.other",
   },
 };
 
@@ -269,11 +233,11 @@ function roleOf(speaker: string): keyof typeof ROLE_STYLE {
   return "other";
 }
 
-function roleName(raw: string): string {
+function roleName(raw: string, t: Translator): string {
   const r = roleOf(raw);
-  if (r === "prosecutor") return "Prosecutor";
-  if (r === "rider") return "Rider Advocate";
-  if (r === "driver") return "Driver Advocate";
+  if (r === "prosecutor") return t("agent.prosecutor.name");
+  if (r === "rider") return t("agent.rider.name");
+  if (r === "driver") return t("agent.driver.name");
   return raw || "—";
 }
 
@@ -301,26 +265,40 @@ const Chip: React.FC<{ children: React.ReactNode; tone?: "primary" | "blue" | "a
 };
 
 const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ value, skip = [], depth = 0 }) => {
+  const { t } = useI18n();
   if (value === null || value === undefined || value === "") {
     return <span className="text-gray-400">—</span>;
   }
   if (typeof value === "boolean") {
-    return <Chip tone={value ? "primary" : "gray"}>{value ? "Yes" : "No"}</Chip>;
+    return <Chip tone={value ? "primary" : "gray"}>{t(value ? "common.yes" : "common.no")}</Chip>;
   }
   if (typeof value === "number") {
     return <span className="text-gray-900 font-mono">{value}</span>;
   }
   if (typeof value === "string") {
-    return <span className="text-gray-800 whitespace-pre-wrap leading-relaxed">{value}</span>;
+    if (ISO_TS.test(value) && !Number.isNaN(Date.parse(value)))
+      return (
+        <span className="text-gray-800 tabular-nums" title={value}>
+          {new Date(value).toLocaleString()}
+        </span>
+      );
+    if (isProse(value)) return <RawText as="span" text={value} className="text-gray-800 whitespace-pre-wrap leading-relaxed" />;
+    return (
+      <span className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+        <EnumText value={value} />
+      </span>
+    );
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-gray-400">(Empty)</span>;
+    if (value.length === 0) return <span className="text-gray-400">{t("rd.empty")}</span>;
     const allPrimitive = value.every((v) => v === null || typeof v !== "object");
     if (allPrimitive) {
       return (
         <div className="flex flex-wrap gap-1.5">
           {value.map((v, i) => (
-            <Chip key={i}>{String(v)}</Chip>
+            <Chip key={i}>
+              <EnumText value={v} />
+            </Chip>
           ))}
         </div>
       );
@@ -337,17 +315,30 @@ const DataView: React.FC<{ value: any; skip?: string[]; depth?: number }> = ({ v
   }
   const obj = value as Rec;
   const entries = Object.entries(obj).filter(([k]) => !skip.includes(k));
-  if (entries.length === 0) return <span className="text-gray-400">(Empty)</span>;
+  if (entries.length === 0) return <span className="text-gray-400">{t("rd.empty")}</span>;
   return (
-    <dl className="space-y-2">
-      {entries.map(([k, v]) => (
-        <div key={k} className={depth === 0 ? "grid grid-cols-[10rem_1fr] gap-x-3" : "grid grid-cols-[8.5rem_1fr] gap-x-2"}>
-          <dt className="text-gray-500 font-medium">{label(k)}</dt>
-          <dd className="min-w-0">
-            <DataView value={v} depth={depth + 1} />
-          </dd>
-        </div>
-      ))}
+    <dl className="space-y-2.5">
+      {entries.map(([k, v]) =>
+        isNested(v) ? (
+          <div key={k} className="space-y-1.5">
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-gray-500" title={k}>
+              {label(k, t)}
+            </dt>
+            <dd className="min-w-0 border-l-2 border-gray-100 pl-3">
+              <DataView value={v} depth={depth + 1} />
+            </dd>
+          </div>
+        ) : (
+          <div key={k} className="grid grid-cols-[minmax(7rem,30%)_minmax(0,1fr)] gap-x-4 items-baseline">
+            <dt className="text-gray-500 font-medium [overflow-wrap:anywhere]" title={k}>
+              {label(k, t)}
+            </dt>
+            <dd className="min-w-0 [overflow-wrap:anywhere]">
+              <DataView value={v} depth={depth + 1} />
+            </dd>
+          </div>
+        ),
+      )}
     </dl>
   );
 };
@@ -364,16 +355,21 @@ const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({
   );
 };
 
-const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary = "View Raw Data" }) => (
+const RawJson: React.FC<{ value: any; summary?: string }> = ({ value, summary }) => (
   <details className="text-[11px] text-gray-500 group">
     <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors select-none">
-      {summary}
+      {summary ?? <RawJsonLabel />}
     </summary>
     <pre className="mt-2 p-3 bg-gray-50 border border-gray-100 rounded-lg overflow-x-auto text-gray-600 font-mono text-[10px]">
       {JSON.stringify(value, null, 2)}
     </pre>
   </details>
 );
+
+function RawJsonLabel() {
+  const { t } = useI18n();
+  return <>{t("rd.viewRaw")}</>;
+}
 
 // ==========================================
 // AGENT 对话卡片
@@ -387,23 +383,24 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
   const isResponse = msg.messageType === "RESPONSE";
   const inCrossExam = event.sub_phase === "CROSS_EXAM" || isQuestion || isResponse;
   const indent = isResponse ? "ml-6 md:ml-12" : "";
+  const { t } = useI18n();
 
   return (
     <div className={`my-4 ${indent}`}>
       <div className={`p-4 rounded-xl border ${style.box}`}>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-black/5">
           <span className="font-semibold text-sm flex flex-wrap items-center gap-2">
-            {role === "other" ? `🤖 ${msg.speaker}` : style.title}
+            {role === "other" ? `🤖 ${msg.speaker}` : t(style.title)}
             {inCrossExam && msg.messageType && (
               <Chip tone={isQuestion ? "primary" : "green"}>
-                {isQuestion ? "Question" : "Response"}
-                {msg.turn !== undefined ? ` · Round ${msg.turn}` : ""}
+                {t(isQuestion ? "rd.question" : "rd.response")}
+                {msg.turn !== undefined ? t("rd.round", { n: msg.turn }) : ""}
               </Chip>
             )}
             {msg.target && (
               <span className="text-xs font-normal text-gray-500">
-                {isQuestion ? "Directed to: " : "Responding to: "}
-                {roleName(msg.target)}
+                {t(isQuestion ? "rd.directedTo" : "rd.respondingTo")}
+                {roleName(msg.target, t)}
               </span>
             )}
           </span>
@@ -411,28 +408,32 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
         </div>
 
         <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
-          {msg.text || <span className="italic text-gray-400">(This Agent did not return text content)</span>}
+          {msg.text ? (
+            isProse(msg.text) ? <RawText as="div" text={msg.text} /> : msg.text
+          ) : (
+            <span className="italic text-gray-400">{t("rd.noText")}</span>
+          )}
         </div>
 
         {isQuestion && (msg.category || msg.evidenceContext) && (
           <div className="mt-4 pt-3 border-t border-black/5 text-xs space-y-2 text-gray-600 bg-white/50 rounded-lg p-3">
             {msg.category && msg.category !== "OTHER" && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">Category:</span>
-                {msg.category}
+                <span className="text-gray-500 font-medium mr-2">{t("rd.category")}</span>
+                <EnumText value={msg.category} />
               </div>
             )}
             {msg.evidenceContext && (
               <div>
-                <span className="text-gray-500 font-medium mr-2">Evidence Context:</span>
-                {msg.evidenceContext}
+                <span className="text-gray-500 font-medium mr-2">{t("rd.evidenceContext")}</span>
+                <RawText as="span" text={msg.evidenceContext} raw={isProse(msg.evidenceContext)} />
               </div>
             )}
           </div>
         )}
 
         <div className="mt-3">
-          <RawJson value={msg.raw} summary="Agent Raw Output" />
+          <RawJson value={msg.raw} summary={t("rd.agentRaw")} />
         </div>
       </div>
     </div>
@@ -440,10 +441,11 @@ const AgentMessageCard: React.FC<{ event: FeedEvent }> = ({ event }) => {
 };
 
 const CrossExamTranscript: React.FC<{ questions: Rec[]; responses: Rec[] }> = ({ questions, responses }) => {
+  const { t } = useI18n();
   if (questions.length === 0) {
     return (
       <div className="my-4 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-500 text-center">
-        The Prosecutor did not raise any questions in this round.
+        {t("rd.noQuestions")}
       </div>
     );
   }
@@ -497,7 +499,7 @@ const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" 
         return (
           <li key={rec?.fact_id ?? i} className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-gray-700">
             {rec?.fact_id && <span className="text-gray-400 mr-2 font-mono text-xs">{rec.fact_id}</span>}
-            {text || <DataView value={rec} />}
+            {text ? <RawText as="span" text={text} raw={isProse(text)} /> : <DataView value={rec} />}
           </li>
         );
       })}
@@ -508,9 +510,10 @@ const FactList: React.FC<{ title: string; facts: any[]; tone: "green" | "amber" 
 const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
   const statementsObj = data.round_1_statements || data.statements || data;
   const riderStmt = asRecord(statementsObj.rider_statement) || asRecord(statementsObj.RIDER) || asRecord(Array.isArray(statementsObj) ? statementsObj.find((x: any) => x?.party === "RIDER" || x?.agent_role === "RIDER_ADVOCATE") : null);
+  const { t } = useI18n();
   const driverStmt = asRecord(statementsObj.driver_statement) || asRecord(statementsObj.DRIVER) || asRecord(Array.isArray(statementsObj) ? statementsObj.find((x: any) => x?.party === "DRIVER" || x?.agent_role === "DRIVER_ADVOCATE") : null);
 
-  const renderStatementCard = (title: string, stmt: Rec | null, role: "rider" | "driver") => {
+  const renderStatementCard = (stmt: Rec | null, role: "rider" | "driver") => {
     if (!stmt) return null;
     const style = ROLE_STYLE[role];
     const outcome = stmt.requested_outcome;
@@ -522,16 +525,14 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
       <div className={`p-5 rounded-xl border ${style.box} space-y-4`}>
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 pb-3">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-base">{style.title}</span>
-            <Chip tone={role === "rider" ? "primary" : "green"}>
-              {role === "rider" ? "Rider Advocate" : "Driver Advocate"}
-            </Chip>
+            <span className="font-bold text-base">{t(style.title)}</span>
+            <Chip tone={role === "rider" ? "primary" : "green"}>{t(role === "rider" ? "agent.rider.name" : "agent.driver.name")}</Chip>
           </div>
           {outcome && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-gray-500 font-medium">Requested:</span>
+              <span className="text-xs text-gray-500 font-medium">{t("rd.requested")}</span>
               <Chip tone="primary">
-                {String(outcome)} {amount !== undefined && amount !== null ? `($${amount} ${currency})` : ""}
+                <EnumText value={outcome} /> {amount !== undefined && amount !== null ? `($${amount} ${currency})` : ""}
               </Chip>
             </div>
           )}
@@ -539,26 +540,26 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {stmt.argument_summary && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Argument Summary</div>
-            <div className="p-3.5 rounded-lg bg-white/80 border border-black/5 text-gray-800 text-sm leading-relaxed font-medium">
-              {String(stmt.argument_summary)}
-            </div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">{t("rd.argSummary")}</div>
+            <RawText as="div" text={String(stmt.argument_summary)} className="p-3.5 rounded-lg bg-white/80 border border-black/5 text-gray-800 text-sm leading-relaxed font-medium" />
           </div>
         )}
 
         {stmt.detailed_argument && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detailed Argument</div>
-            <div className="p-3.5 rounded-lg bg-white/60 border border-black/5 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
-              {String(stmt.detailed_argument)}
-            </div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">{t("rd.detailedArg")}</div>
+            <RawText
+              as="div"
+              text={String(stmt.detailed_argument)}
+              className="p-3.5 rounded-lg bg-white/60 border border-black/5 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto"
+            />
           </div>
         )}
 
         {evidenceRefs.length > 0 && (
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-2">
-              <span>Cited Evidence References</span>
+              <span>{t("rd.citedEvidence")}</span>
               <Chip tone="gray">{evidenceRefs.length}</Chip>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -571,9 +572,11 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
                   <div key={i} className="p-2.5 rounded-lg bg-white/70 border border-black/5 text-xs space-y-1">
                     <div className="flex items-center justify-between gap-1">
                       <span className="font-mono font-semibold text-gray-900">{evId}</span>
-                      <Chip tone="blue">{sourceType}</Chip>
+                      <Chip tone="blue">
+                        <EnumText value={sourceType} />
+                      </Chip>
                     </div>
-                    <p className="text-gray-600 line-clamp-2">{desc}</p>
+                    <RawText text={desc} raw={isProse(desc)} className="text-gray-600 line-clamp-3" />
                   </div>
                 );
               })}
@@ -583,7 +586,7 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
         {stmt.submitted_at && (
           <div className="text-[11px] text-gray-400 text-right pt-2 border-t border-black/5">
-            Submitted at: {new Date(stmt.submitted_at).toLocaleString()}
+            {t("rd.submittedAt", { time: new Date(stmt.submitted_at).toLocaleString() })}
           </div>
         )}
       </div>
@@ -592,10 +595,8 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
 
   if (!riderStmt && !driverStmt) {
     return (
-      <Panel title="⚖️ Round 1 Statements (Initial Statements)">
-        <div className="text-gray-400 italic text-center p-6 bg-gray-50 rounded-lg">
-          No Round 1 Statements data available.
-        </div>
+      <Panel title={t("rd.r1Title")}>
+        <div className="text-gray-400 italic text-center p-6 bg-gray-50 rounded-lg">{t("rd.noR1")}</div>
       </Panel>
     );
   }
@@ -605,18 +606,18 @@ const Round1StatementsView: React.FC<{ data: Rec }> = ({ data }) => {
       <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 flex items-center gap-3">
         <span className="text-blue-600 text-lg">⚖️</span>
         <div>
-          <span className="font-bold text-blue-900 text-sm">Round 1 Statements Overview</span>
-          <p className="text-xs text-blue-700 mt-0.5">Formal initial statements and evidence citations submitted by the Rider and Driver Advocates.</p>
+          <span className="font-bold text-blue-900 text-sm">{t("rd.r1Overview")}</span>
+          <p className="text-xs text-blue-700 mt-0.5">{t("rd.r1OverviewSub")}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {renderStatementCard("Rider Statement", riderStmt, "rider")}
-        {renderStatementCard("Driver Statement", driverStmt, "driver")}
+        {renderStatementCard(riderStmt, "rider")}
+        {renderStatementCard(driverStmt, "driver")}
       </div>
 
       <div className="pt-2">
-        <RawJson value={data} summary="Round 1 Statements Raw Data" />
+        <RawJson value={data} summary={t("rd.r1Raw")} />
       </div>
     </div>
   );
@@ -627,10 +628,11 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
   bonus,
   title,
 }) => {
-  const factKeys: [string, string, "green" | "amber" | "red"][] = [
-    ["verified_facts", "Verified Facts", "green"],
-    ["disputed_facts", "Disputed Facts", "amber"],
-    ["missing_facts", "Missing Facts", "red"],
+  const { t } = useI18n();
+  const factKeys: [string, "green" | "amber" | "red"][] = [
+    ["verified_facts", "green"],
+    ["disputed_facts", "amber"],
+    ["missing_facts", "red"],
   ];
   const shown = ["prosecutor_summary", ...factKeys.map((f) => f[0])];
   const escalation = asRecord(bonus?.escalation_protocol);
@@ -642,15 +644,13 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
         <>
           {typeof findings.prosecutor_summary === "string" && findings.prosecutor_summary && (
             <div className="mb-4">
-              <div className="text-gray-500 font-medium mb-2">Prosecutor Summary</div>
-              <p className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800">
-                {findings.prosecutor_summary}
-              </p>
+              <div className="text-gray-500 font-medium mb-2">{label("prosecutor_summary", t)}</div>
+              <RawText text={findings.prosecutor_summary} className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800" />
             </div>
           )}
           {factKeys.map(
-            ([k, t, tone]) =>
-              Array.isArray(findings[k]) && findings[k].length > 0 && <FactList key={k} title={t} facts={findings[k]} tone={tone} />
+            ([k, tone]) =>
+              Array.isArray(findings[k]) && findings[k].length > 0 && <FactList key={k} title={label(k, t)} facts={findings[k]} tone={tone} />
           )}
           {Object.keys(findings).some((k) => !shown.includes(k) && !isEmpty(findings[k])) && (
             <div className="mt-6 pt-4 border-t border-gray-100">
@@ -659,23 +659,23 @@ const ProsecutorView: React.FC<{ findings: Rec | null; bonus: Rec | null; title:
           )}
         </>
       ) : (
-        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">The Prosecutor has not returned audit findings yet.</div>
+        <div className="text-gray-400 italic p-4 text-center bg-gray-50 rounded-lg">{t("rd.noFindings")}</div>
       )}
 
       {escalation && (
         <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
-          <span className="text-gray-600 font-medium">Risk Signals:</span>
-          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>Fraud Risk {fraud}</Chip>}
-          {escalation.safety_threat_detected && <Chip tone="red">Safety Threat Detected</Chip>}
-          {escalation.missing_crucial_evidence && <Chip tone="amber">Missing Crucial Evidence</Chip>}
+          <span className="text-gray-600 font-medium">{t("rd.riskSignals")}</span>
+          {fraud && <Chip tone={fraud === "HIGH" ? "red" : fraud === "MEDIUM" ? "amber" : "green"}>{t("rd.fraudRisk", { level: enumLabel(t, fraud) })}</Chip>}
+          {escalation.safety_threat_detected && <Chip tone="red">{label("safety_threat_detected", t)}</Chip>}
+          {escalation.missing_crucial_evidence && <Chip tone="amber">{label("missing_crucial_evidence", t)}</Chip>}
           {!escalation.safety_threat_detected && !escalation.missing_crucial_evidence && fraud !== "HIGH" && (
-            <Chip tone="green">No Escalation Signals</Chip>
+            <Chip tone="green">{t("rd.noEscalation")}</Chip>
           )}
         </div>
       )}
       {bonus && !isEmpty(bonus) && (
         <div className="mt-4">
-          <RawJson value={bonus} summary="Safety & Fraud Detection Module (bonus_modules)" />
+          <RawJson value={bonus} summary={t("rd.bonusRaw")} />
         </div>
       )}
     </Panel>
@@ -690,12 +690,13 @@ const KNOWN_CLAUSES = ["applicable_clauses", "clauses"];
 const KNOWN_PRECEDENTS = ["matched_precedents", "precedents", "similar_precedents", "relevant_precedents"];
 
 const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => {
+  const { t } = useI18n();
   if (typeof suggestion === "string") {
-    return <p className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">{suggestion}</p>;
+    return <RawText text={suggestion} className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800" />;
   }
   const s = asRecord(suggestion);
   if (!s || isEmpty(s)) {
-    return <div className="text-gray-400 italic text-center p-4">The Policy Advisor did not return available data.</div>;
+    return <div className="text-gray-400 italic text-center p-4">{t("rd.noPolicy")}</div>;
   }
 
   const ruling = pick(s, KNOWN_RULING);
@@ -711,11 +712,15 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
     <div className="space-y-6">
       {(ruling || conf) && (
         <div className="p-4 rounded-xl border border-[#E84360]/20 bg-[#E84360]/5 flex flex-wrap items-center gap-3">
-          <span className="font-semibold text-[#E84360]">💡 Suggested Policy Ruling</span>
-          {ruling && <Chip tone="primary">{String(ruling[1])}</Chip>}
+          <span className="font-semibold text-[#E84360]">{t("rd.suggestedRuling")}</span>
+          {ruling && (
+            <Chip tone="primary">
+              <EnumText value={ruling[1]} />
+            </Chip>
+          )}
           {conf && (
             <span className="text-gray-600 text-sm">
-              Confidence <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
+              {t("rd.confidence")} <span className="font-mono text-gray-900 font-medium">{String(conf[1])}</span>
             </span>
           )}
         </div>
@@ -723,7 +728,7 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {action && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">Recommended Action</div>
+          <div className="text-gray-500 font-medium mb-2">{label("recommended_action", t)}</div>
           <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={action[1]} />
           </div>
@@ -732,9 +737,9 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
       {reason && (
         <div>
-          <div className="text-gray-500 font-medium mb-2">Reasoning Rationale</div>
+          <div className="text-gray-500 font-medium mb-2">{t("rd.rationale")}</div>
           <div className="p-4 rounded-lg bg-gray-50 border border-gray-100 leading-relaxed text-gray-800">
-            {typeof reason[1] === "string" ? reason[1] : <DataView value={reason[1]} />}
+            {typeof reason[1] === "string" ? <RawText as="div" text={reason[1]} /> : <DataView value={reason[1]} />}
           </div>
         </div>
       )}
@@ -742,23 +747,28 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       {clauses && Array.isArray(clauses[1]) && (
         <div>
           <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            Applicable Policy Clauses <Chip tone="blue">{clauses[1].length}</Chip>
+            {t("rd.clauses")} <Chip tone="blue">{clauses[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {clauses[1].map((c: any, i: number) => {
               const rec = asRecord(c);
               if (!rec) return <div key={i} className="p-3 rounded-lg bg-gray-50 border border-gray-100">{String(c)}</div>;
-              const body = firstText(rec, ["clause_text", "content", "text", "description", "summary"]);
-              const why = firstText(rec, ["relevance", "relevance_reason", "reason", "rationale"]);
-              const shownKeys = ["clause_id", "title", "clause_title", "clause_text", "content", "text", "description", "summary", "relevance", "relevance_reason", "reason", "rationale"];
+              const body = firstText(rec, ["clause_text", "clause_text_summary", "content", "text", "description", "summary"]);
+              const why = firstText(rec, ["relevance", "relevance_summary", "relevance_reason", "reason", "rationale"]);
+              const shownKeys = ["clause_id", "title", "clause_title", "clause_text", "clause_text_summary", "content", "text", "description", "summary", "relevance", "relevance_summary", "relevance_reason", "reason", "rationale"];
               return (
                 <div key={rec.clause_id ?? i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm">
                   <div className="font-semibold text-gray-900">
                     {rec.clause_id && <span className="font-mono text-gray-400 mr-2 text-xs">{rec.clause_id}</span>}
-                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : `Clause ${i + 1}`)}
+                    {rec.title ?? rec.clause_title ?? (rec.clause_id ? "" : t("rd.clauseN", { n: i + 1 }))}
                   </div>
-                  {body && <div className="text-gray-700 mt-2 leading-relaxed whitespace-pre-wrap">{body}</div>}
-                  {why && <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">Relevance Reason: {why}</div>}
+                  {body && <RawText as="div" text={body} raw={isProse(body)} className="text-gray-700 mt-2 leading-relaxed whitespace-pre-wrap" />}
+                  {why && (
+                    <div className="text-gray-600 mt-3 p-3 bg-gray-50 rounded text-sm">
+                      {t("rd.relevance")}
+                      <RawText as="span" text={why} raw={isProse(why)} />
+                    </div>
+                  )}
                   {Object.keys(rec).some((k) => !shownKeys.includes(k) && !isEmpty(rec[k])) && (
                     <div className="mt-3 pt-3 border-t border-gray-100">
                       <DataView value={rec} skip={shownKeys} depth={1} />
@@ -774,12 +784,12 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
       {precedents && Array.isArray(precedents[1]) && (
         <div>
           <div className="text-gray-500 font-medium mb-2 flex items-center gap-2">
-            Reference Historical Precedents <Chip tone="gray">{precedents[1].length}</Chip>
+            {t("rd.precedents")} <Chip tone="gray">{precedents[1].length}</Chip>
           </div>
           <div className="space-y-3">
             {precedents[1].map((p: any, i: number) => (
               <div key={i} className="p-4 rounded-lg bg-white border border-gray-200 shadow-sm text-gray-700">
-                {typeof p === "string" ? p : <DataView value={p} depth={1} />}
+                {typeof p === "string" ? <RawText as="div" text={p} raw={isProse(p)} /> : <DataView value={p} depth={1} />}
               </div>
             ))}
           </div>
@@ -797,13 +807,14 @@ const PolicySuggestionView: React.FC<{ suggestion: any }> = ({ suggestion }) => 
 
 const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
   const request = asRecord(data.request);
+  const { t } = useI18n();
   return (
-    <Panel title="⚖️ Policy Clauses & Recommendations (Policy Consultation)">
+    <Panel title={t("rd.policyTitle")}>
       <PolicySuggestionView suggestion={data.suggestion} />
       {request && (
         <details className="mt-4 text-[11px] text-gray-500">
           <summary className="cursor-pointer hover:text-[#E84360] font-medium transition-colors">
-            Consultation Request (Policy Consultation Request)
+            {t("rd.policyRequest")}
           </summary>
           <div className="mt-2 p-4 rounded-lg bg-gray-50 border border-gray-100">
             <DataView value={request} />
@@ -811,7 +822,7 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
         </details>
       )}
       <div className="mt-2">
-        <RawJson value={data} summary="Policy Consultation Raw Data" />
+        <RawJson value={data} summary={t("rd.policyRaw")} />
       </div>
     </Panel>
   );
@@ -819,13 +830,18 @@ const PolicyView: React.FC<{ data: Rec }> = ({ data }) => {
 
 const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
   const action = asRecord(data.recommended_action);
+  const { t } = useI18n();
   return (
-    <Panel title="🧑‍⚖️ Judge Verdict">
+    <Panel title={t("rd.judgeTitle")}>
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        {data.ruling_type && <Chip tone="primary">{String(data.ruling_type)}</Chip>}
+        {data.ruling_type && (
+          <Chip tone="primary">
+            <EnumText value={data.ruling_type} />
+          </Chip>
+        )}
         {data.confidence_score !== undefined && (
-          <Chip tone={Number(data.confidence_score) >= 0.75 ? "green" : "amber"}>
-            Confidence {Number(data.confidence_score).toFixed(2)}
+          <Chip tone={(judgeConfidence(data) ?? 0) >= 0.75 ? "green" : "amber"}>
+            {t("rd.confidenceN", { c: confidenceLabel(judgeConfidence(data), t) })}
           </Chip>
         )}
       </div>
@@ -834,25 +850,55 @@ const JudgeView: React.FC<{ data: Rec }> = ({ data }) => {
           <DataView value={action} />
         </div>
       )}
-      <DataView value={data} skip={["ruling_type", "confidence_score", "recommended_action", "verified_fact_references", "policy_clauses_applied", "precedent_references", "execution_payload"]} />
+      {typeof data.reasoning_summary === "string" && data.reasoning_summary && (
+        <div>
+          <div className="text-gray-500 font-medium mb-2">{label("reasoning_summary", t)}</div>
+          <RawText text={data.reasoning_summary} className="p-4 rounded-lg bg-blue-50/50 border border-blue-100 leading-relaxed text-gray-800" />
+        </div>
+      )}
+      {asRecord(data.explanations) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {(["explanation_for_rider", "explanation_for_driver"] as const).map(
+            (k) =>
+              typeof data.explanations[k] === "string" &&
+              data.explanations[k] && (
+                <div key={k} className="rounded-lg border border-gray-200 p-4">
+                  <div className="text-gray-500 font-medium mb-2">{label(k, t)}</div>
+                  <RawText text={data.explanations[k]} className="leading-relaxed text-gray-800" />
+                </div>
+              ),
+          )}
+        </div>
+      )}
+      <DataView
+        value={data}
+        skip={["ruling_type", "confidence_score", "recommended_action", "reasoning_summary", "explanations", "verified_fact_references", "policy_clauses_applied", "precedent_references", "execution_payload"]}
+      />
     </Panel>
   );
 };
 
 const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
   const escalated = data.route === "ESCALATED_HUMAN_REVIEW";
+  const { t } = useI18n();
   return (
-    <Panel title="🚦 Execution Router">
+    <Panel title={t("rd.execTitle")}>
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        {data.route && <Chip tone={escalated ? "amber" : "green"}>{String(data.route)}</Chip>}
-        {data.confidence_score !== undefined && <Chip>Confidence {Number(data.confidence_score).toFixed(2)}</Chip>}
+        {data.route && (
+          <Chip tone={escalated ? "amber" : "green"}>
+            <EnumText value={data.route} />
+          </Chip>
+        )}
+        {data.confidence_score !== undefined && <Chip>{t("rd.confidenceN", { c: confidenceLabel(data.confidence_score, t) })}</Chip>}
       </div>
       {Array.isArray(data.escalation_reasons) && data.escalation_reasons.length > 0 && (
         <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-100">
-          <div className="text-amber-800 font-medium mb-2">Escalation Reasons:</div>
+          <div className="text-amber-800 font-medium mb-2">{t("rd.escReasons")}</div>
           <ul className="list-disc list-inside space-y-1 text-amber-700">
             {data.escalation_reasons.map((r: string, i: number) => (
-              <li key={i}>{r}</li>
+              <li key={i}>
+                <RawText as="span" text={reasonLabel(r, t)} raw={reasonLabel(r, t) === r} />
+              </li>
             ))}
           </ul>
         </div>
@@ -869,7 +915,6 @@ const ExecutionView: React.FC<{ data: Rec }> = ({ data }) => {
 const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
   const metadata = asRecord(data.case_metadata) || {};
   const claim = asRecord(data.dispute_claim) || {};
-  const findings = asRecord(data.prosecutor_findings) || {};
   const bonus = asRecord(data.bonus_modules) || {};
   const escalation = asRecord(bonus.escalation_protocol) || {};
   const verdict = asRecord(data.judge_verdict) || {};
@@ -877,7 +922,8 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
 
   const reasons = escalation.escalation_reasons || [];
   const priority = escalation.priority_level || "STANDARD";
-  const confidence = verdict.confidence_score ?? findings.confidence_score ?? 0;
+  const confidence = judgeConfidence(verdict);
+  const { t } = useI18n();
 
   return (
     <div className="space-y-6">
@@ -885,16 +931,16 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
         <div className="flex items-center gap-3">
           <span className="w-3 h-3 rounded-full bg-[#E84360] animate-pulse"></span>
           <div>
-            <span className="font-bold text-gray-900 text-base">Executive Case Summary</span>
-            <p className="text-xs text-gray-500 mt-0.5">At-a-glance overview of core case info, AI verdict, escalation reasons & key risks to reduce human support workload.</p>
+            <span className="font-bold text-gray-900 text-base">{t("rd.sumTitle")}</span>
+            <p className="text-xs text-gray-500 mt-0.5">{t("rd.sumSub")}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Chip tone={priority === "URGENT" ? "red" : priority === "HIGH_PRIORITY" ? "amber" : "primary"}>
-            Priority: {priority}
+            {t("rd.priority", { p: enumLabel(t, priority) })}
           </Chip>
-          <Chip tone={confidence >= 0.75 ? "green" : "amber"}>
-            Confidence: {Number(confidence).toFixed(2)}
+          <Chip tone={(confidence ?? 0) >= 0.75 ? "green" : "amber"}>
+            {t("rd.confidenceColon", { c: confidenceLabel(confidence, t) })}
           </Chip>
         </div>
       </div>
@@ -902,50 +948,61 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
           <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            🛵 Basic Info & Dispute Claim
+            {t("rd.basicInfo")}
           </div>
           <div className="text-sm space-y-2">
             <div className="flex justify-between">
-              <span className="text-gray-500">Dispute Type:</span>
-              <span className="font-medium text-gray-800">{metadata.dispute_type || claim.dispute_type || "—"}</span>
+              <span className="text-gray-500">{t("rd.disputeType")}</span>
+              <span className="font-medium text-gray-800">
+                <EnumText value={metadata.dispute_type || claim.dispute_type || "—"} />
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Rider ID:</span>
+              <span className="text-gray-500">{t("rd.riderId")}</span>
               <span className="font-mono text-gray-800">{metadata.rider_id || claim.rider_id || "—"}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Driver ID:</span>
+              <span className="text-gray-500">{t("rd.driverId")}</span>
               <span className="font-mono text-gray-800">{metadata.driver_id || claim.driver_id || "—"}</span>
             </div>
             <div className="pt-2 border-t border-gray-100">
-              <span className="text-gray-500 block mb-1">Dispute Description / Claim:</span>
-              <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed max-h-32 overflow-y-auto">
-                {claim.description || metadata.description || "No detailed description"}
-              </p>
+              <span className="text-gray-500 block mb-1">{t("rd.description")}</span>
+              {claim.description || metadata.description ? (
+                <RawText
+                  text={String(claim.description || metadata.description)}
+                  className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed max-h-32 overflow-y-auto"
+                />
+              ) : (
+                <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-xs leading-relaxed">{t("rd.noDescription")}</p>
+              )}
             </div>
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3">
           <div className="font-semibold text-gray-900 border-b border-gray-100 pb-2">
-            🧑‍⚖️ AI Verdict & Recommended Actions
+            {t("rd.verdictActions")}
           </div>
           <div className="text-sm space-y-2">
             <div className="flex justify-between items-center">
-              <span className="text-gray-500">Suggested Ruling Type:</span>
-              <Chip tone="primary">{verdict.ruling_type || verdict.suggested_ruling_type || "—"}</Chip>
+              <span className="text-gray-500">{t("rd.suggestedRulingType")}</span>
+              <Chip tone="primary">
+                <EnumText value={verdict.ruling_type || verdict.suggested_ruling_type || "—"} />
+              </Chip>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Refund Amount:</span>
+              <span className="text-gray-500">{t("rd.refundAmount")}</span>
               <span className="font-mono font-medium text-gray-900">${action.refund_amount ?? 0}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Cleaning Fee Amount:</span>
+              <span className="text-gray-500">{t("rd.cleaningAmount")}</span>
               <span className="font-mono font-medium text-gray-900">${action.cleaning_fee_amount ?? 0}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Account Action:</span>
-              <span className="font-mono font-medium text-gray-900">{action.account_action || "NONE"}</span>
+              <span className="text-gray-500">{t("rd.accountAction")}</span>
+              <span className="font-medium text-gray-900">
+                <EnumText value={action.account_action || "NONE"} />
+              </span>
             </div>
           </div>
         </div>
@@ -954,11 +1011,13 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {Array.isArray(reasons) && reasons.length > 0 && (
         <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-2">
           <div className="font-semibold text-amber-900">
-            ⚠️ Human Review Escalation Reasons / Risk Warnings
+            {t("rd.escTitle")}
           </div>
           <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
             {reasons.map((r: string, i: number) => (
-              <li key={i}>{r}</li>
+              <li key={i}>
+                <RawText as="span" text={reasonLabel(r, t)} raw={reasonLabel(r, t) === r} />
+              </li>
             ))}
           </ul>
         </div>
@@ -978,11 +1037,9 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
       {verdict.reasoning_summary && (
         <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
           <div className="font-semibold text-blue-900">
-            🔍 Judge Verdict Reasoning Summary
+            {t("rd.judgeSummary")}
           </div>
-          <p className="text-sm text-blue-900 leading-relaxed">
-            {verdict.reasoning_summary}
-          </p>
+          <RawText text={String(verdict.reasoning_summary)} className="text-sm text-blue-900 leading-relaxed" />
         </div>
       )}
     </div>
@@ -1001,6 +1058,8 @@ export default function CustomerSupportCaseViewPage() {
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<FeedEvent[]>([]);
   const [activeTab, setActiveTab] = useState<StepKey>("CASE_SUMMARY");
+  const { t } = useI18n();
+  const stepLabel = (id: StepKey) => t(`rstep.${id}` as MessageKey);
 
   useEffect(() => {
     if (!caseId) return;
@@ -1114,7 +1173,7 @@ export default function CustomerSupportCaseViewPage() {
           phase: "EXECUTION_ROUTER",
           data: {
             route: result.case_metadata?.resolution_channel,
-            confidence_score: result.judge_verdict?.confidence_score,
+            confidence_score: judgeConfidence(result.judge_verdict),
             escalation_reasons: result.bonus_modules?.escalation_protocol?.escalation_reasons,
             ...result.judge_verdict?.execution_payload,
           },
@@ -1122,7 +1181,7 @@ export default function CustomerSupportCaseViewPage() {
 
         setEvents(synthesizedEvents);
       } catch (err) {
-        setError("Failed to fetch case data, please check network or backend logs.");
+        setError("rd.fetchError");
         console.error("Fetch complete result error:", err);
       } finally {
         setIsLoading(false);
@@ -1160,17 +1219,18 @@ export default function CustomerSupportCaseViewPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
               <span className="w-2 h-6 bg-[#E84360] rounded-sm inline-block"></span>
-              Mirra AI Tribunal <span className="text-gray-400 font-normal">|</span> Customer Support
+              MIRRA AI <span className="text-gray-400 font-normal">|</span> {t("review.title")}
             </h1>
-            <p className="text-sm text-gray-500 mt-1 ml-4">Case ID: {caseId}</p>
+            <p className="text-sm text-gray-500 mt-1 ml-4">{t("review.caseIdLine", { caseId })}</p>
           </div>
+          <LanguageSwitch compact />
           {isLoading && (
             <div className="flex items-center gap-2 text-sm text-gray-500">
               <svg className="animate-spin h-4 w-4 text-[#E84360]" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Loading data...
+              {t("review.loadingData")}
             </div>
           )}
         </div>
@@ -1199,7 +1259,7 @@ export default function CustomerSupportCaseViewPage() {
                       : "text-gray-400 cursor-not-allowed border border-transparent"
                   }`}
                 >
-                  <span className="truncate">{step.name}</span>
+                  <span className="truncate">{stepLabel(step.id)}</span>
                   {hasData && isActive && <span className="w-1.5 h-1.5 rounded-full bg-[#E84360]"></span>}
                 </button>
               );
@@ -1212,21 +1272,21 @@ export default function CustomerSupportCaseViewPage() {
         <section className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 md:p-8 min-h-[600px]">
           {error ? (
             <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
-              {error}
+              {t("rd.fetchError")}
             </div>
           ) : isLoading ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
               <span className="loading-spinner mb-4"></span>
-              Fetching tribunal data...
+              {t("review.fetching")}
             </div>
           ) : activeEvents.length === 0 ? (
             <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-              No data available for this phase
+              {t("review.noPhaseData")}
             </div>
           ) : (
             <div className="space-y-6">
               <h2 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-4 mb-6">
-                {STEPS.find(s => s.id === activeTab)?.name}
+                {stepLabel(activeTab)}
               </h2>
               {activeEvents.map((event, idx) => {
                 const data = asRecord(event.data);
@@ -1241,7 +1301,7 @@ export default function CustomerSupportCaseViewPage() {
                       return <CaseSummaryView key={idx} data={data} />;
                     case "INIT_CLAIM":
                       return (
-                        <Panel key={idx} title="📁 Case Basic Information">
+                        <Panel key={idx} title={t("rd.caseBasic")}>
                           <DataView value={data} skip={["status"]} />
                         </Panel>
                       );
@@ -1256,7 +1316,7 @@ export default function CustomerSupportCaseViewPage() {
                       return (
                         <ProsecutorView
                           key={idx}
-                          title="📜 Prosecutor Final Report"
+                          title={t("rd.prosFinal")}
                           findings={asRecord(data.prosecutor_findings)}
                           bonus={asRecord(data.bonus_modules)}
                         />
@@ -1277,6 +1337,10 @@ export default function CustomerSupportCaseViewPage() {
           )}
         </section>
       </main>
+      <div className="max-w-7xl w-full mx-auto px-6 pb-12">
+        <ImageEvidence caseId={caseId} />
+        <HumanDecision caseId={caseId} />
+      </div>
     </div>
   );
 }

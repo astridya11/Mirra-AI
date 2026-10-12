@@ -1,4 +1,7 @@
+"use client";
+
 import type { PriorityTier } from "@/src/lib/api";
+import { enumLabel, useI18n } from "@/src/i18n";
 
 const CONFIG: Record<PriorityTier, { text: string; className: string }> = {
   URGENT: { text: "Urgent · fast-track", className: "bg-[#E84360] text-white border-[#E84360]" },
@@ -8,9 +11,10 @@ const CONFIG: Record<PriorityTier, { text: string; className: string }> = {
 
 export default function PriorityBadge({ tier }: { tier: PriorityTier }) {
   const c = CONFIG[tier] ?? CONFIG.STANDARD;
+  const { t } = useI18n();
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.className}`}>
-      {c.text}
+      {CONFIG[tier] ? enumLabel(t, tier) : c.text}
     </span>
   );
 }
