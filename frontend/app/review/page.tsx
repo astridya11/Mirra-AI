@@ -87,7 +87,7 @@ export default function ReviewQueuePage() {
               <h1 className="text-xl font-semibold text-[#1F2937]">Review queue</h1>
             </div>
             <p className="text-sm text-[#6B7280] mt-0.5">
-              {support ? `Reviewing as ${support}` : "Loading\u2026"}
+              {support ? `Reviewing as ${support}` : "Loading…"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -142,13 +142,16 @@ export default function ReviewQueuePage() {
 
         {/* Content */}
         {error ? null : isLoading ? (
-          <p className="text-sm text-[#9CA3AF]">Loading cases\u2026</p>
+          <p className="text-sm text-[#9CA3AF]">Loading cases…</p>
         ) : nothingOpen ? (
-          <div className="rounded-xl border border-[#E5E7EB] bg-white p-6">
-            <p className="text-sm text-[#6B7280]">
-              No cases waiting. Cases the AI escalates to a human will appear here.
-            </p>
-          </div>
+          <>
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-6">
+              <p className="text-sm text-[#6B7280]">
+                No cases waiting. Cases the AI escalates to a human will appear here.
+              </p>
+            </div>
+            {resolved.length > 0 && <ReviewedSection cases={resolved} />}
+          </>
         ) : (
           <>
             <Section
@@ -256,7 +259,7 @@ function Section({
 
 function ReviewedSection({ cases }: { cases: ReviewCase[] }) {
   return (
-    <details className="group">
+    <details className="group" open>
       <summary className="cursor-pointer text-sm text-[#6B7280] hover:text-[#1F2937] select-none">
         Reviewed <span className="text-[#9CA3AF]">({cases.length})</span>
       </summary>
