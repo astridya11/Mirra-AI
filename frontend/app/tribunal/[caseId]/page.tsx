@@ -630,7 +630,7 @@ export default function ProcessPage() {
   }, [caseId, isFinished, isLoading]);
 
   return (
-    <div className="flex flex-col h-screen bg-white">
+    <div className="flex flex-col h-dvh bg-white">
       <IOSHeader title="Mirra AI Tribunal" />
 
       {/* Dashed Progress Stepper */}

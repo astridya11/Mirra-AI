@@ -841,7 +841,7 @@ function ChatContent() {
   const showUploadBar = !fromProcess && !submitted && evidenceStep !== null;
 
   return (
-    <div className="flex flex-col h-screen bg-white">
+    <div className="flex flex-col h-dvh bg-white">
       <IOSHeader
         title="Ryde AI Support"
         onBack={() => router.push("/help")}
