@@ -28,7 +28,8 @@ const topics: Record<string, Topic> = {
       { id: "p2", label: "Driver took a longer or unexpected route", issue_type: "ROUTE_DEVIATION" },
       { id: "p3", label: "Incorrect fare or unexpected charges", issue_type: "FARE_DISPUTE" },
       { id: "p4", label: "Refund status and processing times", issue_type: "REFUND_REQUEST" },
-      { id: "p5", label: "Cancel a booking or wrong charge", issue_type: "CANCELLED_BOOKING" },
+      // { id: "p5", label: "Cancel a booking or wrong charge", issue_type: "CANCELLED_BOOKING" },
+      { id: "p5", label: "Why was I charged a cancellation fee?", issue_type: "NO_SHOW_CHARGE" },
     ],
     driverIssues: [
       { id: "dp1", label: "Passenger no-show charge request", issue_type: "NO_SHOW_CHARGE" },
