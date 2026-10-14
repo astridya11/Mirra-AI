@@ -8,9 +8,11 @@ import DecisionView from "@/src/components/demo/DecisionView";
 import PresenterGuide from "@/src/components/demo/PresenterGuide";
 import { getPresenterStep } from "@/src/components/demo/presenterSteps";
 import { usePresenterMode } from "@/src/hooks/usePresenterMode";
+import { useBackendMode } from "@/src/hooks/useBackendMode";
+import { useLiveTribunal } from "@/src/hooks/useLiveTribunal";
 import { useI18n } from "@/src/context/I18nContext";
 import { useTranslation } from "@/src/hooks/useTranslation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { DemoId, DemoSession, DisputeStage } from "@/src/types/session";
 import {
   getOrCreateSession,
@@ -18,9 +20,20 @@ import {
   startTribunal,
   completeTribunal,
   resetSession,
+  setLiveCaseId,
+  setLiveStatus,
+  clearLiveError,
+  claimCaseCreationLock,
+  clearCaseCreationLock,
 } from "@/src/lib/sessionStorage";
 import { getScenario } from "@/src/lib/demoScenarios";
 import { getFixtureByDemoId } from "@/src/lib/tribunalFixtures";
+import { createDispute } from "@/src/lib/api";
+import {
+  mapCaseResultToTribunalDecision,
+  buildEvidenceFromCaseResult,
+  buildFraudSignalsFromCaseResult,
+} from "@/src/lib/liveTribunalAdapter";
 
 function GuidedDemoContent() {
   const params = useParams();
@@ -30,10 +43,20 @@ function GuidedDemoContent() {
   const { locale } = useI18n();
   const t = useTranslation();
   const { presenterMode, togglePresenterMode } = usePresenterMode();
+  const { backendMode, toggleBackendMode, setBackendMode } = useBackendMode();
+  const liveTribunal = useLiveTribunal();
+
+  // Demo 3 is always demo mode in M4
+  const effectiveMode: "live" | "demo" = demoId === "3" ? "demo" : backendMode;
 
   const [session, setSession] = useState<DemoSession | null>(() =>
     getOrCreateSession(demoId, sessionId)
   );
+
+  const [ownerId] = useState(() =>
+    `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
+  const creatingCaseRef = useRef(false);
 
   useEffect(() => {
     const unsub = subscribeToSession(demoId, sessionId, (latest) => {
@@ -42,10 +65,91 @@ function GuidedDemoContent() {
     return unsub;
   }, [demoId, sessionId]);
 
+  // Auto-create live case when formal complaint is filed in LIVE mode
+  useEffect(() => {
+    if (
+      effectiveMode !== "live" ||
+      session?.stage !== "formal_filed" ||
+      session?.liveCaseId ||
+      session?.tribunalStarted ||
+      creatingCaseRef.current ||
+      session?.liveError
+    ) {
+      return;
+    }
+
+    const { claimed } = claimCaseCreationLock(demoId, sessionId, ownerId);
+    if (!claimed) return;
+
+    creatingCaseRef.current = true;
+
+    const payload =
+      demoId === "1"
+        ? {
+            trip_id: "TRIP-2026-08112",
+            dispute_type: "ROUTE_DEVIATION",
+            dispute_claim_description:
+              "Driver deviated from the optimal ECP route to PIE without a valid reason, adding 2.3km and 7 extra minutes to the trip.",
+            filed_by: "RIDER",
+            rider_id: "R-1092",
+            driver_id: "D-5541",
+          }
+        : {
+            trip_id: "TRIP-2026-09945",
+            dispute_type: "NO_SHOW_CHARGE",
+            dispute_claim_description:
+              "Driver cancelled the trip after the free waiting period expired and a $5.00 no-show cancellation fee was applied to the rider.",
+            filed_by: "RIDER",
+            rider_id: "R-7823",
+            driver_id: "D-2398",
+          };
+
+    createDispute(payload)
+      .then((response) => {
+        setLiveCaseId(demoId, sessionId, response.case_id);
+        setLiveStatus(demoId, sessionId, "ready");
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : "Failed to create case";
+        clearCaseCreationLock(demoId, sessionId, ownerId);
+        setLiveStatus(demoId, sessionId, "error", msg);
+      })
+      .finally(() => {
+        creatingCaseRef.current = false;
+      });
+  }, [effectiveMode, session?.stage, session?.liveCaseId, session?.tribunalStarted, session?.liveError, demoId, sessionId, ownerId]);
+
+  // When live tribunal completes, derive decision and complete session
+  useEffect(() => {
+    if (liveTribunal.isComplete && liveTribunal.result && session && !session.tribunalCompleted) {
+      const mapped = mapCaseResultToTribunalDecision(liveTribunal.result);
+      const decision = {
+        status: mapped.status,
+        amount: mapped.amount,
+        reasoning: mapped.reasoning,
+        executionRoute: mapped.executionRoute,
+      };
+      completeTribunal(demoId, sessionId, decision);
+      setLiveStatus(demoId, sessionId, "completed");
+    }
+  }, [liveTribunal.isComplete, liveTribunal.result, session, demoId, sessionId]);
+
+  // When live tribunal errors, update session
+  useEffect(() => {
+    if (liveTribunal.error && session && session.liveStatus !== "error") {
+      setLiveStatus(demoId, sessionId, "error", liveTribunal.error);
+    }
+  }, [liveTribunal.error, session, demoId, sessionId]);
+
   const handleStartTribunal = useCallback(() => {
     const updated = startTribunal(demoId, sessionId);
     setSession(updated);
-  }, [demoId, sessionId]);
+
+    if (effectiveMode === "live" && updated.liveCaseId) {
+      setLiveStatus(demoId, sessionId, "streaming");
+      liveTribunal.start(updated.liveCaseId);
+    }
+  }, [demoId, sessionId, effectiveMode, liveTribunal]);
 
   const handleCompleteTribunal = useCallback(() => {
     const fixture = getFixtureByDemoId(demoId);
@@ -61,13 +165,40 @@ function GuidedDemoContent() {
   }, [demoId, sessionId]);
 
   const handleReset = useCallback(() => {
+    liveTribunal.stop();
     const fresh = resetSession(demoId, sessionId);
     setSession(fresh);
-  }, [demoId, sessionId]);
+  }, [demoId, sessionId, liveTribunal]);
+
+  const handleSwitchToDemo = useCallback(() => {
+    liveTribunal.stop();
+    setBackendMode("demo");
+    clearLiveError(demoId, sessionId);
+  }, [setBackendMode, demoId, sessionId, liveTribunal]);
 
   const scenario = getScenario(demoId);
   const fixture = getFixtureByDemoId(demoId);
   const presenterStep = session ? getPresenterStep(demoId, session.stage) : undefined;
+
+  // Determine what to show in the tribunal board
+  const tribunalEvents =
+    effectiveMode === "live" && liveTribunal.events.length > 0
+      ? liveTribunal.events
+      : fixture?.events ?? [];
+  const tribunalEvidence =
+    effectiveMode === "live" && liveTribunal.result
+      ? buildEvidenceFromCaseResult(liveTribunal.result)
+      : fixture?.evidence ?? [];
+  const tribunalFraud =
+    effectiveMode === "live" && liveTribunal.result
+      ? buildFraudSignalsFromCaseResult(liveTribunal.result)
+      : fixture?.fraudSignals;
+  const isLiveStreaming = effectiveMode === "live" && liveTribunal.isStreaming;
+
+  // Determine decision data
+  const liveDecision = liveTribunal.result
+    ? mapCaseResultToTribunalDecision(liveTribunal.result)
+    : null;
 
   const progressStages: { key: DisputeStage | "resolved"; labelEn: string; labelZh: string }[] = [
     { key: "none", labelEn: "Trip", labelZh: "行程" },
@@ -77,7 +208,9 @@ function GuidedDemoContent() {
     { key: "resolved", labelEn: "Decision", labelZh: "裁决" },
   ];
 
-  const currentProgressIndex = progressStages.findIndex((s) => s.key === (session?.stage ?? "none"));
+  const currentProgressIndex = progressStages.findIndex(
+    (s) => s.key === (session?.stage ?? "none")
+  );
 
   return (
     <div className="min-h-screen bg-[#F3F4F6]">
@@ -92,13 +225,44 @@ function GuidedDemoContent() {
               {scenario ? (locale === "zh" ? scenario.titleZh : scenario.titleEn) : ""}
             </span>
             <span className="inline-flex items-center rounded-full bg-[#FDF1F3] px-2.5 py-0.5 text-[10px] font-bold text-[#E84360]">
-              {scenario ? (locale === "zh"
-                ? (demoId === "1" ? "自动化" : demoId === "2" ? "公平性" : "负责任 AI")
-                : (demoId === "1" ? "AUTOMATION" : demoId === "2" ? "FAIRNESS" : "RESPONSIBLE AI")
-              ) : ""}
+              {scenario
+                ? locale === "zh"
+                  ? demoId === "1"
+                    ? "自动化"
+                    : demoId === "2"
+                    ? "公平性"
+                    : "负责任 AI"
+                  : demoId === "1"
+                  ? "AUTOMATION"
+                  : demoId === "2"
+                  ? "FAIRNESS"
+                  : "RESPONSIBLE AI"
+                : ""}
             </span>
+            {session?.liveCaseId && (
+              <span className="inline-flex items-center rounded-full bg-[#F0FDFA] px-2.5 py-0.5 text-[10px] font-bold text-[#0D9488]">
+                LIVE · {session.liveCaseId}
+              </span>
+            )}
+            {effectiveMode === "demo" && (
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-bold text-[#6B7280]">
+                DEMO MODE
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
+            {demoId !== "3" && (
+              <button
+                onClick={toggleBackendMode}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                  effectiveMode === "live"
+                    ? "bg-[#0D9488] text-white"
+                    : "bg-gray-100 text-[#6B7280] hover:bg-gray-200"
+                }`}
+              >
+                {effectiveMode === "live" ? t("live.backendLive") : t("live.backendDemo")}
+              </button>
+            )}
             <button
               onClick={togglePresenterMode}
               className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
@@ -171,57 +335,231 @@ function GuidedDemoContent() {
               <PresenterGuide step={presenterStep} />
             )}
 
-            {/* Stage actions */}
-            {session?.stage === "formal_filed" && !session.tribunalStarted && (
-              <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center">
-                <p className="text-sm text-[#111827] font-medium mb-3">
-                  {t("guided.readyForTribunal")}
+            {/* Presenter mode: reference vs live outcome */}
+            {presenterMode && session?.tribunalStarted && presenterStep && (
+              <div className="rounded-xl border border-[#0D9488]/20 bg-[#F0FDFA] p-4 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0D9488]">
+                  {t("live.referenceOutcome")}
                 </p>
-                <button
-                  onClick={handleStartTribunal}
-                  className="px-6 py-2.5 rounded-lg bg-[#E84360] text-white text-sm font-semibold hover:bg-[#DE3557] active:scale-[0.98] transition-all"
-                >
-                  {t("guided.startTribunal")}
-                </button>
+                <p className="text-xs text-[#111827]">
+                  {demoId === "1"
+                    ? "S$3.25 partial refund — automated"
+                    : demoId === "2"
+                    ? "No refund — automated"
+                    : "Human review required"}
+                </p>
+                {effectiveMode === "live" && (
+                  <>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#E84360] pt-1">
+                      {t("live.backendOutcome")}
+                    </p>
+                    {liveDecision ? (
+                      <p className="text-xs text-[#111827]">
+                        {liveDecision.status === "partial_refund"
+                          ? `${liveDecision.amount} refund — ${liveDecision.executionRoute}`
+                          : liveDecision.status === "no_refund"
+                          ? `No refund — ${liveDecision.executionRoute}`
+                          : liveDecision.status === "human_review"
+                          ? `Human review — ${liveDecision.executionRoute}`
+                          : `Judge result incomplete — ${liveDecision.executionRoute}`}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-[#6B7280]">
+                        {session?.tribunalCompleted
+                          ? "Unavailable / incomplete"
+                          : "Processing..."}
+                      </p>
+                    )}
+                    {liveDecision && (
+                      <p className="text-[10px] text-[#6B7280]">
+                        {t("live.backendAuthoritative")}
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
-            {session?.tribunalStarted && !session.tribunalCompleted && fixture && (
+            {/* LIVE: Creating case */}
+            {effectiveMode === "live" &&
+              session?.stage === "formal_filed" &&
+              !session.tribunalStarted &&
+              !session.liveCaseId &&
+              !session.liveError && (
+                <div className="rounded-xl border border-[#0D9488]/20 bg-[#F0FDFA] p-4 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-[#0D9488] animate-pulse" />
+                    <p className="text-sm text-[#111827] font-medium">
+                      {t("live.creatingCase")}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+            {/* LIVE: Case created, ready to start tribunal */}
+            {effectiveMode === "live" &&
+              session?.stage === "formal_filed" &&
+              !session.tribunalStarted &&
+              session.liveCaseId && (
+                <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center">
+                  <p className="text-sm text-[#111827] font-medium mb-1">
+                    {t("live.caseCreated")}: {session.liveCaseId}
+                  </p>
+                  <p className="text-xs text-[#6B7280] mb-3">
+                    {t("live.readyForTribunal")}
+                  </p>
+                  <button
+                    onClick={handleStartTribunal}
+                    className="px-6 py-2.5 rounded-lg bg-[#E84360] text-white text-sm font-semibold hover:bg-[#DE3557] active:scale-[0.98] transition-all"
+                  >
+                    {t("guided.startTribunal")}
+                  </button>
+                </div>
+              )}
+
+            {/* LIVE: Case creation error */}
+            {effectiveMode === "live" &&
+              session?.stage === "formal_filed" &&
+              !session.tribunalStarted &&
+              !session.liveCaseId &&
+              session.liveError && (
+                <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center space-y-3">
+                  <p className="text-sm text-[#E84360] font-medium">{t("live.backendUnavailable")}</p>
+                  {session.liveError && (
+                    <p className="text-xs text-[#6B7280]">{session.liveError}</p>
+                  )}
+                  <button
+                    onClick={handleSwitchToDemo}
+                    className="px-4 py-2 rounded-lg bg-gray-100 text-[#6B7280] text-xs font-semibold hover:bg-gray-200 transition-colors"
+                  >
+                    {t("live.switchToDemo")}
+                  </button>
+                </div>
+              )}
+
+            {/* DEMO: Start tribunal button */}
+            {effectiveMode === "demo" &&
+              session?.stage === "formal_filed" &&
+              !session.tribunalStarted && (
+                <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center">
+                  <p className="text-sm text-[#111827] font-medium mb-3">
+                    {t("guided.readyForTribunal")}
+                  </p>
+                  <button
+                    onClick={handleStartTribunal}
+                    className="px-6 py-2.5 rounded-lg bg-[#E84360] text-white text-sm font-semibold hover:bg-[#DE3557] active:scale-[0.98] transition-all"
+                  >
+                    {t("guided.startTribunal")}
+                  </button>
+                </div>
+              )}
+
+            {/* Streaming status */}
+            {isLiveStreaming && (
               <div className="rounded-xl border border-[#0D9488]/20 bg-[#F0FDFA] p-4 text-center">
-                <p className="text-sm text-[#111827] font-medium mb-3">
-                  {t("guided.tribunalInProgress")}
-                </p>
-                <button
-                  onClick={handleCompleteTribunal}
-                  className="px-6 py-2.5 rounded-lg bg-[#0D9488] text-white text-sm font-semibold hover:bg-[#0F766E] active:scale-[0.98] transition-all"
-                >
-                  {t("guided.completeTribunal")}
-                </button>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <div className="h-2 w-2 rounded-full bg-[#0D9488] animate-pulse" />
+                  <p className="text-sm text-[#111827] font-medium">{t("live.streamingTribunal")}</p>
+                </div>
+                <p className="text-xs text-[#6B7280]">{session?.liveCaseId}</p>
+              </div>
+            )}
+
+            {/* DEMO: Complete tribunal button */}
+            {effectiveMode === "demo" &&
+              session?.tribunalStarted &&
+              !session.tribunalCompleted &&
+              fixture && (
+                <div className="rounded-xl border border-[#0D9488]/20 bg-[#F0FDFA] p-4 text-center">
+                  <p className="text-sm text-[#111827] font-medium mb-3">
+                    {t("guided.tribunalInProgress")}
+                  </p>
+                  <button
+                    onClick={handleCompleteTribunal}
+                    className="px-6 py-2.5 rounded-lg bg-[#0D9488] text-white text-sm font-semibold hover:bg-[#0F766E] active:scale-[0.98] transition-all"
+                  >
+                    {t("guided.completeTribunal")}
+                  </button>
+                </div>
+              )}
+
+            {/* SSE Error with fallback */}
+            {effectiveMode === "live" && session?.liveStatus === "error" && (
+              <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center space-y-3">
+                <p className="text-sm text-[#E84360] font-medium">{t("live.pipelineStopped")}</p>
+                {session.liveError && (
+                  <p className="text-xs text-[#6B7280]">{session.liveError}</p>
+                )}
+                <div className="flex items-center justify-center gap-3">
+                  {session.liveCaseId && (
+                    <button
+                      onClick={() => liveTribunal.retry(session.liveCaseId!)}
+                      className="px-4 py-2 rounded-lg bg-[#0D9488] text-white text-xs font-semibold hover:bg-[#0F766E] transition-colors"
+                    >
+                      {t("live.retry")}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSwitchToDemo}
+                    className="px-4 py-2 rounded-lg bg-gray-100 text-[#6B7280] text-xs font-semibold hover:bg-gray-200 transition-colors"
+                  >
+                    {t("live.switchToDemo")}
+                  </button>
+                </div>
               </div>
             )}
 
             {/* Tribunal Board */}
-            {session?.tribunalStarted && fixture && (
+            {session?.tribunalStarted && (tribunalEvents.length > 0 || fixture) && (
               <div className="rounded-xl border border-gray-200 bg-white p-4">
-                <TribunalBoard fixture={fixture} locale={locale} />
+                <TribunalBoard
+                  events={tribunalEvents}
+                  evidence={tribunalEvidence}
+                  fraudSignals={tribunalFraud}
+                  locale={locale}
+                  isLive={isLiveStreaming}
+                />
               </div>
             )}
 
             {/* Decision */}
-            {session?.tribunalCompleted && session.decision && (
+            {session?.tribunalCompleted && (
               <div className="space-y-4">
-                <DecisionView
-                  status={session.decision.status}
-                  amount={session.decision.amount}
-                  party="passenger"
-                  executionRoute={session.decision.executionRoute}
-                />
-                <DecisionView
-                  status={session.decision.status}
-                  amount={session.decision.amount}
-                  party="driver"
-                  executionRoute={session.decision.executionRoute}
-                />
+                {effectiveMode === "live" && liveDecision ? (
+                  <>
+                    <DecisionView
+                      status={liveDecision.status}
+                      amount={liveDecision.amount}
+                      party="passenger"
+                      executionRoute={liveDecision.executionRoute}
+                      explanation={liveDecision.explanationForRider}
+                      isLive
+                    />
+                    <DecisionView
+                      status={liveDecision.status}
+                      amount={liveDecision.amount}
+                      party="driver"
+                      executionRoute={liveDecision.executionRoute}
+                      explanation={liveDecision.explanationForDriver}
+                      isLive
+                    />
+                  </>
+                ) : session.decision ? (
+                  <>
+                    <DecisionView
+                      status={session.decision.status}
+                      amount={session.decision.amount}
+                      party="passenger"
+                      executionRoute={session.decision.executionRoute}
+                    />
+                    <DecisionView
+                      status={session.decision.status}
+                      amount={session.decision.amount}
+                      party="driver"
+                      executionRoute={session.decision.executionRoute}
+                    />
+                  </>
+                ) : null}
               </div>
             )}
 

@@ -257,6 +257,98 @@ export function completeTribunal(
   }));
 }
 
+const LOCK_TIMEOUT_MS = 20_000;
+
+/**
+ * Attempt to claim cross-tab case-creation ownership for a demo+session.
+ *
+ * Returns { claimed: true, session } if this owner now holds the lock.
+ * Returns { claimed: false, session } if:
+ *   - liveCaseId already exists
+ *   - another non-stale owner is already creating
+ */
+export function claimCaseCreationLock(
+  demoId: DemoId,
+  sessionId: string,
+  ownerId: string
+): { claimed: boolean; session: DemoSession } {
+  const latest = readSessionRaw(demoId, sessionId) ?? createDefaultSession(demoId, sessionId);
+
+  if (latest.liveCaseId) {
+    return { claimed: false, session: latest };
+  }
+
+  const existing = latest.liveCaseCreation;
+  if (existing && existing.status === "creating") {
+    const elapsed = Date.now() - existing.startedAt;
+    if (elapsed < LOCK_TIMEOUT_MS && existing.ownerId !== ownerId) {
+      return { claimed: false, session: latest };
+    }
+    // Stale lock or same owner → allow reclaim
+  }
+
+  const updated: DemoSession = {
+    ...latest,
+    liveCaseCreation: { status: "creating", ownerId, startedAt: Date.now() },
+    updatedAt: Date.now(),
+  };
+  writeSessionRaw(updated);
+  broadcastUpdate(demoId, sessionId);
+  return { claimed: true, session: updated };
+}
+
+/** Release the creation lock only if it is still held by the given owner. */
+export function clearCaseCreationLock(
+  demoId: DemoId,
+  sessionId: string,
+  ownerId: string
+): DemoSession {
+  const latest = readSessionRaw(demoId, sessionId) ?? createDefaultSession(demoId, sessionId);
+  if (latest.liveCaseCreation?.ownerId !== ownerId) return latest;
+  const updated: DemoSession = {
+    ...latest,
+    liveCaseCreation: undefined,
+    updatedAt: Date.now(),
+  };
+  writeSessionRaw(updated);
+  broadcastUpdate(demoId, sessionId);
+  return updated;
+}
+
+export function setLiveCaseId(
+  demoId: DemoId,
+  sessionId: string,
+  liveCaseId: string
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    liveCaseId,
+    liveStatus: "ready",
+    liveCaseCreation: undefined,
+  }));
+}
+
+export function setLiveStatus(
+  demoId: DemoId,
+  sessionId: string,
+  liveStatus: import("@/src/types/session").LiveStatus,
+  liveError?: string
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    liveStatus,
+    liveError: liveError ?? session.liveError,
+    liveCaseCreation: liveStatus === "error" ? undefined : session.liveCaseCreation,
+  }));
+}
+
+export function clearLiveError(demoId: DemoId, sessionId: string): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    liveError: undefined,
+  }));
+}
+
 export function selectPartyView(session: DemoSession, party: Party): PartyView {
   const myChat = party === "passenger" ? session.passengerChat : session.driverChat;
   return {
@@ -273,6 +365,9 @@ export function selectPartyView(session: DemoSession, party: Party): PartyView {
     myChat,
     otherPartyHasComplaint:
       session.formalComplaint !== undefined && session.formalComplaint.filedBy !== party,
+    liveCaseId: session.liveCaseId,
+    liveStatus: session.liveStatus,
+    liveError: session.liveError,
   };
 }
 

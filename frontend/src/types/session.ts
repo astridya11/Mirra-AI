@@ -22,7 +22,8 @@ export type DecisionStatus =
   | "pending"
   | "partial_refund"
   | "no_refund"
-  | "human_review";
+  | "human_review"
+  | "incomplete";
 
 export interface ChatMessage {
   id: string;
@@ -63,6 +64,14 @@ export interface TribunalDecision {
   executionRoute: "automated" | "human_review";
 }
 
+export type LiveStatus = "idle" | "creating" | "ready" | "streaming" | "completed" | "error";
+
+export interface LiveCaseCreation {
+  status: "creating";
+  ownerId: string;
+  startedAt: number;
+}
+
 export interface DemoSession {
   demoId: DemoId;
   sessionId: string;
@@ -77,6 +86,11 @@ export interface DemoSession {
   passengerChat: PrivateChat;
   driverChat: PrivateChat;
   updatedAt: number;
+  // M4 live fields
+  liveCaseId?: string;
+  liveStatus?: LiveStatus;
+  liveError?: string;
+  liveCaseCreation?: LiveCaseCreation;
 }
 
 export interface PartyView {
@@ -92,4 +106,7 @@ export interface PartyView {
   trip: TripInfo;
   myChat: PrivateChat;
   otherPartyHasComplaint: boolean;
+  liveCaseId?: string;
+  liveStatus?: LiveStatus;
+  liveError?: string;
 }

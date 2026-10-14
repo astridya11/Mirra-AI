@@ -9,9 +9,18 @@ interface DecisionViewProps {
   amount?: string;
   party: Party;
   executionRoute: "automated" | "human_review";
+  explanation?: string;
+  isLive?: boolean;
 }
 
-export default function DecisionView({ status, amount, party, executionRoute }: DecisionViewProps) {
+export default function DecisionView({
+  status,
+  amount,
+  party,
+  executionRoute,
+  explanation,
+  isLive,
+}: DecisionViewProps) {
   const t = useTranslation();
   const { locale } = useI18n();
 
@@ -58,6 +67,13 @@ export default function DecisionView({ status, amount, party, executionRoute }: 
         : "审查期间不发放款项。",
       color: "text-[#B45309]",
     },
+    incomplete: {
+      titleEn: "Judge result incomplete",
+      titleZh: "裁决结果不完整",
+      descEn: "The tribunal could not reach a decision. No financial outcome has been determined.",
+      descZh: "法庭未能达成裁决。尚未确定任何财务结果。",
+      color: "text-[#6B7280]",
+    },
   };
 
   const cfg = config[status];
@@ -73,14 +89,29 @@ export default function DecisionView({ status, amount, party, executionRoute }: 
       <h3 className={`text-xl font-bold ${cfg.color}`}>{locale === "zh" ? cfg.titleZh : cfg.titleEn}</h3>
       <p className="text-sm text-[#6B7280]">{locale === "zh" ? cfg.descZh : cfg.descEn}</p>
 
-      {executionRoute === "automated" && (
+      {explanation && (
+        <div className="rounded-lg bg-[#F9FAFB] border border-gray-100 p-3">
+          <p className="text-[10px] font-bold uppercase text-[#9CA3AF] mb-1">
+            {isLive
+              ? locale === "zh"
+                ? "原始系统说明（English）"
+                : "Original system explanation (English)"
+              : locale === "zh"
+              ? "说明"
+              : "Explanation"}
+          </p>
+          <p className="text-xs text-[#374151] leading-relaxed">{explanation}</p>
+        </div>
+      )}
+
+      {status !== "incomplete" && executionRoute === "automated" && (
         <div className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDFA] px-3 py-1">
           <div className="h-1.5 w-1.5 rounded-full bg-[#0D9488]" />
           <span className="text-[10px] font-bold text-[#0D9488] uppercase">{t("decision.automated")}</span>
         </div>
       )}
 
-      {executionRoute === "human_review" && (
+      {status !== "incomplete" && executionRoute === "human_review" && (
         <div className="inline-flex items-center gap-1.5 rounded-full bg-[#FEF3C7] px-3 py-1">
           <div className="h-1.5 w-1.5 rounded-full bg-[#B45309]" />
           <span className="text-[10px] font-bold text-[#B45309] uppercase">{t("decision.humanReview")}</span>

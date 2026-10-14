@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useTranslation } from "@/src/hooks/useTranslation";
 import { useI18n } from "@/src/context/I18nContext";
 import { getTribunalFixture } from "@/src/lib/tribunalFixtures";
+import { getCaseResult } from "@/src/lib/api";
+import type { CaseResult } from "@/src/types";
+import {
+  buildEvidenceFromCaseResult,
+  buildFraudSignalsFromCaseResult,
+} from "@/src/lib/liveTribunalAdapter";
 
 type Tab = "overview" | "evidence" | "agentLogs" | "policy" | "decision" | "learnings";
 
@@ -23,8 +29,27 @@ export default function InternalConsolePage() {
   const { locale } = useI18n();
   const t = useTranslation();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [liveResult, setLiveResult] = useState<CaseResult | null>(null);
+  const [liveLoading, setLiveLoading] = useState(() => !getTribunalFixture(caseId));
 
   const fixture = getTribunalFixture(caseId);
+
+  useEffect(() => {
+    if (!fixture && liveLoading) {
+      let cancelled = false;
+      getCaseResult(caseId)
+        .then((result) => {
+          if (!cancelled) setLiveResult(result);
+        })
+        .catch(() => {
+          if (!cancelled) setLiveResult(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLiveLoading(false);
+        });
+      return () => { cancelled = true; };
+    }
+  }, [caseId, fixture, liveLoading]);
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-gray-200">
@@ -71,7 +96,12 @@ export default function InternalConsolePage() {
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-6 py-6">
-        {!fixture && (
+        {!fixture && !liveResult && liveLoading && (
+          <div className="rounded-lg border border-gray-800 bg-[#111827] p-8 text-center">
+            <p className="text-sm text-gray-500">Loading live case data...</p>
+          </div>
+        )}
+        {!fixture && !liveResult && !liveLoading && (
           <div className="rounded-lg border border-gray-800 bg-[#111827] p-8 text-center">
             <p className="text-sm text-gray-500">{t("internal.noFixture")}</p>
           </div>
@@ -92,7 +122,20 @@ export default function InternalConsolePage() {
         {fixture && activeTab === "decision" && (
           <DecisionTab fixture={fixture} locale={locale} />
         )}
-        {fixture && activeTab === "learnings" && (
+
+        {liveResult && activeTab === "overview" && (
+          <OverviewLiveTab result={liveResult} />
+        )}
+        {liveResult && activeTab === "evidence" && (
+          <EvidenceLiveTab result={liveResult} />
+        )}
+        {liveResult && activeTab === "policy" && (
+          <PolicyLiveTab result={liveResult} />
+        )}
+        {liveResult && activeTab === "decision" && (
+          <DecisionLiveTab result={liveResult} />
+        )}
+        {(fixture || liveResult) && activeTab === "learnings" && (
           <LearningsTab locale={locale} />
         )}
       </div>
@@ -227,6 +270,123 @@ function LearningsTab({ locale }: { locale: string }) {
         <p className="text-[10px] font-bold uppercase text-gray-500 mb-1">Status</p>
         <p className="text-xs text-gray-400">Placeholder — learning pipeline not yet active.</p>
       </div>
+    </div>
+  );
+}
+
+function OverviewLiveTab({ result }: { result: CaseResult }) {
+  const meta = result.case_metadata;
+  const verdict = result.judge_verdict;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <StatCard label="Case ID" value={meta.case_id} />
+      <StatCard label="Dispute Type" value={meta.dispute_type} />
+      <StatCard label="Current State" value={meta.current_state} />
+      <StatCard label="Resolution Channel" value={meta.resolution_channel} highlight={meta.resolution_channel === "ESCALATED_HUMAN_REVIEW"} />
+      <StatCard label="Judge Confidence" value={verdict ? `${(verdict.confidence_score * 100).toFixed(0)}%` : "N/A"} />
+      <StatCard label="Ruling" value={verdict?.ruling_type || "N/A"} />
+    </div>
+  );
+}
+
+function EvidenceLiveTab({ result }: { result: CaseResult }) {
+  const evidence = buildEvidenceFromCaseResult(result);
+  const fraud = buildFraudSignalsFromCaseResult(result);
+  return (
+    <div className="space-y-4">
+      <SectionTitle title="Verified" />
+      {evidence.filter((e) => e.category === "verified").map((item) => (
+        <EvidenceRow key={item.id} item={item} color="text-[#0D9488]" />
+      ))}
+      <SectionTitle title="Disputed" />
+      {evidence.filter((e) => e.category === "disputed").map((item) => (
+        <EvidenceRow key={item.id} item={item} color="text-[#B45309]" />
+      ))}
+      <SectionTitle title="Missing" />
+      {evidence.filter((e) => e.category === "missing").map((item) => (
+        <EvidenceRow key={item.id} item={item} color="text-gray-500" />
+      ))}
+      {fraud.length > 0 && (
+        <>
+          <SectionTitle title="Fraud Signals" />
+          {fraud.map((signal) => (
+            <div key={signal.id} className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm">{signal.label}</span>
+                <span className={`text-xs font-bold uppercase ${signal.risk === "high" ? "text-[#E84360]" : "text-[#B45309]"}`}>
+                  {signal.risk}
+                </span>
+              </div>
+              {signal.detail && <p className="text-xs text-gray-500 mt-1">{signal.detail}</p>}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PolicyLiveTab({ result }: { result: CaseResult }) {
+  const policy = result.policy_consultation?.suggestion;
+  return (
+    <div className="rounded-lg border border-gray-800 bg-[#111827] p-6 space-y-4">
+      <h3 className="text-sm font-bold text-white">Applicable Policy</h3>
+      <p className="text-sm text-gray-300 leading-relaxed">
+        {policy?.rationale || "Policy consultation completed."}
+      </p>
+      {policy?.applicable_clauses?.map((c) => (
+        <div key={c.clause_id} className="rounded bg-[#0B0F19] border border-gray-800 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase text-gray-500 mb-1">{c.clause_id}</p>
+          <p className="text-xs text-gray-400">{c.clause_text_summary}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DecisionLiveTab({ result }: { result: CaseResult }) {
+  const verdict = result.judge_verdict;
+  const meta = result.case_metadata;
+  const isEscalated = meta.resolution_channel === "ESCALATED_HUMAN_REVIEW";
+  const confidence = verdict?.confidence_score ?? 0;
+  const hasValidConfidence = verdict !== undefined && verdict.confidence_score !== undefined;
+  const hasVerdict = verdict !== undefined && verdict.ruling_type !== undefined;
+
+  return (
+    <div className="rounded-lg border border-gray-800 bg-[#111827] p-6 space-y-4">
+      <h3 className="text-sm font-bold text-white">Judge Result</h3>
+      {!hasVerdict && (
+        <div className="rounded bg-[#0B0F19] border border-gray-800 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase text-[#E84360] mb-1">Status</p>
+          <p className="text-xs text-gray-400">Judge result incomplete / unavailable. No financial verdict has been determined.</p>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <StatCard
+          label="Confidence"
+          value={hasValidConfidence ? `${(confidence * 100).toFixed(0)}%` : "Incomplete"}
+          highlight={!hasValidConfidence}
+        />
+        <StatCard
+          label="Execution"
+          value={isEscalated ? "Human Review Required" : "Automated"}
+          highlight={isEscalated}
+        />
+      </div>
+      <div className="rounded bg-[#0B0F19] border border-gray-800 px-4 py-3">
+        <p className="text-[10px] font-bold uppercase text-gray-500 mb-1">Execution Router</p>
+        <p className="text-xs text-gray-400">
+          {isEscalated
+            ? "Route to human review queue. No payout until review complete."
+            : "Route to automated payout system."}
+        </p>
+      </div>
+      {verdict?.reasoning_summary && (
+        <div className="rounded bg-[#0B0F19] border border-gray-800 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase text-gray-500 mb-1">Reasoning</p>
+          <p className="text-xs text-gray-400">{verdict.reasoning_summary}</p>
+        </div>
+      )}
     </div>
   );
 }

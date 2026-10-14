@@ -1,11 +1,14 @@
 "use client";
 
 import { useTranslation } from "@/src/hooks/useTranslation";
-import type { TribunalFixture, TribunalEvent, EvidenceItem, FraudSignal } from "@/src/types/tribunal";
+import type { TribunalEvent, EvidenceItem, FraudSignal } from "@/src/types/tribunal";
 
 interface TribunalBoardProps {
-  fixture: TribunalFixture;
+  events: TribunalEvent[];
+  evidence: EvidenceItem[];
+  fraudSignals?: FraudSignal[];
   locale: "en" | "zh";
+  isLive?: boolean;
 }
 
 const AGENT_ORDER: TribunalEvent["role"][] = [
@@ -41,11 +44,17 @@ const TYPE_LABELS: Record<string, { en: string; zh: string }> = {
   execution_route: { en: "Execution Route", zh: "执行路径" },
 };
 
-export default function TribunalBoard({ fixture, locale }: TribunalBoardProps) {
+export default function TribunalBoard({
+  events,
+  evidence,
+  fraudSignals,
+  locale,
+  isLive,
+}: TribunalBoardProps) {
   const t = useTranslation();
 
   const roleStatus = (role: TribunalEvent["role"]): "pending" | "active" | "complete" => {
-    const eventsForRole = fixture.events.filter((e) => e.role === role);
+    const eventsForRole = events.filter((e) => e.role === role);
     if (eventsForRole.length === 0) return "pending";
     if (eventsForRole.every((e) => e.status === "complete")) return "complete";
     if (eventsForRole.some((e) => e.status === "active")) return "active";
@@ -84,11 +93,22 @@ export default function TribunalBoard({ fixture, locale }: TribunalBoardProps) {
 
       {/* Event Feed */}
       <div className="lg:col-span-6 space-y-3 overflow-y-auto">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
-          {t("tribunal.eventFeed")}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+            {t("tribunal.eventFeed")}
+          </p>
+          {isLive && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#F0FDFA] px-2 py-0.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#0D9488] animate-pulse" />
+              <span className="text-[9px] font-bold text-[#0D9488] uppercase">LIVE</span>
+            </span>
+          )}
+        </div>
         <div className="space-y-3">
-          {fixture.events.map((event) => (
+          {events.length === 0 && (
+            <p className="text-xs text-[#9CA3AF] italic">{t("tribunal.waitingForEvents")}</p>
+          )}
+          {events.map((event) => (
             <EventCard key={event.id} event={event} locale={locale} />
           ))}
         </div>
@@ -100,18 +120,18 @@ export default function TribunalBoard({ fixture, locale }: TribunalBoardProps) {
           {t("tribunal.evidencePanel")}
         </p>
         <div className="space-y-2">
-          {fixture.evidence.map((item) => (
+          {evidence.map((item) => (
             <EvidenceBadge key={item.id} item={item} locale={locale} />
           ))}
         </div>
 
-        {fixture.fraudSignals && fixture.fraudSignals.length > 0 && (
+        {fraudSignals && fraudSignals.length > 0 && (
           <>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF] pt-2">
               {t("tribunal.fraudRisk")}
             </p>
             <div className="space-y-2">
-              {fixture.fraudSignals.map((signal) => (
+              {fraudSignals.map((signal) => (
                 <FraudBadge key={signal.id} signal={signal} locale={locale} />
               ))}
             </div>

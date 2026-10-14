@@ -168,4 +168,22 @@ export interface Messages {
     observer: string;
     noFixture: string;
   };
+  live: {
+    backendLive: string;
+    backendDemo: string;
+    readyForTribunal: string;
+    createBackendCase: string;
+    createCase: string;
+    creatingCase: string;
+    caseCreated: string;
+    streamingTribunal: string;
+    backendUnavailable: string;
+    switchToDemo: string;
+    pipelineStopped: string;
+    retry: string;
+    referenceOutcome: string;
+    backendOutcome: string;
+    backendAuthoritative: string;
+    waitingForEvents: string;
+  };
 }
