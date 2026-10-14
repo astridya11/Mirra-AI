@@ -1,0 +1,107 @@
+export interface Messages {
+  nav: {
+    home: string;
+    team: string;
+    howItWorks: string;
+    demo: string;
+    rydeExperience: string;
+    presenterMode: string;
+  };
+  language: {
+    english: string;
+    chinese: string;
+  };
+  home: {
+    headline: string;
+    subheadline: string;
+    ctaPrimary: string;
+    ctaTeam: string;
+    ctaDiscover: string;
+    ctaRyde: string;
+    benefit1Title: string;
+    benefit1Desc: string;
+    benefit2Title: string;
+    benefit2Desc: string;
+    benefit3Title: string;
+    benefit3Desc: string;
+    benefit4Title: string;
+    benefit4Desc: string;
+  };
+  team: {
+    title: string;
+    subtitle: string;
+    p1Name: string;
+    p1Role: string;
+    p1Desc: string;
+    p2Name: string;
+    p2Role: string;
+    p2Desc: string;
+    p3Name: string;
+    p3Role: string;
+    p3Desc: string;
+    visionTitle: string;
+    visionText: string;
+    value1Title: string;
+    value1Desc: string;
+    value2Title: string;
+    value2Desc: string;
+    value3Title: string;
+    value3Desc: string;
+    value4Title: string;
+    value4Desc: string;
+  };
+  howItWorks: {
+    title: string;
+    subtitle: string;
+    step1: string;
+    step1Desc: string;
+    step2: string;
+    step2Desc: string;
+    step3: string;
+    step3Desc: string;
+    step4: string;
+    step4Desc: string;
+    step5: string;
+    step5Desc: string;
+    step6: string;
+    step6Desc: string;
+    step7: string;
+    step7Desc: string;
+    step8: string;
+    step8Desc: string;
+    capabilitiesTitle: string;
+    cap1: string;
+    cap2: string;
+    cap3: string;
+    cap4: string;
+    cap5: string;
+    cap6: string;
+    cap7: string;
+    cap8: string;
+    cap9: string;
+    cap10: string;
+  };
+  demo: {
+    title: string;
+    subtitle: string;
+    demo1Title: string;
+    demo1Theme: string;
+    demo1Desc: string;
+    demo1Capabilities: string;
+    demo1Cta: string;
+    demo2Title: string;
+    demo2Theme: string;
+    demo2Desc: string;
+    demo2Capabilities: string;
+    demo2Cta: string;
+    demo3Title: string;
+    demo3Theme: string;
+    demo3Desc: string;
+    demo3Capabilities: string;
+    demo3Cta: string;
+  };
+  footer: {
+    tagline: string;
+    copyright: string;
+  };
+}
