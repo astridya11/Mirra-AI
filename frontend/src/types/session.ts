@@ -80,7 +80,16 @@ export interface DemoEvidence {
   skipped?: boolean;
 }
 
-export type PaymentStatus = "none" | "pending" | "completed" | "failed";
+export type PaymentStatus = "idle" | "pending" | "completed" | "failed" | "not_required";
+
+/** Human review outcome mirrored from the per-case ledger (src/lib/humanReview.ts). */
+export interface SessionHumanReview {
+  caseRef: string;
+  decision: import("@/src/types").HumanReviewDecision;
+  /** Final cleaning fee in SGD; null when rejected. */
+  amount: number | null;
+  reviewedAt: number;
+}
 
 export interface DemoSession {
   demoId: DemoId;
@@ -105,6 +114,7 @@ export interface DemoSession {
   evidence?: DemoEvidence;
   paymentStatus?: PaymentStatus;
   paymentTxnId?: string;
+  humanReview?: SessionHumanReview;
 }
 
 export interface PartyView {
@@ -126,4 +136,5 @@ export interface PartyView {
   evidence?: DemoEvidence;
   paymentStatus?: PaymentStatus;
   paymentTxnId?: string;
+  humanReview?: SessionHumanReview;
 }

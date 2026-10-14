@@ -7,7 +7,8 @@ import type { DemoEvidence } from "@/src/types/session";
 interface EvidenceIntakeProps {
   evidence?: DemoEvidence;
   frozen: boolean;
-  onChange: (evidence: DemoEvidence) => void;
+  /** Field-level patch, merged into the latest stored evidence (rejected once frozen). */
+  onChange: (patch: DemoEvidence) => void;
   onSubmit: () => void;
   onSkip: () => void;
 }
@@ -45,7 +46,6 @@ export default function EvidenceIntake({
     try {
       const dataUrl = await fileToDataUrl(file);
       onChange({
-        ...evidence,
         photoDataUrl: dataUrl,
         photoName: file.name,
         skipped: false,
@@ -65,7 +65,6 @@ export default function EvidenceIntake({
     try {
       const dataUrl = await fileToDataUrl(file);
       onChange({
-        ...evidence,
         receiptDataUrl: dataUrl,
         receiptName: file.name,
         skipped: false,
@@ -79,29 +78,25 @@ export default function EvidenceIntake({
   };
 
   const handleRemovePhoto = () => {
-    const next: DemoEvidence = { ...evidence };
-    delete next.photoDataUrl;
-    delete next.photoName;
-    onChange(next);
+    onChange({ photoDataUrl: undefined, photoName: undefined });
   };
 
   const handleRemoveReceipt = () => {
-    const next: DemoEvidence = { ...evidence };
-    delete next.receiptDataUrl;
-    delete next.receiptName;
-    onChange(next);
+    onChange({ receiptDataUrl: undefined, receiptName: undefined });
   };
 
   return (
-    <div className="flex h-full flex-col px-4 py-4 space-y-4">
-      <p className="text-sm text-[#6B7280]">
+    <div className="flex h-full flex-col bg-surface">
+      {/* Scrollable evidence; actions stay pinned at the bottom of the phone */}
+      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-3 py-3 space-y-3">
+      <p className="text-xs text-muted leading-relaxed">
         {locale === "zh"
           ? "请提供清洁费索赔的证据。照片和收据将帮助 MIRRA 验证您的索赔。"
           : "Please provide evidence for your cleaning-fee claim. A photo and receipt help MIRRA verify your claim."}
       </p>
 
       {/* Photo */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+      <div className="rounded-2xl border border-line bg-white p-3 space-y-2 shadow-sm">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-[#111827]">
             {locale === "zh" ? "清洁照片" : "Cleaning Photo"}
@@ -121,7 +116,7 @@ export default function EvidenceIntake({
             <img
               src={evidence!.photoDataUrl}
               alt="Cleaning evidence"
-              className="w-full h-40 object-cover"
+              className="w-full h-24 object-cover"
             />
             <p className="px-3 py-2 text-[10px] text-[#6B7280] truncate">
               {evidence!.photoName}
@@ -155,7 +150,7 @@ export default function EvidenceIntake({
       </div>
 
       {/* Receipt */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+      <div className="rounded-2xl border border-line bg-white p-3 space-y-2 shadow-sm">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-[#111827]">
             {locale === "zh" ? "清洁收据" : "Cleaning Receipt"}
@@ -175,7 +170,7 @@ export default function EvidenceIntake({
             <img
               src={evidence!.receiptDataUrl}
               alt="Receipt evidence"
-              className="w-full h-40 object-cover"
+              className="w-full h-24 object-cover"
             />
             <p className="px-3 py-2 text-[10px] text-[#6B7280] truncate">
               {evidence!.receiptName}
@@ -208,29 +203,30 @@ export default function EvidenceIntake({
         )}
       </div>
 
+      </div>
+
       {/* Actions */}
-      <div className="space-y-2 pt-2">
+      <div className="shrink-0 border-t border-line bg-white p-3 space-y-2">
         <button
           onClick={onSubmit}
           disabled={!canSubmit || frozen}
-          className="w-full rounded-xl bg-[#E84360] px-4 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#DE3557] disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+          className="w-full rounded-xl bg-[#E84360] px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-[#DE3557] disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
         >
           {locale === "zh" ? "提交索赔" : "Submit Claim"}
         </button>
         <button
           onClick={onSkip}
           disabled={frozen}
-          className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-[#6B7280] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-[#6B7280] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {locale === "zh" ? "无证据继续" : "Continue without evidence"}
         </button>
-      </div>
-
       {frozen && (
         <p className="text-xs text-center text-[#9CA3AF]">
-          {locale === "zh" ? "证据已冻结 —  tribunal 已开始" : "Evidence frozen — tribunal has started"}
+          {locale === "zh" ? "证据已冻结 — 仲裁已开始" : "Evidence frozen — tribunal has started"}
         </p>
       )}
+      </div>
     </div>
   );
 }

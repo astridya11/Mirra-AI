@@ -71,7 +71,14 @@ const DECISIONS: {
  * to submit the human review. After a successful review the reviewer lands on
  * the next highest-priority case.
  */
-export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
+export default function ReviewSlaPanel({
+  caseId,
+  hideDecision = false,
+}: {
+  caseId: string;
+  /** Cleaning-fee cases use the dedicated Human Review Decision section instead. */
+  hideDecision?: boolean;
+}) {
   const router = useRouter();
   const [c, setC] = useState<ReviewCase | null>(null);
   const [open, setOpen] = useState(false);
@@ -165,7 +172,7 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
     }
 
     let modified: RecommendedAction | null = null;
-    if (decision === "MODIFIED") {
+    if (decision === "MODIFIED" || decision === "OVERRIDDEN") {
       const refund = Number(action.refund_amount);
       const hasCleaning = action.cleaning_fee_amount.trim() !== "";
       const cleaning = Number(action.cleaning_fee_amount);
@@ -278,6 +285,10 @@ export default function ReviewSlaPanel({ caseId }: { caseId: string }) {
               </p>
             )}
           </div>
+        ) : hideDecision ? (
+          <p className="text-[13px] text-[#6B7280]">
+            Use the Human Review Decision section to confirm, modify or reject.
+          </p>
         ) : (
           <div className="space-y-2">
             <button

@@ -60,6 +60,8 @@ export default function ReviewQueuePage() {
   const rest = open.filter((c) => c.priority_level !== "URGENT");
   const resolved = cases.filter((c) => c.status === "RESOLVED");
   const pastSla = open.filter((c) => c.sla_status === "BREACHED").length;
+  const highPriority = open.filter((c) => c.priority_level !== "STANDARD").length;
+  const slaRisk = open.filter((c) => c.sla_status === "AT_RISK" || c.sla_status === "BREACHED").length;
 
   const startNext = async () => {
     const { case_id } = await getNextCase();
@@ -123,11 +125,11 @@ export default function ReviewQueuePage() {
         {!error && (
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:flex-wrap sm:items-baseline sm:gap-x-8 sm:gap-y-0">
             <StatPair value={open.length} label="Open" />
-            <StatPair value={fastTrack.length} label="Fast-track" />
+            <StatPair value={highPriority} label="High priority" />
             <StatPair
-              value={pastSla}
-              label="Past SLA"
-              tone={pastSla > 0 ? "red" : undefined}
+              value={slaRisk}
+              label={pastSla > 0 ? `SLA risk (${pastSla} past SLA)` : "SLA risk"}
+              tone={slaRisk > 0 ? "red" : undefined}
             />
             <StatPair value={resolved.length} label="Reviewed" />
           </div>
@@ -286,7 +288,7 @@ function ReviewedSection({ cases }: { cases: ReviewCase[] }) {
 
 function ColumnHeader() {
   return (
-    <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 px-4 py-2 bg-[#F9FAFB] border-b border-[#E5E7EB]">
+    <div className="hidden md:grid grid-cols-[2.5rem_minmax(7rem,1fr)_minmax(0,1.6fr)_6.5rem_7.5rem_14rem] gap-3 px-4 py-2 bg-[#F9FAFB] border-b border-[#E5E7EB]">
       <span className="text-xs text-[#6B7280] font-medium">Rank</span>
       <span className="text-xs text-[#6B7280] font-medium">Case</span>
       <span className="text-xs text-[#6B7280] font-medium">Why it needs a human</span>
@@ -321,7 +323,7 @@ function CaseRow({
       }`}
     >
       {/* Desktop grid layout */}
-      <div className="hidden md:grid grid-cols-[2.5rem_1fr_1.5fr_8rem_7rem_11rem] gap-3 items-center">
+      <div className="hidden md:grid grid-cols-[2.5rem_minmax(7rem,1fr)_minmax(0,1.6fr)_6.5rem_7.5rem_14rem] gap-3 items-center">
         {rank !== undefined ? (
           <span className="text-sm text-[#9CA3AF] tabular-nums">#{rank}</span>
         ) : (

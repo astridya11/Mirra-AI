@@ -9,6 +9,8 @@ interface MobileLayoutProps {
   onBack?: () => void;
   rightAction?: React.ReactNode;
   embedded?: boolean;
+  /** Embedded home screen: Ryde wordmark app bar instead of a centred title. */
+  brand?: boolean;
 }
 
 export default function MobileLayout({
@@ -18,6 +20,7 @@ export default function MobileLayout({
   onBack,
   rightAction,
   embedded = false,
+  brand = false,
 }: MobileLayoutProps) {
   const router = useRouter();
 
@@ -32,7 +35,13 @@ export default function MobileLayout({
   if (embedded) {
     return (
       <div className="h-full w-full bg-white overflow-hidden flex flex-col">
-        {/* Header */}
+        {brand ? (
+          // Ryde app bar: wordmark + action (presentation after the prototype AppBar)
+          <header className="h-11 shrink-0 flex items-center justify-between px-4 border-b border-line bg-white z-20">
+            <span className="font-extrabold italic tracking-tight text-mirra text-xl">Ryde</span>
+            {rightAction}
+          </header>
+        ) : (
         <header className="shrink-0 bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3 z-20">
           {showBack && (
             <button
@@ -53,9 +62,10 @@ export default function MobileLayout({
           </div>
           {rightAction && <div className="shrink-0">{rightAction}</div>}
         </header>
+        )}
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden">{children}</div>
+        <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       </div>
     );
   }

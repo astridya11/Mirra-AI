@@ -25,7 +25,7 @@ export const demoScenarios: Record<DemoId, DemoScenario> = {
     trip: {
       pickup: "Marina Bay Sands",
       dropoff: "Changi Airport T3",
-      fare: "$18.50",
+      fare: "S$18.50",
       eta: "18 min",
       status: "completed",
       driverName: "Tan Ah Kow",
@@ -46,7 +46,7 @@ export const demoScenarios: Record<DemoId, DemoScenario> = {
     trip: {
       pickup: "Tiong Bahru Plaza",
       dropoff: "VivoCity",
-      fare: "$5.00",
+      fare: "S$5.00",
       eta: "13 min",
       status: "cancelled",
       driverName: "Lim Wei Ming",
@@ -67,7 +67,7 @@ export const demoScenarios: Record<DemoId, DemoScenario> = {
     trip: {
       pickup: "Orchard",
       dropoff: "Bishan",
-      fare: "$24.50",
+      fare: "S$24.50",
       eta: "25 min",
       status: "completed",
       driverName: "Suresh Kumar",

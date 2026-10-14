@@ -6,6 +6,7 @@ import type {
   TribunalDecision,
 } from "@/src/types/session";
 import { demoScenarios } from "./demoScenarios";
+import { clearOutcome, demoReviewRef, type CaseOutcome } from "./humanReview";
 
 const SESSION_PREFIX = "mirra.demo.v1";
 const BC_CHANNEL = "mirra-session-sync";
@@ -76,6 +77,7 @@ function createDefaultSession(demoId: DemoId, sessionId: string): DemoSession {
     evidenceFrozen: false,
     tribunalStarted: false,
     tribunalCompleted: false,
+    paymentStatus: "idle",
     trip: scenario?.trip ?? {
       pickup: "",
       dropoff: "",
@@ -127,6 +129,9 @@ export function updateSession(
 
 /** Remove only the targeted demo/session. Language & presenter prefs survive. */
 export function resetSession(demoId: DemoId, sessionId: string): DemoSession {
+  const previous = readSessionRaw(demoId, sessionId);
+  clearOutcome(demoReviewRef(sessionId));
+  if (previous?.liveCaseId) clearOutcome(previous.liveCaseId);
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(storageKey(demoId, sessionId));
   }
@@ -349,22 +354,28 @@ export function clearLiveError(demoId: DemoId, sessionId: string): DemoSession {
   }));
 }
 
+/**
+ * Evidence mutations (add / replace / remove photo or receipt, skip, clear).
+ * All are rejected at state level once evidence is frozen (tribunal started),
+ * regardless of what the UI allows. The patch is merged into the latest stored
+ * evidence so two quick uploads cannot overwrite each other.
+ */
 export function setEvidence(
   demoId: DemoId,
   sessionId: string,
-  evidence: import("@/src/types/session").DemoEvidence
+  patch: import("@/src/types/session").DemoEvidence
 ): DemoSession {
-  return updateSession(demoId, sessionId, (session) => ({
-    ...session,
-    evidence,
-  }));
+  return updateSession(demoId, sessionId, (session) => {
+    if (session.evidenceFrozen) return session;
+    return { ...session, evidence: { ...session.evidence, ...patch } };
+  });
 }
 
 export function clearEvidence(demoId: DemoId, sessionId: string): DemoSession {
-  return updateSession(demoId, sessionId, (session) => ({
-    ...session,
-    evidence: undefined,
-  }));
+  return updateSession(demoId, sessionId, (session) => {
+    if (session.evidenceFrozen) return session;
+    return { ...session, evidence: undefined };
+  });
 }
 
 export function setPaymentStatus(
@@ -377,6 +388,40 @@ export function setPaymentStatus(
     ...session,
     paymentStatus,
     paymentTxnId: paymentTxnId ?? session.paymentTxnId,
+  }));
+}
+
+/**
+ * Mirror the per-case human-review ledger into the demo session so both party
+ * apps render the same final decision and payment state. No-op when unchanged.
+ */
+export function applyCaseOutcome(
+  demoId: DemoId,
+  sessionId: string,
+  outcome: CaseOutcome
+): DemoSession | null {
+  const current = readSessionRaw(demoId, sessionId);
+  if (!current) return null;
+  const hr = current.humanReview;
+  if (
+    hr?.caseRef === outcome.caseRef &&
+    hr.decision === outcome.decision &&
+    hr.amount === outcome.amount &&
+    current.paymentStatus === outcome.paymentStatus &&
+    current.paymentTxnId === outcome.txnId
+  ) {
+    return current;
+  }
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    humanReview: {
+      caseRef: outcome.caseRef,
+      decision: outcome.decision,
+      amount: outcome.amount,
+      reviewedAt: outcome.reviewedAt,
+    },
+    paymentStatus: outcome.paymentStatus,
+    paymentTxnId: outcome.txnId,
   }));
 }
 
@@ -413,6 +458,7 @@ export function selectPartyView(session: DemoSession, party: Party): PartyView {
     evidence: session.evidence,
     paymentStatus: session.paymentStatus,
     paymentTxnId: session.paymentTxnId,
+    humanReview: session.humanReview,
   };
 }
 
@@ -459,4 +505,32 @@ export function subscribeToSession(
     window.removeEventListener("storage", onStorage);
     document.removeEventListener("visibilitychange", onVisibility);
   };
+}
+
+const BRIEFING_SESSION_PREFIX = "mirra.briefing.session.";
+
+/**
+ * The one session id a Demo Briefing hands to Guided Demo, Passenger and Driver pages.
+ * Reused until the presenter starts a fresh session. Client-only.
+ */
+export function briefingSessionId(demoId: DemoId, fresh = false): string {
+  const key = BRIEFING_SESSION_PREFIX + demoId;
+  try {
+    const existing = window.localStorage.getItem(key);
+    if (existing && !fresh) return existing;
+  } catch {
+    // storage disabled: fall through to a generated id
+  }
+  const id = `demo${demoId}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    window.localStorage.setItem(key, id);
+  } catch {
+    // ignore
+  }
+  return id;
+}
+
+/** Read a session without creating it (briefing page status, console links). */
+export function peekSession(demoId: DemoId, sessionId: string): DemoSession | null {
+  return readSessionRaw(demoId, sessionId);
 }

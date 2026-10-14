@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type { PipelineEvent, CaseResult } from "@/src/types";
 import type { TribunalEvent } from "@/src/types/tribunal";
 import { streamPipeline, getCompletedResult } from "@/src/lib/api";
-import { mapPipelineEventToTribunalEvent } from "@/src/lib/liveTribunalAdapter";
+import { mapPipelineEventToTribunalEvent, eventsFromCaseResult } from "@/src/lib/liveTribunalAdapter";
 
 const STREAM_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
@@ -26,6 +26,7 @@ export function useLiveTribunal() {
   });
 
   const startedRef = useRef<Set<string>>(new Set());
+  const seqRef = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -72,7 +73,8 @@ export function useLiveTribunal() {
 
       const cleanup = streamPipeline(caseId, {
         onEvent: (event: PipelineEvent) => {
-          const mapped = mapPipelineEventToTribunalEvent(event, Date.now());
+          // Sequence number, not Date.now(): events arriving in the same millisecond need unique ids/keys.
+          const mapped = mapPipelineEventToTribunalEvent(event, seqRef.current++);
           if (mapped) {
             setState((prev) => ({
               ...prev,
@@ -134,6 +136,27 @@ export function useLiveTribunal() {
     [start, stop]
   );
 
+  /**
+   * Restore a case after refresh / navigation without re-running the pipeline
+   * (each SSE connection re-runs it). Returns false when no completed result exists.
+   */
+  const restore = useCallback(async (caseId: string): Promise<boolean> => {
+    if (!caseId || startedRef.current.has(caseId)) return true;
+    startedRef.current.add(caseId);
+    let result: CaseResult | null = null;
+    try {
+      result = await getCompletedResult(caseId);
+    } catch {
+      result = null;
+    }
+    if (!result?.judge_verdict) {
+      startedRef.current.delete(caseId);
+      return false;
+    }
+    setState({ events: eventsFromCaseResult(result), isStreaming: false, isComplete: true, result, error: null });
+    return true;
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -150,5 +173,6 @@ export function useLiveTribunal() {
     start,
     stop,
     retry,
+    restore,
   };
 }

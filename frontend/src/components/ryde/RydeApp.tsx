@@ -19,9 +19,13 @@ import { getPrivateMirraResponse } from "@/src/lib/privateMirraAdapter";
 import { getScenario } from "@/src/lib/demoScenarios";
 import MobileLayout from "./MobileLayout";
 import TripCard from "./TripCard";
+import TripMap from "./TripMap";
+import { Sparkle } from "@/src/components/showcase/ui";
 import MirraChat from "./MirraChat";
 import EvidenceIntake from "./EvidenceIntake";
-import type { DemoEvidence } from "@/src/types/session";
+import type { DemoEvidence, PartyView } from "@/src/types/session";
+import { partyFinalResult } from "@/src/lib/humanReview";
+import { useHydrated } from "@/src/hooks/useStoredValue";
 
 interface RydeAppProps {
   demoId: DemoId;
@@ -32,7 +36,22 @@ interface RydeAppProps {
 
 type Screen = "trip" | "chat" | "complaint" | "evidence";
 
-export default function RydeApp({ demoId, sessionId, party, embedded = false }: RydeAppProps) {
+/** The party app reads the shared session from localStorage: render after hydration. */
+export default function RydeApp(props: RydeAppProps) {
+  const hydrated = useHydrated();
+  if (!hydrated) {
+    return (
+      <MobileLayout embedded={props.embedded}>
+        <div className="flex h-full items-center justify-center">
+          <div className="animate-pulse text-sm text-[#9CA3AF]">Loading...</div>
+        </div>
+      </MobileLayout>
+    );
+  }
+  return <RydeAppContent {...props} />;
+}
+
+function RydeAppContent({ demoId, sessionId, party, embedded = false }: RydeAppProps) {
   const { locale } = useI18n();
   const t = useTranslation();
   const [session, setSession] = useState<DemoSession | null>(() =>
@@ -79,8 +98,12 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
       typingTimeoutRef.current = setTimeout(() => {
         updated = addChatMessage(demoId, sessionId, party, response.response, "mirra");
         updated = setChatSuggestions(demoId, sessionId, party, response.suggestions);
-        if (response.action === "draft_complaint") {
+        // draft_complaint: MIRRA has explained the privacy boundary; stay in chat.
+        // file_complaint: the party chose to proceed; open the form (or Evidence Intake) directly.
+        if (response.action === "draft_complaint" || response.action === "file_complaint") {
           updated = markComplaintDrafted(demoId, sessionId, party);
+        }
+        if (response.action === "file_complaint") {
           setScreen(demoId === "3" && party === "driver" ? "evidence" : "complaint");
         }
         setSession(updated);
@@ -123,10 +146,12 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
     if (!session) return;
     const scenario = getScenario(demoId);
     const category = scenario?.titleEn ?? "General Dispute";
+    const ev = session.evidence;
+    const parts = [ev?.photoDataUrl && (locale === "zh" ? "照片" : "photo"), ev?.receiptDataUrl && (locale === "zh" ? "收据" : "receipt")].filter(Boolean);
     const description =
       locale === "zh"
-        ? `司机提交了清洁费索赔，并附上了照片和收据证据。`
-        : `Driver submitted a cleaning-fee claim with photo and receipt evidence.`;
+        ? `司机提交了 S$60 清洁费索赔，并附上了${parts.join("和")}证据。`
+        : `Driver submitted a S$60 cleaning-fee claim with ${parts.join(" and ")} evidence.`;
     const updated = fileFormalComplaint(demoId, sessionId, category, description, party);
     setSession(updated);
     setScreen("trip");
@@ -134,7 +159,13 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
 
   const handleEvidenceSkip = useCallback(() => {
     if (!session) return;
-    const updated = setEvidence(demoId, sessionId, { skipped: true });
+    const updated = setEvidence(demoId, sessionId, {
+      skipped: true,
+      photoDataUrl: undefined,
+      photoName: undefined,
+      receiptDataUrl: undefined,
+      receiptName: undefined,
+    });
     setSession(updated);
     const scenario = getScenario(demoId);
     const category = scenario?.titleEn ?? "General Dispute";
@@ -208,15 +239,32 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
       }
       showBack={screen !== "trip"}
       onBack={() => setScreen("trip")}
+      brand={screen === "trip"}
+      rightAction={
+        screen === "trip" && !view.formalComplaint ? (
+          <button
+            onClick={startPrivateChat}
+            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-gradient-to-r from-[#2a0f1a] to-[#4a1328] ring-1 ring-mirra/60 rounded-full pl-2 pr-3 py-1.5 shadow-md shadow-mirra/30 hover:brightness-125"
+          >
+            <Sparkle className="w-3.5 h-3.5 text-mirra" /> MIRRA AI
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse-dot" aria-label="AI available" />
+          </button>
+        ) : undefined
+      }
     >
       {screen === "trip" && (
-        <div className="flex h-full flex-col">
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 no-scrollbar">
+        <div className="flex h-full flex-col bg-surface">
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+            <TripMap from={view.trip.pickup} to={view.trip.dropoff} deviation={demoId === "1"} />
+          <div className="p-3 space-y-3 -mt-4 relative">
+            {/* Outcome first: same underlying decision for both parties; no internal scores */}
+            {view.tribunalCompleted && <PartyOutcome view={view} party={party} locale={locale} />}
+
             <TripCard trip={view.trip} variant={party} />
 
             {/* Formal complaint banner */}
             {view.formalComplaint && (
-              <div className="rounded-xl bg-[#FDF1F3] border border-[#E84360]/20 p-4">
+              <div className="rounded-2xl bg-white border border-mirra/30 p-3 shadow-sm">
                 <div className="flex items-center gap-2 mb-1">
                   <div className="h-2 w-2 rounded-full bg-[#E84360]" />
                   <p className="text-xs font-bold text-[#E84360]">
@@ -237,7 +285,7 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
             {!view.formalComplaint && (
               <button
                 onClick={startPrivateChat}
-                className="w-full flex items-center gap-3 rounded-xl bg-white border border-gray-100 p-4 shadow-sm hover:shadow-md hover:border-[#E84360]/20 active:scale-[0.99] transition-all"
+                className="w-full flex items-center gap-3 rounded-2xl bg-white border border-line p-3 shadow-sm hover:border-mirra/40 active:scale-[0.99] transition-all"
               >
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FDF1F3]">
                   <svg className="h-5 w-5 text-[#E84360]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -279,6 +327,7 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
             )}
           </div>
 
+          </div>
           {/* Bottom nav */}
           <div className="shrink-0 border-t border-gray-100 bg-white px-6 py-2 flex items-center justify-between">
             <NavItem icon="home" label={t("rydeApp.home")} active />
@@ -333,6 +382,59 @@ export default function RydeApp({ demoId, sessionId, party, embedded = false }: 
         </div>
       )}
     </MobileLayout>
+  );
+}
+
+function PartyOutcome({ view, party, locale }: { view: PartyView; party: Party; locale: "en" | "zh" }) {
+  const zh = locale === "zh";
+  let title: string;
+  let body: string;
+  let tone: "ok" | "neutral" | "pending";
+  if (view.humanReview) {
+    const r = partyFinalResult(view.humanReview, party, locale);
+    title = r.title;
+    body = r.body;
+    tone = r.approved ? "ok" : "neutral";
+  } else {
+    const d = view.decision;
+    if (!d || d.status === "incomplete") {
+      title = zh ? "裁决暂不可用" : "Decision unavailable";
+      body = zh ? "尚未确定任何财务结果，将安排人工审核。" : "No financial outcome yet. A human review will be arranged.";
+      tone = "pending";
+    } else if (d.status === "human_review") {
+      title = zh ? "正在人工审核" : "Under human review";
+      body =
+        party === "passenger"
+          ? zh ? "审核期间不收取任何费用。" : "No fee is charged while the review is pending."
+          : zh ? "审核期间不发放任何款项。" : "No payout while the review is pending.";
+      tone = "pending";
+    } else if (d.status === "partial_refund") {
+      title =
+        party === "passenger"
+          ? zh ? `已批准退款 ${d.amount ?? ""}` : `${d.amount ?? ""} refund approved`
+          : zh ? `已向乘客退款 ${d.amount ?? ""}` : `${d.amount ?? ""} refunded to the rider`;
+      body = zh ? "基于已核实的行程证据自动执行。" : "Executed automatically from verified trip evidence.";
+      tone = "ok";
+    } else {
+      title = zh ? "不予退款" : "No refund";
+      body = zh ? "证据支持该费用，费用维持不变。" : "The evidence supports the charge, so it stands.";
+      tone = "neutral";
+    }
+  }
+  const cls =
+    tone === "ok"
+      ? "border-[#0D9488]/25 bg-[#F0FDFA]"
+      : tone === "pending"
+      ? "border-[#B45309]/25 bg-[#FFFBEB]"
+      : "border-gray-200 bg-[#F9FAFB]";
+  return (
+    <div className={`rounded-xl border p-4 ${cls}`} data-party-outcome={party}>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+        {view.humanReview ? (zh ? "最终结果 · 已人工审核" : "Final result · human reviewed") : zh ? "MIRRA 裁决" : "MIRRA decision"}
+      </p>
+      <p className="mt-1 text-sm font-semibold text-[#111827] break-words">{title}</p>
+      <p className="mt-0.5 text-xs text-[#6B7280] break-words">{body}</p>
+    </div>
   );
 }
 

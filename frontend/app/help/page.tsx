@@ -56,7 +56,7 @@ export default function HelpPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      <IOSHeader title="RydeHELP" onBack={() => router.push("/")} />
+      <IOSHeader title="RydeHELP" onBack={() => router.push("/ryde")} />
 
       {/* Section label */}
       <div className="px-5 pt-2 pb-1">

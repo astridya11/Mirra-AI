@@ -84,11 +84,13 @@ function extractContent(event: PipelineEvent): string {
   // Execution router
   if (typeof d.route === "string") {
     const route = d.route as string;
-    const confidence = typeof d.confidence_score === "number" ? d.confidence_score : 0;
+    // A missing / failed Judge confidence is "unavailable", never 0%.
+    const confidence =
+      typeof d.confidence_score === "number" ? `${(d.confidence_score * 100).toFixed(0)}%` : "unavailable";
     const reasons = Array.isArray(d.escalation_reasons)
       ? (d.escalation_reasons as string[]).join("; ")
       : "";
-    return `Route: ${route}. Confidence: ${(confidence * 100).toFixed(0)}%. ${reasons}`;
+    return `Route: ${route}. Confidence: ${confidence}. ${reasons}`.trim();
   }
 
   // Fallback: use label
@@ -111,6 +113,48 @@ export function mapPipelineEventToTribunalEvent(
     timestamp: Date.parse(event.timestamp) || Date.now(),
     status: "complete",
   };
+}
+
+/**
+ * Rebuild the tribunal feed from a stored CaseResult (page refresh / return from the
+ * review page). The backend SSE endpoint re-runs the pipeline on every connection,
+ * so a completed case is restored from its result instead of being streamed again.
+ */
+export function eventsFromCaseResult(result: CaseResult): TribunalEvent[] {
+  const ts = result.judge_verdict?.deliberated_at ?? "";
+  const pe: PipelineEvent[] = (result.agent_conversation ?? []).map((m) => ({
+    phase: "AGENT_CONVERSATION",
+    label: "",
+    data: { content: m.content },
+    timestamp: m.timestamp ?? ts,
+    event_type: "AGENT_CONVERSATION",
+    speaker: m.speaker,
+    message_type: m.message_type,
+  }));
+  const phase = (p: string, data: unknown, label: string, sub?: string): PipelineEvent =>
+    ({ phase: p, label, data: (data ?? {}) as Record<string, unknown>, timestamp: ts, event_type: "PHASE_COMPLETED", ...(sub ? { sub_phase: sub } : {}) }) as PipelineEvent;
+  if (result.prosecutor_findings) {
+    pe.push(phase("ROUND_2_PROSECUTOR_AUDIT", { prosecutor_findings: result.prosecutor_findings }, "Final prosecutor report", "FINAL_REPORT"));
+  }
+  if (result.policy_consultation) pe.push(phase("POLICY_CONSULTATION", result.policy_consultation, "Policy consultation"));
+  if (result.judge_verdict) pe.push(phase("JUDGE_DELIBERATION", result.judge_verdict, "Judge verdict"));
+  if (result.judge_verdict) {
+    pe.push(
+      phase(
+        "EXECUTION_ROUTER",
+        {
+          route: result.case_metadata?.resolution_channel,
+          confidence_score: result.judge_verdict.confidence_score,
+          escalation_reasons: result.bonus_modules?.escalation_protocol?.escalation_reasons,
+        },
+        "Execution router"
+      )
+    );
+  }
+  return pe
+    .map((e, i) => mapPipelineEventToTribunalEvent(e, i))
+    .filter((e): e is TribunalEvent => e !== null)
+    .map((e, i) => ({ ...e, id: `restored-${i}` }));
 }
 
 export function buildEvidenceFromCaseResult(result: CaseResult): EvidenceItem[] {

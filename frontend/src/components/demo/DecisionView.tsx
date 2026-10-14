@@ -124,11 +124,6 @@ export default function DecisionView({
         </button>
       )}
 
-      {status === "human_review" && (
-        <button className="block w-full rounded-xl bg-[#111827] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#374151] transition-colors">
-          {t("decision.openHumanReview")}
-        </button>
-      )}
     </div>
   );
 }

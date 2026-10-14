@@ -17,7 +17,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getCase, getCompletedResult } from "@/src/lib/api";
 import type { ReviewCase } from "@/src/lib/api";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import type { CaseResult } from "@/src/types";
+import type { DemoId } from "@/src/types/session";
+import HumanReviewDecision from "@/src/components/review/HumanReviewDecision";
+import DemoReviewScreen from "@/src/components/review/DemoReviewScreen";
+import LanguageToggle from "@/src/components/LanguageToggle";
+import { isDemoReviewRef } from "@/src/lib/humanReview";
 import ReviewSlaPanel from "@/src/components/ReviewSlaPanel";
 import PriorityBadge from "@/src/components/PriorityBadge";
 import SlaBar from "@/src/components/SlaBar";
@@ -1024,9 +1030,26 @@ const CaseSummaryView: React.FC<{ data: Rec }> = ({ data }) => {
 
 export default function CustomerSupportCaseViewPage() {
   const params = useParams();
-  const router = useRouter();
-  const { user, isLoading: authLoading } = useAuth();
   const caseId = (params?.caseId as string) || "";
+  // DEMO MODE reference: offline, no login, never a backend case.
+  if (isDemoReviewRef(caseId)) {
+    return <DemoReviewScreen caseRef={caseId} sessionId={caseId.slice("DEMO-REVIEW-".length)} />;
+  }
+  return <LiveCaseReview caseId={caseId} />;
+}
+
+function LiveCaseReview({ caseId }: { caseId: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Set by Guided Demo ("Open Human Review") so the decision reaches both party apps.
+  const demoParam = searchParams.get("demo");
+  const sessionParam = searchParams.get("session");
+  const link =
+    (demoParam === "1" || demoParam === "2" || demoParam === "3") && sessionParam
+      ? { demoId: demoParam as DemoId, sessionId: sessionParam }
+      : undefined;
+  const [caseResult, setCaseResult] = useState<CaseResult | null>(null);
+  const { user, isLoading: authLoading } = useAuth();
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1073,6 +1096,7 @@ export default function CustomerSupportCaseViewPage() {
       try {
         const result = await getCompletedResult(caseId);
         if (!result) throw new Error("API did not return valid data (empty response)");
+        setCaseResult(result);
 
         const synthesizedEvents: FeedEvent[] = [];
 
@@ -1185,6 +1209,7 @@ export default function CustomerSupportCaseViewPage() {
 
   const activeEvents = eventsByStep[activeTab] || [];
   const resolved = reviewCase?.status === "RESOLVED";
+  const isCleaningCase = caseResult?.case_metadata?.dispute_type === "CLEANING_FEE";
 
   return (
     <div className="min-h-screen bg-[#F6F7F9] text-[#1F2937] font-sans flex flex-col">
@@ -1229,6 +1254,7 @@ export default function CustomerSupportCaseViewPage() {
             {reviewCase && (
               <ConfidenceMeter score={reviewCase.confidence_score} size={32} />
             )}
+            <LanguageToggle />
           </div>
         </div>
       </header>
@@ -1239,7 +1265,7 @@ export default function CustomerSupportCaseViewPage() {
           {/* Decision rail — right on desktop, first on mobile */}
           <aside className="lg:col-start-3 lg:row-start-1 mb-4 lg:mb-0">
             <div className="lg:sticky lg:top-20">
-              <ReviewSlaPanel caseId={caseId} />
+              <ReviewSlaPanel caseId={caseId} hideDecision={isCleaningCase} />
             </div>
           </aside>
 
@@ -1304,6 +1330,26 @@ export default function CustomerSupportCaseViewPage() {
           {/* Centre content */}
           <section className="lg:col-start-2 lg:row-start-1 min-w-0">
             <div className="lg:max-w-[75ch]">
+              {isCleaningCase && caseResult && (
+                <div className="mb-6">
+                  <HumanReviewDecision
+                    caseRef={caseId}
+                    mode="live"
+                    claimAmount={
+                      caseResult.data_sources?.payment_fare_data?.disputed_amount ??
+                      caseResult.judge_verdict?.recommended_action?.cleaning_fee_amount ??
+                      0
+                    }
+                    recommendedAction={caseResult.judge_verdict?.recommended_action ?? null}
+                    reviewer={
+                      reviewCase?.support ?? (user ? { id: user.party_id, name: user.name } : null)
+                    }
+                    riderId={caseResult.case_metadata?.rider_id}
+                    driverId={caseResult.case_metadata?.driver_id}
+                    link={link}
+                  />
+                </div>
+              )}
               {error ? (
                 <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-[14px]">
                   {error}

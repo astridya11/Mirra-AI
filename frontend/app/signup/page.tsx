@@ -24,7 +24,7 @@ export default function SignUpPage() {
     try {
       const success = await signup({ name, email, password, party });
       if (success) {
-        router.push("/");
+        router.push("/ryde");
       } else {
         setError("Invalid email or password. Please try again.");
       }

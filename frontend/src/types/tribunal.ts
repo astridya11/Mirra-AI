@@ -26,6 +26,9 @@ export interface TribunalEvent {
   type: TribunalEventType;
   title: string;
   content: string;
+  /** Chinese copy for demo fixtures; live backend text has none (shown as original English). */
+  titleZh?: string;
+  contentZh?: string;
   timestamp: number;
   status: TribunalEventStatus;
 }
@@ -35,6 +38,8 @@ export interface EvidenceItem {
   label: string;
   category: "verified" | "disputed" | "missing";
   detail?: string;
+  labelZh?: string;
+  detailZh?: string;
 }
 
 export interface FraudSignal {
@@ -42,6 +47,8 @@ export interface FraudSignal {
   label: string;
   risk: "low" | "medium" | "high";
   detail?: string;
+  labelZh?: string;
+  detailZh?: string;
 }
 
 export interface TribunalFixture {

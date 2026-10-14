@@ -22,7 +22,7 @@ export default function LoginPage() {
     try {
       const success = await login(email, password);
       if (success) {
-        router.push("/");
+        router.push("/ryde");
       } else {
         setError("Invalid email or password. Please try again.");
       }

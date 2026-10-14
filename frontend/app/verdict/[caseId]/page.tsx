@@ -65,7 +65,7 @@ export default function VerdictPage() {
       <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-lg border-b border-gray-100">
         <div className="relative flex items-center justify-center px-4 h-[44px]">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/ryde")}
             className="absolute left-3 flex items-center text-[17px] text-[#E84360]"
           >
             <svg className="w-6 h-6 mr-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -171,7 +171,7 @@ export default function VerdictPage() {
         {/* Action Buttons */}
         <div className="space-y-3 pt-2">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/ryde")}
             className="w-full py-3.5 rounded-xl bg-[#E84360] text-white text-[17px] font-semibold active:bg-[#DE3557] transition-colors"
           >
             Accept Settlement

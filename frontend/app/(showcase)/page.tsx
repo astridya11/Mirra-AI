@@ -198,7 +198,7 @@ export default function HomePage() {
               </div>
             </Link>
             <Link
-              href="/ryde"
+              href="/experience"
               className="group relative overflow-hidden rounded-2xl bg-white p-8 shadow-sm border border-gray-100 hover:shadow-md hover:border-[#E84360]/20 transition-all"
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-[#D97706]/5 rounded-bl-full" />

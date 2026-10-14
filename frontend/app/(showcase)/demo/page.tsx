@@ -1,105 +1,70 @@
 "use client";
 
 import Link from "next/link";
-import { useTranslation } from "@/src/hooks/useTranslation";
+import { useI18n } from "@/src/context/I18nContext";
+import { Card, Pill, PresenterPanel } from "@/src/components/showcase/ui";
+import { DEMO_IDS, briefingFor } from "@/src/lib/demoBriefings";
 
-export default function DemoPage() {
-  const t = useTranslation();
+const THEME_TONE = { "1": "pink", "2": "green", "3": "amber" } as const;
 
-  const demos = [
-    {
-      num: 1,
-      titleKey: "demo.demo1Title",
-      themeKey: "demo.demo1Theme",
-      descKey: "demo.demo1Desc",
-      capsKey: "demo.demo1Capabilities",
-      ctaKey: "demo.demo1Cta",
-      color: "bg-[#E84360]",
-      light: "bg-[#FDF1F3]",
-      border: "border-[#E84360]/20",
-    },
-    {
-      num: 2,
-      titleKey: "demo.demo2Title",
-      themeKey: "demo.demo2Theme",
-      descKey: "demo.demo2Desc",
-      capsKey: "demo.demo2Capabilities",
-      ctaKey: "demo.demo2Cta",
-      color: "bg-[#0D9488]",
-      light: "bg-[#ECFDF5]",
-      border: "border-[#0D9488]/20",
-    },
-    {
-      num: 3,
-      titleKey: "demo.demo3Title",
-      themeKey: "demo.demo3Theme",
-      descKey: "demo.demo3Desc",
-      capsKey: "demo.demo3Capabilities",
-      ctaKey: "demo.demo3Cta",
-      color: "bg-[#D97706]",
-      light: "bg-[#FFFBEB]",
-      border: "border-[#D97706]/20",
-    },
-  ];
-
+export default function DemoSelection() {
+  const { locale } = useI18n();
+  const zh = locale === "zh";
   return (
-    <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
-      {/* Header */}
-      <div className="text-center mb-16">
-        <h1 className="text-3xl font-extrabold tracking-tight text-[#111827] sm:text-4xl">
-          {t("demo.title")}
-        </h1>
-        <p className="mt-4 text-lg text-[#6B7280] max-w-2xl mx-auto">
-          {t("demo.subtitle")}
-        </p>
-      </div>
-
-      {/* Demo Cards */}
-      <div className="grid gap-8 lg:grid-cols-3">
-        {demos.map((demo) => (
-          <div
-            key={demo.num}
-            className={`group relative flex flex-col rounded-2xl border ${demo.border} bg-white shadow-sm hover:shadow-lg transition-all overflow-hidden`}
-          >
-            {/* Theme badge */}
-            <div className={`${demo.light} px-6 py-3 border-b ${demo.border}`}>
-              <span className={`inline-block rounded-md ${demo.color} px-2.5 py-1 text-[10px] font-bold tracking-wider text-white uppercase`}>
-                {t(demo.themeKey)}
-              </span>
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 p-6 flex flex-col">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gray-50 group-hover:bg-white transition-colors">
-                <span className={`text-xl font-extrabold ${demo.color.replace("bg-", "text-")}`}>
-                  {demo.num}
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-[#111827]">{t(demo.titleKey)}</h3>
-              <p className="mt-3 text-sm text-[#6B7280] leading-relaxed flex-1">
-                {t(demo.descKey)}
-              </p>
-              <div className="mt-4">
-                <p className="text-xs font-semibold text-[#9CA3AF] uppercase tracking-wider mb-1">
-                  Capabilities
-                </p>
-                <p className="text-xs text-[#6B7280] leading-relaxed">
-                  {t(demo.capsKey)}
-                </p>
-              </div>
-            </div>
-
-            {/* CTA */}
-            <div className="px-6 pb-6">
-              <Link
-                href={`/demo/${demo.num}/guided?session=demo-${demo.num}`}
-                className={`flex w-full items-center justify-center rounded-xl ${demo.color} px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:opacity-90 active:scale-[0.98] transition-all`}
-              >
-                {t(demo.ctaKey)}
-              </Link>
-            </div>
+    <div className="max-w-[1440px] mx-auto px-4 md:px-8 py-10">
+      <div className="flex flex-col xl:flex-row xl:items-start gap-6">
+        <div className="flex-1 min-w-0">
+          <div className="text-center mb-10">
+            <h1 className="text-4xl font-extrabold text-ink">{zh ? "选择演示场景" : "Choose Demo"}</h1>
+            <p className="text-muted mt-2">
+              {zh
+                ? "三个真实纠纷场景：自动化、公平性与负责任 AI。"
+                : "Three real dispute scenarios: automation, fairness and responsible AI."}
+            </p>
           </div>
-        ))}
+          <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            {DEMO_IDS.map((id) => {
+              const d = briefingFor(id, locale)!;
+              return (
+                <Card key={id} className="p-6 flex flex-col">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Pill>{zh ? `演示 ${id}` : `DEMO ${id}`}</Pill>
+                    <Pill tone={THEME_TONE[id]}>{d.theme.toUpperCase()}</Pill>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-mirra-soft flex items-center justify-center text-2xl mt-5">{d.icon}</div>
+                  <p className="text-xl font-bold text-ink mt-4">{d.title}</p>
+                  <p className="text-sm font-semibold text-mirra mt-3">“{d.question}”</p>
+                  <p className="text-sm text-muted mt-2">{d.summary}</p>
+                  <ul className="mt-4 space-y-1.5 flex-1">
+                    {d.capabilities.map((c) => (
+                      <li key={c} className="text-sm text-body flex gap-2">
+                        <span className="text-mirra">✓</span>
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                  <Link
+                    href={`/demo/${id}`}
+                    className="mt-6 text-center rounded-xl bg-mirra text-white font-semibold py-2.5 hover:brightness-110"
+                  >
+                    {zh ? `开始演示 ${id}` : `Start Demo ${id}`}
+                  </Link>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+        <PresenterPanel
+          className="w-full xl:w-[320px] shrink-0 xl:sticky xl:top-24"
+          stage={zh ? "选择演示" : "Demo selection"}
+          say={
+            zh
+              ? "MIRRA 是一个多智能体纠纷解决系统。我们用三个场景展示它：自动化、公平性和负责任 AI。"
+              : "MIRRA is a multi-agent dispute resolution system. Three scenarios show it: automation, fairness and responsible AI."
+          }
+          watch={zh ? "每个演示都会先打开简报页。" : "Each demo opens a briefing page first."}
+          next={zh ? "选择演示 1。" : "Pick Demo 1."}
+        />
       </div>
     </div>
   );

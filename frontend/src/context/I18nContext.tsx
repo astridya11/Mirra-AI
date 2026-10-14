@@ -1,9 +1,10 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useCallback, useMemo } from "react";
 import type { Locale } from "@/src/i18n/config";
 import { defaultLocale, locales } from "@/src/i18n/config";
 import { getMessages, type Messages } from "@/src/i18n";
+import { useStoredValue } from "@/src/hooks/useStoredValue";
 
 const STORAGE_KEY = "mirra.language";
 
@@ -16,41 +17,19 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-function resolveInitialLocale(): Locale {
-  if (typeof window === "undefined") return defaultLocale;
-  const stored = window.localStorage.getItem(STORAGE_KEY) as Locale | null;
-  if (stored && locales.includes(stored)) return stored;
-  return defaultLocale;
-}
-
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(resolveInitialLocale);
-  const [messages, setMessages] = useState<Messages>(getMessages(resolveInitialLocale()));
+  // Stored language, synced across tabs; hydration-safe (server renders the default).
+  const [stored, setStored] = useStoredValue(STORAGE_KEY, defaultLocale);
+  const locale: Locale = locales.includes(stored as Locale) ? (stored as Locale) : defaultLocale;
+  const messages = useMemo(() => getMessages(locale), [locale]);
 
-  const setLocale = useCallback((next: Locale) => {
-    if (!locales.includes(next)) return;
-    setLocaleState(next);
-    setMessages(getMessages(next));
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    }
-  }, []);
-
-  const toggleLocale = useCallback(() => {
-    const next = locale === "en" ? "zh" : "en";
-    setLocale(next);
-  }, [locale, setLocale]);
-
-  useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY && e.newValue && locales.includes(e.newValue as Locale)) {
-        setLocaleState(e.newValue as Locale);
-        setMessages(getMessages(e.newValue as Locale));
-      }
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
-  }, []);
+  const setLocale = useCallback(
+    (next: Locale) => {
+      if (locales.includes(next)) setStored(next);
+    },
+    [setStored]
+  );
+  const toggleLocale = useCallback(() => setLocale(locale === "en" ? "zh" : "en"), [locale, setLocale]);
 
   return (
     <I18nContext.Provider value={{ locale, messages, setLocale, toggleLocale }}>

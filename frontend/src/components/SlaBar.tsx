@@ -107,7 +107,7 @@ export default function SlaBar({ deadline, totalSeconds, resolved }: Props) {
     <div className="flex items-center gap-2">
       {/* Track */}
       <div
-        className="relative h-1.5 w-[120px] max-w-[160px] flex-1 rounded-full bg-[#E5E7EB] md:flex-none md:w-[120px]"
+        className="relative h-1.5 w-[120px] max-w-[160px] flex-1 rounded-full bg-[#E5E7EB] md:flex-none md:w-[72px]"
         role="img"
         aria-label={ariaLabel}
       >
@@ -119,7 +119,7 @@ export default function SlaBar({ deadline, totalSeconds, resolved }: Props) {
       </div>
       {/* Countdown text */}
       <span
-        className={`shrink-0 text-xs font-medium tabular-nums ${TEXT_COLORS[status]}`}
+        className={`shrink-0 whitespace-nowrap text-xs font-medium tabular-nums ${TEXT_COLORS[status]}`}
         style={{ minWidth: "3.5rem" }}
       >
         {label}
