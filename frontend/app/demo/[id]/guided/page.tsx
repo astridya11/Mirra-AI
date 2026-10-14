@@ -25,10 +25,11 @@ import {
   clearLiveError,
   claimCaseCreationLock,
   clearCaseCreationLock,
+  setPaymentStatus,
 } from "@/src/lib/sessionStorage";
 import { getScenario } from "@/src/lib/demoScenarios";
 import { getFixtureByDemoId } from "@/src/lib/tribunalFixtures";
-import { createDispute } from "@/src/lib/api";
+import { createDispute, getCompletedResult, mockRydePayCleaningFee } from "@/src/lib/api";
 import {
   mapCaseResultToTribunalDecision,
   buildEvidenceFromCaseResult,
@@ -46,8 +47,7 @@ function GuidedDemoContent() {
   const { backendMode, toggleBackendMode, setBackendMode } = useBackendMode();
   const liveTribunal = useLiveTribunal();
 
-  // Demo 3 is always demo mode in M4
-  const effectiveMode: "live" | "demo" = demoId === "3" ? "demo" : backendMode;
+  const effectiveMode: "live" | "demo" = backendMode;
 
   const [session, setSession] = useState<DemoSession | null>(() =>
     getOrCreateSession(demoId, sessionId)
@@ -83,26 +83,48 @@ function GuidedDemoContent() {
 
     creatingCaseRef.current = true;
 
-    const payload =
-      demoId === "1"
-        ? {
-            trip_id: "TRIP-2026-08112",
-            dispute_type: "ROUTE_DEVIATION",
-            dispute_claim_description:
-              "Driver deviated from the optimal ECP route to PIE without a valid reason, adding 2.3km and 7 extra minutes to the trip.",
-            filed_by: "RIDER",
-            rider_id: "R-1092",
-            driver_id: "D-5541",
-          }
-        : {
-            trip_id: "TRIP-2026-09945",
-            dispute_type: "NO_SHOW_CHARGE",
-            dispute_claim_description:
-              "Driver cancelled the trip after the free waiting period expired and a $5.00 no-show cancellation fee was applied to the rider.",
-            filed_by: "RIDER",
-            rider_id: "R-7823",
-            driver_id: "D-2398",
-          };
+    let payload: import("@/src/lib/api").CreateDisputePayload;
+    if (demoId === "1") {
+      payload = {
+        trip_id: "TRIP-2026-08112",
+        dispute_type: "ROUTE_DEVIATION",
+        dispute_claim_description:
+          "Driver deviated from the optimal ECP route to PIE without a valid reason, adding 2.3km and 7 extra minutes to the trip.",
+        filed_by: "RIDER",
+        rider_id: "R-1092",
+        driver_id: "D-5541",
+      };
+    } else if (demoId === "2") {
+      payload = {
+        trip_id: "TRIP-2026-09945",
+        dispute_type: "NO_SHOW_CHARGE",
+        dispute_claim_description:
+          "Driver cancelled the trip after the free waiting period expired and a $5.00 no-show cancellation fee was applied to the rider.",
+        filed_by: "RIDER",
+        rider_id: "R-7823",
+        driver_id: "D-2398",
+      };
+    } else {
+      // Demo 3 — Cleaning Fee
+      payload = {
+        trip_id: "TRIP-2026-09104",
+        dispute_type: "CLEANING_FEE",
+        dispute_claim_description:
+          session?.evidence?.skipped
+            ? "Driver submitted a cleaning-fee claim without providing evidence."
+            : "Driver submitted a cleaning-fee claim with photo and receipt evidence.",
+        filed_by: "DRIVER",
+        rider_id: "R-5520",
+        driver_id: "D-3307",
+      };
+      const ev = session?.evidence;
+      if (ev?.photoDataUrl) {
+        payload.image_evidence = [ev.photoDataUrl];
+      }
+      if (ev?.receiptDataUrl) {
+        payload.receipt_evidence = [ev.receiptDataUrl];
+      }
+    }
 
     createDispute(payload)
       .then((response) => {
@@ -117,7 +139,7 @@ function GuidedDemoContent() {
       .finally(() => {
         creatingCaseRef.current = false;
       });
-  }, [effectiveMode, session?.stage, session?.liveCaseId, session?.tribunalStarted, session?.liveError, demoId, sessionId, ownerId]);
+  }, [effectiveMode, session?.stage, session?.liveCaseId, session?.tribunalStarted, session?.liveError, session?.evidence, demoId, sessionId, ownerId]);
 
   // When live tribunal completes, derive decision and complete session
   useEffect(() => {
@@ -140,6 +162,67 @@ function GuidedDemoContent() {
       setLiveStatus(demoId, sessionId, "error", liveTribunal.error);
     }
   }, [liveTribunal.error, session, demoId, sessionId]);
+
+  // Poll for human review completion when tribunal is done and route is human_review
+  useEffect(() => {
+    if (
+      effectiveMode !== "live" ||
+      !session?.tribunalCompleted ||
+      !session.liveCaseId ||
+      session.decision?.executionRoute !== "human_review" ||
+      session.paymentStatus === "completed" ||
+      session.paymentStatus === "failed"
+    ) {
+      return;
+    }
+
+    let alive = true;
+    const poll = async () => {
+      try {
+        const result = await getCompletedResult(session.liveCaseId!);
+        if (!alive || !result) return;
+        const payload = result.judge_verdict?.execution_payload;
+        const status = payload?.execution_status;
+        if (status === "HUMAN_CONFIRMED" || status === "HUMAN_OVERRIDDEN") {
+          const action = result.judge_verdict?.recommended_action;
+          const fee = action?.cleaning_fee_amount ?? 0;
+          if (fee > 0 && session.paymentStatus !== "completed" && session.paymentStatus !== "failed") {
+            try {
+              const payRes = await mockRydePayCleaningFee({
+                amount: fee,
+                case_id: session.liveCaseId,
+                rider_id: result.case_metadata?.rider_id,
+                driver_id: result.case_metadata?.driver_id,
+              });
+              setPaymentStatus(demoId, sessionId, "completed", payRes.transaction_id);
+            } catch {
+              setPaymentStatus(demoId, sessionId, "failed");
+            }
+          } else if (fee === 0) {
+            // Rejected or no fee
+            setPaymentStatus(demoId, sessionId, "completed");
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
+  }, [
+    effectiveMode,
+    session?.tribunalCompleted,
+    session?.liveCaseId,
+    session?.decision?.executionRoute,
+    session?.paymentStatus,
+    demoId,
+    sessionId,
+  ]);
 
   const handleStartTribunal = useCallback(() => {
     const updated = startTribunal(demoId, sessionId);
@@ -175,6 +258,28 @@ function GuidedDemoContent() {
     setBackendMode("demo");
     clearLiveError(demoId, sessionId);
   }, [setBackendMode, demoId, sessionId, liveTribunal]);
+
+  const handleSimulateHumanApprove = useCallback(async () => {
+    if (!session) return;
+    const amount = demoId === "3" ? 60 : 0;
+    if (amount > 0) {
+      try {
+        const payRes = await mockRydePayCleaningFee({
+          amount,
+          case_id: session.liveCaseId ?? `DEMO-${demoId}`,
+        });
+        setPaymentStatus(demoId, sessionId, "completed", payRes.transaction_id);
+      } catch {
+        setPaymentStatus(demoId, sessionId, "failed");
+      }
+    } else {
+      setPaymentStatus(demoId, sessionId, "completed");
+    }
+  }, [session, demoId, sessionId]);
+
+  const handleSimulateHumanReject = useCallback(() => {
+    setPaymentStatus(demoId, sessionId, "completed");
+  }, [demoId, sessionId]);
 
   const scenario = getScenario(demoId);
   const fixture = getFixtureByDemoId(demoId);
@@ -251,18 +356,16 @@ function GuidedDemoContent() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            {demoId !== "3" && (
-              <button
-                onClick={toggleBackendMode}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
-                  effectiveMode === "live"
-                    ? "bg-[#0D9488] text-white"
-                    : "bg-gray-100 text-[#6B7280] hover:bg-gray-200"
-                }`}
-              >
-                {effectiveMode === "live" ? t("live.backendLive") : t("live.backendDemo")}
-              </button>
-            )}
+            <button
+              onClick={toggleBackendMode}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                effectiveMode === "live"
+                  ? "bg-[#0D9488] text-white"
+                  : "bg-gray-100 text-[#6B7280] hover:bg-gray-200"
+              }`}
+            >
+              {effectiveMode === "live" ? t("live.backendLive") : t("live.backendDemo")}
+            </button>
             <button
               onClick={togglePresenterMode}
               className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
@@ -323,7 +426,7 @@ function GuidedDemoContent() {
             </div>
             <div className="rounded-3xl border-4 border-gray-800 bg-gray-800 p-2 shadow-2xl max-w-[360px] mx-auto xl:mx-0">
               <div className="rounded-2xl overflow-hidden bg-white h-[640px]">
-                <RydeApp demoId={demoId} sessionId={sessionId} party="passenger" />
+                <RydeApp demoId={demoId} sessionId={sessionId} party="passenger" embedded />
               </div>
             </div>
           </div>
@@ -522,6 +625,59 @@ function GuidedDemoContent() {
               </div>
             )}
 
+            {/* Human Review Required */}
+            {session?.tribunalCompleted &&
+              (session.decision?.executionRoute === "human_review" ||
+                (effectiveMode === "live" && liveDecision?.executionRoute === "human_review")) &&
+              session.paymentStatus !== "completed" &&
+              session.paymentStatus !== "failed" && (
+                <div className="rounded-xl border border-[#B45309]/20 bg-[#FEF3C7] p-4 text-center space-y-3">
+                  <p className="text-sm text-[#B45309] font-medium">
+                    {locale === "zh" ? "需要人工审查" : "Human Review Required"}
+                  </p>
+                  <p className="text-xs text-[#6B7280]">
+                    {locale === "zh"
+                      ? "清洁费在执行前需要人工确认。"
+                      : "Cleaning fee requires human confirmation before execution."}
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      onClick={handleSimulateHumanApprove}
+                      className="px-4 py-2 rounded-lg bg-[#0D9488] text-white text-xs font-semibold hover:bg-[#0F766E] transition-colors"
+                    >
+                      {locale === "zh" ? "批准 S$60 清洁费" : "Approve S$60 Cleaning Fee"}
+                    </button>
+                    <button
+                      onClick={handleSimulateHumanReject}
+                      className="px-4 py-2 rounded-lg bg-gray-100 text-[#6B7280] text-xs font-semibold hover:bg-gray-200 transition-colors"
+                    >
+                      {locale === "zh" ? "拒绝索赔" : "Reject Claim"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            {/* Payment Result */}
+            {session?.paymentStatus === "completed" && (
+              <div className="rounded-xl border border-[#0D9488]/20 bg-[#F0FDFA] p-4 text-center space-y-2">
+                <p className="text-sm text-[#111827] font-medium">
+                  {locale === "zh" ? "模拟 Ryde 支付完成" : "Simulated Ryde Payment Completed"}
+                </p>
+                {session.paymentTxnId && (
+                  <p className="text-xs text-[#6B7280]">
+                    {locale === "zh" ? "演示交易 ID" : "Demo Transaction ID"}: {session.paymentTxnId}
+                  </p>
+                )}
+              </div>
+            )}
+            {session?.paymentStatus === "failed" && (
+              <div className="rounded-xl border border-[#E84360]/20 bg-[#FDF1F3] p-4 text-center space-y-2">
+                <p className="text-sm text-[#E84360] font-medium">
+                  {locale === "zh" ? "支付模拟失败" : "Payment simulation failed"}
+                </p>
+              </div>
+            )}
+
             {/* Decision */}
             {session?.tribunalCompleted && (
               <div className="space-y-4">
@@ -580,7 +736,7 @@ function GuidedDemoContent() {
             </div>
             <div className="rounded-3xl border-4 border-gray-800 bg-gray-800 p-2 shadow-2xl max-w-[360px] mx-auto xl:mx-0">
               <div className="rounded-2xl overflow-hidden bg-white h-[640px]">
-                <RydeApp demoId={demoId} sessionId={sessionId} party="driver" />
+                <RydeApp demoId={demoId} sessionId={sessionId} party="driver" embedded />
               </div>
             </div>
           </div>

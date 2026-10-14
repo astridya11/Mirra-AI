@@ -274,6 +274,40 @@ export async function submitPartyDecision(
 }
 
 // ---------------------------------------------------------------------------
+// Mock Ryde Payment
+// ---------------------------------------------------------------------------
+
+export interface CleaningFeeChargeResponse {
+  status: string;
+  transaction_id: string;
+  cleaning_fee_amount: number;
+  currency: string;
+  case_id: string;
+  rider_id: string;
+  driver_id: string;
+  executed_at: string;
+}
+
+export async function mockRydePayCleaningFee(payload: {
+  amount: number;
+  currency?: string;
+  case_id?: string;
+  rider_id?: string;
+  driver_id?: string;
+}): Promise<CleaningFeeChargeResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/mock-ryde-pay/cleaning-fee`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currency: "SGD", ...payload }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `Payment simulation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // SSE Streaming
 // ---------------------------------------------------------------------------
 

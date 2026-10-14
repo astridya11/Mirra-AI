@@ -13,22 +13,26 @@ import {
   fileFormalComplaint,
   selectPartyView,
   subscribeToSession,
+  setEvidence,
 } from "@/src/lib/sessionStorage";
 import { getPrivateMirraResponse } from "@/src/lib/privateMirraAdapter";
 import { getScenario } from "@/src/lib/demoScenarios";
 import MobileLayout from "./MobileLayout";
 import TripCard from "./TripCard";
 import MirraChat from "./MirraChat";
+import EvidenceIntake from "./EvidenceIntake";
+import type { DemoEvidence } from "@/src/types/session";
 
 interface RydeAppProps {
   demoId: DemoId;
   sessionId: string;
   party: Party;
+  embedded?: boolean;
 }
 
-type Screen = "trip" | "chat" | "complaint";
+type Screen = "trip" | "chat" | "complaint" | "evidence";
 
-export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
+export default function RydeApp({ demoId, sessionId, party, embedded = false }: RydeAppProps) {
   const { locale } = useI18n();
   const t = useTranslation();
   const [session, setSession] = useState<DemoSession | null>(() =>
@@ -77,6 +81,7 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
         updated = setChatSuggestions(demoId, sessionId, party, response.suggestions);
         if (response.action === "draft_complaint") {
           updated = markComplaintDrafted(demoId, sessionId, party);
+          setScreen(demoId === "3" && party === "driver" ? "evidence" : "complaint");
         }
         setSession(updated);
         setIsTyping(false);
@@ -104,6 +109,43 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
     setComplaintText("");
     setScreen("trip");
   }, [session, complaintText, demoId, sessionId, party]);
+
+  const handleEvidenceChange = useCallback(
+    (evidence: DemoEvidence) => {
+      if (!session) return;
+      const updated = setEvidence(demoId, sessionId, evidence);
+      setSession(updated);
+    },
+    [session, demoId, sessionId]
+  );
+
+  const handleEvidenceSubmit = useCallback(() => {
+    if (!session) return;
+    const scenario = getScenario(demoId);
+    const category = scenario?.titleEn ?? "General Dispute";
+    const description =
+      locale === "zh"
+        ? `司机提交了清洁费索赔，并附上了照片和收据证据。`
+        : `Driver submitted a cleaning-fee claim with photo and receipt evidence.`;
+    const updated = fileFormalComplaint(demoId, sessionId, category, description, party);
+    setSession(updated);
+    setScreen("trip");
+  }, [session, demoId, sessionId, party, locale]);
+
+  const handleEvidenceSkip = useCallback(() => {
+    if (!session) return;
+    const updated = setEvidence(demoId, sessionId, { skipped: true });
+    setSession(updated);
+    const scenario = getScenario(demoId);
+    const category = scenario?.titleEn ?? "General Dispute";
+    const description =
+      locale === "zh"
+        ? `司机提交了清洁费索赔，但未提供证据。`
+        : `Driver submitted a cleaning-fee claim without providing evidence.`;
+    const updated2 = fileFormalComplaint(demoId, sessionId, category, description, party);
+    setSession(updated2);
+    setScreen("trip");
+  }, [session, demoId, sessionId, party, locale]);
 
   const startPrivateChat = useCallback(() => {
     if (!session) return;
@@ -142,7 +184,7 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
 
   if (!view) {
     return (
-      <MobileLayout>
+      <MobileLayout embedded={embedded}>
         <div className="flex h-full items-center justify-center">
           <div className="animate-pulse text-sm text-[#9CA3AF]">Loading...</div>
         </div>
@@ -152,11 +194,16 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
 
   return (
     <MobileLayout
+      embedded={embedded}
       title={
         screen === "chat"
           ? t("rydeApp.chatWithMirra")
           : screen === "complaint"
           ? t("rydeApp.fileComplaint")
+          : screen === "evidence"
+          ? locale === "zh"
+            ? "证据提交"
+            : "Evidence Submission"
           : "Ryde"
       }
       showBack={screen !== "trip"}
@@ -214,10 +261,20 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
             {/* File complaint button (after drafting) */}
             {view.myChat.complaintDrafted && !view.formalComplaint && (
               <button
-                onClick={() => setScreen("complaint")}
+                onClick={() => {
+                  if (demoId === "3" && party === "driver") {
+                    setScreen("evidence");
+                  } else {
+                    setScreen("complaint");
+                  }
+                }}
                 className="w-full rounded-xl bg-[#E84360] px-4 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#DE3557] active:scale-[0.98] transition-all"
               >
-                {t("rydeApp.fileComplaint")}
+                {demoId === "3" && party === "driver"
+                  ? locale === "zh"
+                    ? "开始清洁费索赔"
+                    : "Start Cleaning Fee Claim"
+                  : t("rydeApp.fileComplaint")}
               </button>
             )}
           </div>
@@ -240,6 +297,16 @@ export default function RydeApp({ demoId, sessionId, party }: RydeAppProps) {
           onSendMessage={handleSendMessage}
           onSuggestionClick={handleSuggestionClick}
           isTyping={isTyping}
+        />
+      )}
+
+      {screen === "evidence" && (
+        <EvidenceIntake
+          evidence={view.evidence}
+          frozen={view.evidenceFrozen}
+          onChange={handleEvidenceChange}
+          onSubmit={handleEvidenceSubmit}
+          onSkip={handleEvidenceSkip}
         />
       )}
 

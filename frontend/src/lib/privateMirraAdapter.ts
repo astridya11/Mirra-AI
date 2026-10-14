@@ -53,18 +53,18 @@ const responses: Record<
       {
         match: ["comparison", "compare", "gps", "view route", "轨迹", "对比"],
         responseEn:
-          "The trip shows a 24-minute actual duration versus an 18-minute estimated route. The fare reflects the actual distance driven. Would you like to understand the charge breakdown or proceed with a formal complaint?",
+          "The trip shows a 35-minute actual duration versus a 28-minute estimated route. GPS confirms a 2.3 km deviation onto PIE. The fare is S$18.50. Would you like to understand the charge breakdown or proceed with a formal complaint?",
         responseZh:
-          "行程显示实际用时 24 分钟，而预估路线为 18 分钟。车费反映了实际行驶距离。您希望了解费用明细，还是继续提交正式投诉？",
+          "行程显示实际用时 35 分钟，而预估路线为 28 分钟。GPS 确认偏离了 2.3 公里进入 PIE。车费为 S$18.50。您希望了解费用明细，还是继续提交正式投诉？",
         suggestionsEn: ["Understand the charge", "Submit formal complaint"],
         suggestionsZh: ["了解费用构成", "提交正式投诉"],
       },
       {
         match: ["charge", "breakdown", "fare", "cost", "费用", "车费", "构成"],
         responseEn:
-          "The fare includes a base charge, distance rate and time rate. The additional amount comes from the extra 6 minutes and approximately 2.3 km of distance. I cannot confirm fault from the trip record alone — a formal complaint would trigger an evidence review.",
+          "The fare includes a S$3.00 base charge, S$12.50 distance rate and S$3.00 time rate. The disputed amount is S$3.25 from the extra 7 minutes and 2.3 km of deviation. I cannot confirm fault from the trip record alone — a formal complaint would trigger an evidence review.",
         responseZh:
-          "车费包含基础费、里程费和时间费。额外金额来自多出的 6 分钟和约 2.3 公里距离。仅凭行程记录我无法确认责任——正式投诉将触发证据审查。",
+          "车费包含 S$3.00 基础费、S$12.50 里程费和 S$3.00 时间费。争议金额是额外 7 分钟和 2.3 公里偏离产生的 S$3.25。仅凭行程记录我无法确认责任——正式投诉将触发证据审查。",
         suggestionsEn: ["Submit formal complaint", "Back to trip details"],
         suggestionsZh: ["提交正式投诉", "返回行程详情"],
       },
@@ -114,9 +114,9 @@ const responses: Record<
       {
         match: ["waiting", "timer", "timeline", "wait", "等候", "计时"],
         responseEn:
-          "The record shows the driver arrived at 14:02 and the waiting timer ran for 5 minutes before cancellation. App notifications were sent at 14:04 and 14:06. Would you like to proceed with a formal dispute?",
+          "The record shows the driver arrived at 08:43 and the waiting timer ran for 5 minutes before cancellation. App notifications were sent at 08:43:05 and 08:47:05. The free wait period expired at 08:48:10 and the trip was cancelled at 08:51. Would you like to proceed with a formal dispute?",
         responseZh:
-          "记录显示司机于 14:02 到达，取消前等候计时器运行了 5 分钟。应用通知于 14:04 和 14:06 发出。您是否希望继续提交正式争议？",
+          "记录显示司机于 08:43 到达，取消前等候计时器运行了 5 分钟。应用通知于 08:43:05 和 08:47:05 发出。免费等候期于 08:48:10 结束，行程于 08:51 取消。您是否希望继续提交正式争议？",
         suggestionsEn: ["Submit formal complaint", "Back to trip details"],
         suggestionsZh: ["提交正式投诉", "返回行程详情"],
       },

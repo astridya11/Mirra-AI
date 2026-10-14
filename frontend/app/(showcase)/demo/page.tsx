@@ -92,11 +92,7 @@ export default function DemoPage() {
             {/* CTA */}
             <div className="px-6 pb-6">
               <Link
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
-                  alert(`Demo ${demo.num} will be available in a future milestone.`);
-                }}
+                href={`/demo/${demo.num}/guided?session=demo-${demo.num}`}
                 className={`flex w-full items-center justify-center rounded-xl ${demo.color} px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:opacity-90 active:scale-[0.98] transition-all`}
               >
                 {t(demo.ctaKey)}

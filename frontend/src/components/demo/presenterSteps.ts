@@ -6,7 +6,7 @@ export const presenterSteps: Record<
 > = {
   "1": {
     trip: {
-      say: "A passenger has completed a trip from Marina Bay Sands to Jewel Changi Airport. The fare is S$24.50.",
+      say: "A passenger has completed a trip from Marina Bay Sands to Changi Airport T3. The fare is S$18.50.",
       watch: "Both Passenger and Driver see the same trip summary.",
       proves: "MIRRA starts from a shared, objective trip record.",
       expected: "No dispute is visible yet.",
@@ -43,7 +43,7 @@ export const presenterSteps: Record<
   },
   "2": {
     trip: {
-      say: "A ride from Orchard Road to Tampines Mall was cancelled. A S$5 no-show fee was applied.",
+      say: "A ride from Tiong Bahru Plaza to VivoCity was cancelled. A S$5 no-show fee was applied.",
       watch: "Both Passenger and Driver see the cancelled trip with the fee.",
       proves: "MIRRA starts from a shared, objective trip record.",
       expected: "No dispute is visible yet.",
@@ -80,7 +80,7 @@ export const presenterSteps: Record<
   },
   "3": {
     trip: {
-      say: "A driver submits a S$100 cleaning fee claim after a trip from Clarke Quay to Sentosa Cove.",
+      say: "A driver submits a S$60 cleaning fee claim after a trip from Orchard to Bishan.",
       watch: "Both Passenger and Driver see the trip with the extra charge.",
       proves: "MIRRA starts from a shared, objective trip record.",
       expected: "No dispute is visible yet.",

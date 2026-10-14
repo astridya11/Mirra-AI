@@ -24,7 +24,7 @@ function ev(
 const demo1Events: TribunalEvent[] = [
   ev("e1", "rider_advocate", "statement", "Rider Advocate Statement", "乘客代理陈述", "The rider reports a 2.3 km detour and an additional S$3.25 fare.", "乘客报告了 2.3 公里的绕路以及额外的 S$3.25 车费。", "complete"),
   ev("e2", "driver_advocate", "statement", "Driver Advocate Statement", "司机代理陈述", "The driver followed the app's recommended route. GPS confirms the path taken.", "司机按照应用推荐的路线行驶。GPS 确认了行驶路径。", "complete"),
-  ev("e3", "initial_prosecutor", "evidence_audit", "Evidence Audit", "证据审查", "GPS: 24 min actual vs 18 min estimated. Fare: S$18.50 estimated, S$24.50 charged.", "GPS：实际 24 分钟 vs 预估 18 分钟。车费：预估 S$18.50，实际收取 S$24.50。", "complete"),
+  ev("e3", "initial_prosecutor", "evidence_audit", "Evidence Audit", "证据审查", "GPS: 35 min actual vs 28 min estimated. Fare: S$18.50 with S$3.25 disputed.", "GPS：实际 35 分钟 vs 预估 28 分钟。车费：S$18.50，争议金额 S$3.25。", "complete"),
   ev("e4", "cross_examination", "targeted_question", "Targeted Question", "针对性提问", "Was the detour caused by traffic or by driver choice?", "绕路是由交通状况还是司机选择导致的？", "complete"),
   ev("e5", "final_prosecutor", "verified_summary", "Verified Summary", "核实摘要", "Verified: extra 2.3 km driven. Disputed: reason for detour. No evidence of malicious intent.", "已核实：多行驶了 2.3 公里。争议：绕路原因。无恶意证据。", "complete"),
   ev("e6", "policy_consultant", "policy_application", "Applicable Policy", "适用政策", "Ryde Policy 4.2: route deviation refunds apply when GPS confirms unnecessary extra distance.", "Ryde 政策 4.2：当 GPS 确认存在不必要额外距离时，适用路线偏离退款。", "complete"),
@@ -33,8 +33,8 @@ const demo1Events: TribunalEvent[] = [
 ];
 
 const demo1Evidence: EvidenceItem[] = [
-  { id: "ev1", label: "GPS route recorded", category: "verified", detail: "24 min actual / 18 min estimated" },
-  { id: "ev2", label: "Fare S$24.50", category: "verified", detail: "S$18.50 estimated" },
+  { id: "ev1", label: "GPS route recorded", category: "verified", detail: "35 min actual / 28 min estimated" },
+  { id: "ev2", label: "Fare S$18.50", category: "verified", detail: "S$3.25 disputed" },
   { id: "ev3", label: "Reason for detour", category: "disputed", detail: "Traffic vs driver choice" },
   { id: "ev4", label: "Driver intent", category: "missing", detail: "No supporting communication" },
 ];
@@ -58,7 +58,7 @@ const demo2Evidence: EvidenceItem[] = [
 ];
 
 const demo3Events: TribunalEvent[] = [
-  ev("e1", "rider_advocate", "statement", "Rider Advocate Statement", "乘客代理陈述", "The rider disputes the S$100 cleaning fee. They claim the car was clean when they exited.", "乘客对 S$100 清洁费提出异议。声称下车时车辆是干净的。", "complete"),
+  ev("e1", "rider_advocate", "statement", "Rider Advocate Statement", "乘客代理陈述", "The rider disputes the S$60 cleaning fee. They claim the car was clean when they exited.", "乘客对 S$60 清洁费提出异议。声称下车时车辆是干净的。", "complete"),
   ev("e2", "driver_advocate", "statement", "Driver Advocate Statement", "司机代理陈述", "Driver reports a mess in the back seat. Submitted photo and cleaning receipt.", "司机报告后座有污渍。提交了照片和清洁收据。", "complete"),
   ev("e3", "initial_prosecutor", "evidence_audit", "Evidence Audit", "证据审查", "Photo: inconsistent lighting / possible reuse. Receipt: valid, S$60. EXIF: timestamp mismatch with trip end.", "照片：光线不一致 / 可能重复使用。收据：有效，S$60。EXIF：时间戳与行程结束时间不匹配。", "complete"),
   ev("e4", "cross_examination", "targeted_question", "Targeted Question", "针对性提问", "Can the driver explain the EXIF timestamp mismatch?", "司机能否解释 EXIF 时间戳不匹配的问题？", "complete"),
@@ -77,7 +77,7 @@ const demo3Evidence: EvidenceItem[] = [
 
 const demo3Fraud: FraudSignal[] = [
   { id: "f1", label: "Recycled photo risk", risk: "high", detail: "EXIF timestamp mismatch" },
-  { id: "f2", label: "Receipt amount vs claim", risk: "medium", detail: "Receipt S$60, claimed S$100" },
+  { id: "f2", label: "Receipt amount vs claim", risk: "medium", detail: "Receipt S$60, claimed S$60" },
 ];
 
 export const tribunalFixtures: Record<string, TribunalFixture> = {

@@ -292,36 +292,169 @@ function OverviewLiveTab({ result }: { result: CaseResult }) {
 function EvidenceLiveTab({ result }: { result: CaseResult }) {
   const evidence = buildEvidenceFromCaseResult(result);
   const fraud = buildFraudSignalsFromCaseResult(result);
+  const images = result.dispute_claim?.image_evidence ?? [];
+  const receipts = result.dispute_claim?.receipt_evidence ?? [];
+  const prosecutor = result.prosecutor_findings;
+  const fraudAssessment = result.bonus_modules?.fraud_assessment;
+
   return (
-    <div className="space-y-4">
-      <SectionTitle title="Verified" />
-      {evidence.filter((e) => e.category === "verified").map((item) => (
-        <EvidenceRow key={item.id} item={item} color="text-[#0D9488]" />
-      ))}
-      <SectionTitle title="Disputed" />
-      {evidence.filter((e) => e.category === "disputed").map((item) => (
-        <EvidenceRow key={item.id} item={item} color="text-[#B45309]" />
-      ))}
-      <SectionTitle title="Missing" />
-      {evidence.filter((e) => e.category === "missing").map((item) => (
-        <EvidenceRow key={item.id} item={item} color="text-gray-500" />
-      ))}
-      {fraud.length > 0 && (
-        <>
-          <SectionTitle title="Fraud Signals" />
-          {fraud.map((signal) => (
-            <div key={signal.id} className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3">
+    <div className="space-y-6">
+      {/* Photo Evidence */}
+      {images.length > 0 && (
+        <div className="space-y-3">
+          <SectionTitle title="Photo Evidence" />
+          {images.map((img, i) => (
+            <div key={i} className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm">{signal.label}</span>
-                <span className={`text-xs font-bold uppercase ${signal.risk === "high" ? "text-[#E84360]" : "text-[#B45309]"}`}>
-                  {signal.risk}
-                </span>
+                <span className="text-sm text-gray-300">{img.image_id || `IMG-${i + 1}`}</span>
+                {img.provider_result?.stain_damage_classification && (
+                  <span className="text-[10px] font-bold uppercase text-[#0D9488]">
+                    {img.provider_result.stain_damage_classification}
+                  </span>
+                )}
               </div>
-              {signal.detail && <p className="text-xs text-gray-500 mt-1">{signal.detail}</p>}
+              {img.provider_result?.damage_severity && (
+                <p className="text-xs text-gray-500">Severity: {img.provider_result.damage_severity}</p>
+              )}
+              {img.exif_timestamp && <p className="text-xs text-gray-500">EXIF: {img.exif_timestamp}</p>}
+              {img.exif_gps_location && (
+                <p className="text-xs text-gray-500">
+                  GPS: {img.exif_gps_location.latitude}, {img.exif_gps_location.longitude}
+                </p>
+              )}
+              {img.known_matches && Object.keys(img.known_matches).length > 0 && (
+                <p className="text-xs text-amber-400">
+                  Recycled image match: {String(Object.values(img.known_matches)[0])}
+                </p>
+              )}
+              {img.provider_result?.is_ai_generated !== undefined && (
+                <p className="text-xs text-gray-500">
+                  AI-generated: {img.provider_result.is_ai_generated ? "Yes" : "No"} (
+                  {Math.round((img.provider_result.ai_generated_confidence ?? 0) * 100)}%)
+                </p>
+              )}
             </div>
           ))}
-        </>
+        </div>
       )}
+
+      {/* Receipt Evidence */}
+      {receipts.length > 0 && (
+        <div className="space-y-3">
+          <SectionTitle title="Receipt Evidence" />
+          {receipts.map((rcp, i) => (
+            <div key={i} className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-300">{rcp.receipt_id || `RCP-${i + 1}`}</span>
+                {rcp.ocr_result?.ocr_confidence !== undefined && (
+                  <span className="text-[10px] font-bold uppercase text-[#0D9488]">
+                    OCR {Math.round(rcp.ocr_result.ocr_confidence * 100)}%
+                  </span>
+                )}
+              </div>
+              {rcp.ocr_result?.merchant_name && (
+                <p className="text-xs text-gray-500">Merchant: {rcp.ocr_result.merchant_name}</p>
+              )}
+              {rcp.ocr_result?.amount !== undefined && (
+                <p className="text-xs text-gray-500">
+                  Amount: {rcp.ocr_result.currency} {rcp.ocr_result.amount}
+                </p>
+              )}
+              {rcp.ocr_result?.receipt_date && (
+                <p className="text-xs text-gray-500">Date: {rcp.ocr_result.receipt_date}</p>
+              )}
+              {rcp.recycled_receipt_detected && (
+                <p className="text-xs text-amber-400">Recycled receipt detected</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Prosecutor Findings */}
+      {prosecutor && (
+        <div className="space-y-3">
+          <SectionTitle title="Prosecutor Findings" />
+          {prosecutor.verified_facts && prosecutor.verified_facts.length > 0 && (
+            <div>
+              <p className="text-[10px] text-gray-500 mb-1">Verified</p>
+              {prosecutor.verified_facts.map((f, i) => (
+                <p key={i} className="text-xs text-[#0D9488]">{f.description}</p>
+              ))}
+            </div>
+          )}
+          {prosecutor.disputed_facts && prosecutor.disputed_facts.length > 0 && (
+            <div>
+              <p className="text-[10px] text-gray-500 mb-1">Disputed</p>
+              {prosecutor.disputed_facts.map((f, i) => (
+                <p key={i} className="text-xs text-[#B45309]">{f.description}</p>
+              ))}
+            </div>
+          )}
+          {prosecutor.missing_facts && prosecutor.missing_facts.length > 0 && (
+            <div>
+              <p className="text-[10px] text-gray-500 mb-1">Missing</p>
+              {prosecutor.missing_facts.map((f, i) => (
+                <p key={i} className="text-xs text-gray-500">{f.description}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Fraud Assessment */}
+      {fraudAssessment && (
+        <div className="space-y-3">
+          <SectionTitle title="Fraud Assessment" />
+          <div className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-300">Risk Score</span>
+              <span className="text-[10px] font-bold uppercase text-gray-400">
+                {Math.round((fraudAssessment.fraud_risk_score ?? 0) * 100)}%
+              </span>
+            </div>
+            {fraudAssessment.risk_factors && fraudAssessment.risk_factors.length > 0 && (
+              <ul className="list-disc list-inside text-xs text-gray-500 space-y-0.5">
+                {fraudAssessment.risk_factors.map((rf, i) => (
+                  <li key={i}>{rf}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Legacy evidence rows */}
+      <div className="space-y-4">
+        <SectionTitle title="Verified" />
+        {evidence.filter((e) => e.category === "verified").map((item) => (
+          <EvidenceRow key={item.id} item={item} color="text-[#0D9488]" />
+        ))}
+        <SectionTitle title="Disputed" />
+        {evidence.filter((e) => e.category === "disputed").map((item) => (
+          <EvidenceRow key={item.id} item={item} color="text-[#B45309]" />
+        ))}
+        <SectionTitle title="Missing" />
+        {evidence.filter((e) => e.category === "missing").map((item) => (
+          <EvidenceRow key={item.id} item={item} color="text-gray-500" />
+        ))}
+        {fraud.length > 0 && (
+          <>
+            <SectionTitle title="Fraud Signals" />
+            {fraud.map((signal) => (
+              <div key={signal.id} className="rounded-lg border border-gray-800 bg-[#111827] px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">{signal.label}</span>
+                  <span className={`text-xs font-bold uppercase ${signal.risk === "high" ? "text-[#E84360]" : "text-[#B45309]"}`}>
+                    {signal.risk}
+                  </span>
+                </div>
+                {signal.detail && <p className="text-xs text-gray-500 mt-1">{signal.detail}</p>}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
     </div>
   );
 }

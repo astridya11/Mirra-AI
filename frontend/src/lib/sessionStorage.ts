@@ -349,6 +349,48 @@ export function clearLiveError(demoId: DemoId, sessionId: string): DemoSession {
   }));
 }
 
+export function setEvidence(
+  demoId: DemoId,
+  sessionId: string,
+  evidence: import("@/src/types/session").DemoEvidence
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    evidence,
+  }));
+}
+
+export function clearEvidence(demoId: DemoId, sessionId: string): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    evidence: undefined,
+  }));
+}
+
+export function setPaymentStatus(
+  demoId: DemoId,
+  sessionId: string,
+  paymentStatus: import("@/src/types/session").PaymentStatus,
+  paymentTxnId?: string
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    paymentStatus,
+    paymentTxnId: paymentTxnId ?? session.paymentTxnId,
+  }));
+}
+
+export function updateTribunalDecision(
+  demoId: DemoId,
+  sessionId: string,
+  decision: import("@/src/types/session").TribunalDecision
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    decision,
+  }));
+}
+
 export function selectPartyView(session: DemoSession, party: Party): PartyView {
   const myChat = party === "passenger" ? session.passengerChat : session.driverChat;
   return {
@@ -368,6 +410,9 @@ export function selectPartyView(session: DemoSession, party: Party): PartyView {
     liveCaseId: session.liveCaseId,
     liveStatus: session.liveStatus,
     liveError: session.liveError,
+    evidence: session.evidence,
+    paymentStatus: session.paymentStatus,
+    paymentTxnId: session.paymentTxnId,
   };
 }
 

@@ -72,6 +72,16 @@ export interface LiveCaseCreation {
   startedAt: number;
 }
 
+export interface DemoEvidence {
+  photoDataUrl?: string;
+  photoName?: string;
+  receiptDataUrl?: string;
+  receiptName?: string;
+  skipped?: boolean;
+}
+
+export type PaymentStatus = "none" | "pending" | "completed" | "failed";
+
 export interface DemoSession {
   demoId: DemoId;
   sessionId: string;
@@ -91,6 +101,10 @@ export interface DemoSession {
   liveStatus?: LiveStatus;
   liveError?: string;
   liveCaseCreation?: LiveCaseCreation;
+  // M5 evidence fields
+  evidence?: DemoEvidence;
+  paymentStatus?: PaymentStatus;
+  paymentTxnId?: string;
 }
 
 export interface PartyView {
@@ -109,4 +123,7 @@ export interface PartyView {
   liveCaseId?: string;
   liveStatus?: LiveStatus;
   liveError?: string;
+  evidence?: DemoEvidence;
+  paymentStatus?: PaymentStatus;
+  paymentTxnId?: string;
 }
