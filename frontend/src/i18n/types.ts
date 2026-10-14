@@ -104,4 +104,32 @@ export interface Messages {
     tagline: string;
     copyright: string;
   };
+  rydeApp: {
+    pickup: string;
+    dropoff: string;
+    fare: string;
+    eta: string;
+    status: string;
+    driver: string;
+    passenger: string;
+    vehicle: string;
+    licensePlate: string;
+    privateMirra: string;
+    privateNoticePassenger: string;
+    privateNoticeDriver: string;
+    typeMessage: string;
+    suggestedReplies: string;
+    fileComplaint: string;
+    complaintFiled: string;
+    complaintReceived: string;
+    complaintCategory: string;
+    disputeUnderReview: string;
+    backToTrip: string;
+    help: string;
+    home: string;
+    activity: string;
+    account: string;
+    chatWithMirra: string;
+    mirraIsTyping: string;
+  };
 }
