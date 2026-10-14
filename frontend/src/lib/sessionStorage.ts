@@ -1,4 +1,10 @@
-import type { DemoSession, DemoId, Party, PartyView } from "@/src/types/session";
+import type {
+  DemoSession,
+  DemoId,
+  Party,
+  PartyView,
+  TribunalDecision,
+} from "@/src/types/session";
 import { demoScenarios } from "./demoScenarios";
 
 const SESSION_PREFIX = "mirra.demo.v1";
@@ -68,6 +74,8 @@ function createDefaultSession(demoId: DemoId, sessionId: string): DemoSession {
     stage: "none",
     tripStatus: scenario?.initialTripStatus ?? "completed",
     evidenceFrozen: false,
+    tribunalStarted: false,
+    tribunalCompleted: false,
     trip: scenario?.trip ?? {
       pickup: "",
       dropoff: "",
@@ -117,6 +125,17 @@ export function updateSession(
   return updated;
 }
 
+/** Remove only the targeted demo/session. Language & presenter prefs survive. */
+export function resetSession(demoId: DemoId, sessionId: string): DemoSession {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(storageKey(demoId, sessionId));
+  }
+  const fresh = createDefaultSession(demoId, sessionId);
+  writeSessionRaw(fresh);
+  broadcastUpdate(demoId, sessionId);
+  return fresh;
+}
+
 export function addChatMessage(
   demoId: DemoId,
   sessionId: string,
@@ -125,6 +144,7 @@ export function addChatMessage(
   sender: "user" | "mirra"
 ): DemoSession {
   return updateSession(demoId, sessionId, (session) => {
+    if (session.evidenceFrozen) return session;
     const chatKey = party === "passenger" ? "passengerChat" : "driverChat";
     return {
       ...session,
@@ -151,6 +171,7 @@ export function setChatSuggestions(
   suggestions: string[]
 ): DemoSession {
   return updateSession(demoId, sessionId, (session) => {
+    if (session.evidenceFrozen) return session;
     const chatKey = party === "passenger" ? "passengerChat" : "driverChat";
     return {
       ...session,
@@ -168,6 +189,7 @@ export function markComplaintDrafted(
   party: Party
 ): DemoSession {
   return updateSession(demoId, sessionId, (session) => {
+    if (session.evidenceFrozen) return session;
     const chatKey = party === "passenger" ? "passengerChat" : "driverChat";
     return {
       ...session,
@@ -184,13 +206,10 @@ export function enterPrivateSupport(
   sessionId: string,
   _party: Party
 ): DemoSession {
-  void _party; // parameter kept for API symmetry
+  void _party;
   return updateSession(demoId, sessionId, (session) => {
     if (session.stage !== "none") return session;
-    return {
-      ...session,
-      stage: "private_support",
-    };
+    return { ...session, stage: "private_support" };
   });
 }
 
@@ -213,6 +232,31 @@ export function fileFormalComplaint(
   }));
 }
 
+export function startTribunal(
+  demoId: DemoId,
+  sessionId: string
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    stage: "under_review",
+    evidenceFrozen: true,
+    tribunalStarted: true,
+  }));
+}
+
+export function completeTribunal(
+  demoId: DemoId,
+  sessionId: string,
+  decision: TribunalDecision
+): DemoSession {
+  return updateSession(demoId, sessionId, (session) => ({
+    ...session,
+    stage: "resolved",
+    tribunalCompleted: true,
+    decision,
+  }));
+}
+
 export function selectPartyView(session: DemoSession, party: Party): PartyView {
   const myChat = party === "passenger" ? session.passengerChat : session.driverChat;
   return {
@@ -222,6 +266,9 @@ export function selectPartyView(session: DemoSession, party: Party): PartyView {
     tripStatus: session.tripStatus,
     formalComplaint: session.formalComplaint,
     evidenceFrozen: session.evidenceFrozen,
+    tribunalStarted: session.tribunalStarted,
+    tribunalCompleted: session.tribunalCompleted,
+    decision: session.decision,
     trip: session.trip,
     myChat,
     otherPartyHasComplaint:

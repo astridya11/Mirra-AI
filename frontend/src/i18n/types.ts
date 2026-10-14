@@ -132,4 +132,40 @@ export interface Messages {
     chatWithMirra: string;
     mirraIsTyping: string;
   };
+  presenter: {
+    title: string;
+    say: string;
+    watch: string;
+    proves: string;
+    expected: string;
+    next: string;
+    on: string;
+    off: string;
+  };
+  guided: {
+    demo: string;
+    reset: string;
+    readyForTribunal: string;
+    startTribunal: string;
+    tribunalInProgress: string;
+    completeTribunal: string;
+    usePartyApps: string;
+  };
+  tribunal: {
+    agentTimeline: string;
+    eventFeed: string;
+    evidencePanel: string;
+    fraudRisk: string;
+  };
+  decision: {
+    automated: string;
+    humanReview: string;
+    requestHumanReview: string;
+    openHumanReview: string;
+  };
+  internal: {
+    subtitle: string;
+    observer: string;
+    noFixture: string;
+  };
 }

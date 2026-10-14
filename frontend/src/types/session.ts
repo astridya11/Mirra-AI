@@ -18,6 +18,12 @@ export type DisputeStage =
   | "under_review"
   | "resolved";
 
+export type DecisionStatus =
+  | "pending"
+  | "partial_refund"
+  | "no_refund"
+  | "human_review";
+
 export interface ChatMessage {
   id: string;
   sender: "user" | "mirra";
@@ -50,6 +56,13 @@ export interface FormalComplaint {
   filedBy: Party;
 }
 
+export interface TribunalDecision {
+  status: DecisionStatus;
+  amount?: string;
+  reasoning: string;
+  executionRoute: "automated" | "human_review";
+}
+
 export interface DemoSession {
   demoId: DemoId;
   sessionId: string;
@@ -57,6 +70,9 @@ export interface DemoSession {
   tripStatus: TripStatus;
   formalComplaint?: FormalComplaint;
   evidenceFrozen: boolean;
+  tribunalStarted: boolean;
+  tribunalCompleted: boolean;
+  decision?: TribunalDecision;
   trip: TripInfo;
   passengerChat: PrivateChat;
   driverChat: PrivateChat;
@@ -70,6 +86,9 @@ export interface PartyView {
   tripStatus: TripStatus;
   formalComplaint?: FormalComplaint;
   evidenceFrozen: boolean;
+  tribunalStarted: boolean;
+  tribunalCompleted: boolean;
+  decision?: TribunalDecision;
   trip: TripInfo;
   myChat: PrivateChat;
   otherPartyHasComplaint: boolean;
