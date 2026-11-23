@@ -8,6 +8,8 @@
 - **`backend/`**: 基于 Python 的 Multi-Agent 编排器、Agent 逻辑与工具接口。  
 - **`shared/`**: 前后端共享的数据契约（JSON Schemas / TypeScript Types）。
 
+Watch Our Demo Video at 👉 https://www.youtube.com/watch?v=KekYedZ-3fI
+
 ---
 
 ## 🛠️ 后端 Python 虚拟环境 (`venv`) 使用指南
